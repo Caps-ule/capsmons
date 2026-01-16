@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Admin — {{ login }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+  :root{
+    --bg:#0b0f14;
+    --panel:#111826;
+    --panel2:#0f1623;
+    --text:#e6edf3;
+    --muted:#9aa4b2;
+    --border:#233044;
+    --link:#7aa2ff;
+    --ok:#2bd576;
+    --err:#ff5c5c;
+    --shadow: 0 12px 30px rgba(0,0,0,.35);
+    --radius: 14px;
+  }
+  [data-theme="light"]{
+    --bg:#ffffff;
+    --panel:#ffffff;
+    --panel2:#f7f7f9;
+    --text:#101418;
+    --muted:#5b6777;
+    --border:#e6e8ec;
+    --link:#0b57d0;
+    --ok:#0a7a2f;
+    --err:#b00020;
+    --shadow: 0 10px 24px rgba(0,0,0,.08);
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; max-width:900px; background:var(--bg); color:var(--text)}
+  a{color:var(--link); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .card{border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px; background:linear-gradient(180deg,var(--panel),var(--panel2)); box-shadow:var(--shadow)}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  input,button{padding:10px 12px; font-size:14px}
+  input{border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
+  button{cursor:pointer; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
+  button:hover{filter:brightness(1.08)}
+  h1{margin:8px 0 0; font-size:28px}
+  .muted{color:var(--muted); font-size:13px}
+  .ok{color:var(--ok)}
+  .err{color:var(--err)}
+  .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
+  .toggle{display:flex; gap:8px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel)}
+  .toggle input{transform:scale(1.1)}
+  </style>
+</head>
+<body>
+  <p><a href="/admin">← Retour</a></p>
+  <h1>{{ login }}</h1>
+<div class="topbar">
+  <div>
+    <p><a href="/admin">← Retour</a></p>
+    <h1>{{ login }}</h1>
+  </div>
+
+  <div class="toggle">
+    <input type="checkbox" id="themeToggle" checked>
+    <label for="themeToggle">Dark mode</label>
+  </div>
+</div>
+
+  <div class="card">
+    <div><b>XP:</b> {{ xp_total }} — <b>Stage:</b> {{ stage }}</div>
+    <div class="muted">Prochain palier : {{ next_label }}{% if next_label != "Max" %} (reste {{ xp_to_next }} XP){% endif %}</div>
+    <div class="muted">
+       Lignée : {{ lineage_key or "—" }} — CM : {{ cm_key or "—" }}
+    </div>
+ 
+ </div>
+
+  {% if flash %}
+    <p class="{{ 'ok' if flash_kind=='ok' else 'err' }}">{{ flash }}</p>
+  {% endif %}
+
+  <div class="card">
+    <h3>Actions</h3>
+
+    <form method="post" action="/admin/action" class="row">
+      <input type="hidden" name="login" value="{{ login }}">
+      <input type="hidden" name="action" value="give">
+      <label>Donner XP :</label>
+      <input type="number" name="amount" value="10" min="1" max="100000">
+      <button type="submit">Appliquer</button>
+    </form>
+
+    <form method="post" action="/admin/action" class="row" style="margin-top:10px">
+      <input type="hidden" name="login" value="{{ login }}">
+      <input type="hidden" name="action" value="set">
+      <label>Fixer XP à :</label>
+      <input type="number" name="amount" value="{{ xp_total }}" min="0" max="100000000">
+      <button type="submit">Appliquer</button>
+    </form>
+    <form method="post" action="/admin/action" class="row" style="margin-top:10px">
+      <input type="hidden" name="login" value="{{ login }}">
+      <input type="hidden" name="action" value="assign_cm">
+      <button type="submit">Attribuer CM (si manquant)</button>
+    </form>
+
+
+    <form method="post" action="/admin/action" class="row" style="margin-top:10px">
+      <input type="hidden" name="login" value="{{ login }}">
+      <input type="hidden" name="action" value="reset">
+      <button type="submit" onclick="return confirm('Reset {{ login }} à 0 XP ?')">Reset à 0</button>
+    </form>
+
+  </div>
+<script>
+  (function () {
+    const KEY = "capsmons_theme";
+    const toggle = document.getElementById("themeToggle");
+
+    function apply(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      toggle.checked = (theme !== "light");
+    }
+
+    const saved = localStorage.getItem(KEY);
+    if (saved) apply(saved);
+    else apply("dark");
+
+    toggle.addEventListener("change", () => {
+      const theme = toggle.checked ? "dark" : "light";
+      localStorage.setItem(KEY, theme);
+      apply(theme);
+    });
+  })();
+</script>
+
+</body>
+</html>

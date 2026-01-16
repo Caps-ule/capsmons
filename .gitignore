@@ -1,0 +1,9 @@
+.env
+*.log
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+db_data/
+caddy_data/
+caddy_config/

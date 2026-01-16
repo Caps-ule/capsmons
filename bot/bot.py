@@ -1,0 +1,189 @@
+import os
+import time
+import asyncio
+import requests
+from twitchio.ext import commands
+
+API_CHOOSE_URL = "http://api:8000/internal/choose_lineage"
+API_XP_URL = "http://api:8000/internal/xp"
+API_STATE_URL = "http://api:8000/internal/creature"
+API_LIVE_URL = "http://api:8000/internal/is_live"
+API_KEY = os.environ["INTERNAL_API_KEY"]
+
+_last_xp_at: dict[str, float] = {}
+_active_until: dict[str, float] = {}
+
+def stage_label(stage: int) -> str:
+    return {
+        0: "🥚 Œuf",
+        1: "🐣 Éclosion",
+        2: "🦴 Évolution 1",
+        3: "👑 Évolution 2",
+    }.get(stage, f"Stage {stage}")
+
+class Bot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            token=os.environ["TWITCH_OAUTH_TOKEN"],
+            prefix="!",
+            initial_channels=[os.environ["TWITCH_CHANNEL"]],
+        )
+
+    async def event_ready(self):
+        print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
+        self.loop.create_task(self.presence_loop())
+
+    async def event_message(self, message):
+        if message.echo:
+            return
+
+        login = message.author.name.lower()
+
+        # Marquer actif (présence)
+        window = int(os.environ.get("PRESENCE_ACTIVE_WINDOW_SECONDS", "900"))
+        _active_until[login] = time.time() + window
+
+        # Cooldown XP chat
+        now = time.time()
+        cooldown = int(os.environ.get("CHAT_XP_COOLDOWN_SECONDS", "20"))
+        last = _last_xp_at.get(login, 0)
+
+        if now - last >= cooldown:
+            _last_xp_at[login] = now
+
+            try:
+                resp = requests.post(
+                    API_XP_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json={"twitch_login": login, "amount": 1},
+                    timeout=2,
+                )
+                if resp.status_code != 200:
+                    print("[BOT] XP API status:", resp.status_code, resp.text[:200], flush=True)
+                    return
+
+                try:
+                    data = resp.json()
+                except Exception:
+                    print("[BOT] API non-JSON response:", resp.status_code, resp.text[:200], flush=True)
+                    data = {}
+
+                before = int(data.get("stage_before", 0))
+                after = int(data.get("stage_after", before))
+
+                if after > before:
+                    await message.channel.send(
+                        f"@{message.author.name} {stage_label(before)} ➜ {stage_label(after)} ✨"
+                    )
+
+            except Exception as e:
+                print("[BOT] API error:", e, flush=True)
+
+        await self.handle_commands(message)
+
+    async def presence_loop(self):
+        tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
+        amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
+
+        while True:
+            await asyncio.sleep(tick)
+
+            # Ne donner la présence XP que si stream LIVE
+            try:
+                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                if not r.json().get("is_live", False):
+                    continue
+            except Exception as e:
+                print("[BOT] is_live check error:", e, flush=True)
+                continue
+
+            now = time.time()
+            actives = [u for u, until in _active_until.items() if until > now]
+
+            # nettoyage
+            for u in list(_active_until.keys()):
+                if _active_until[u] <= now:
+                    _active_until.pop(u, None)
+
+            if not actives:
+                continue
+
+            for login in actives:
+                try:
+                    requests.post(
+                        API_XP_URL,
+                        headers={"X-API-Key": API_KEY},
+                        json={"twitch_login": login, "amount": amount},
+                        timeout=2,
+                    )
+                except Exception as e:
+                    print("[BOT] Presence API error:", e, flush=True)
+
+    @commands.command(name="creature")
+    async def creature(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+        try:
+            r = requests.get(
+                f"{API_STATE_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=2,
+            )
+            data = r.json()
+            lineage = data.get("lineage_key")
+            cm_key = data.get("cm_key")
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} erreur: impossible de récupérer ta créature.")
+            return
+
+        stage = int(data.get("stage", 0))
+        xp_total = int(data.get("xp_total", 0))
+        nxt = data.get("next", "Max")
+        xp_to_next = int(data.get("xp_to_next", 0))
+
+        extra = ""
+        if cm_key:
+            extra = f" — CM: {cm_key} (lignée {lineage})"
+        elif lineage:
+            extra = f" — lignée: {lineage} (CM à l’éclosion)"
+        else:
+            extra = " — lignée: non choisie (utilise !choose)"
+
+        if nxt == "Max":
+            await ctx.send(
+            f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — stade max.{extra}"
+        )
+        else:
+            await ctx.send(
+                f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — prochain: {nxt} dans {xp_to_next} XP.{extra}"
+        )
+
+
+    @commands.command(name="choose")
+    async def choose(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+        parts = ctx.message.content.strip().split()
+
+        if len(parts) < 2:
+            await ctx.send(f"@{ctx.author.name} usage: !choose biolab|securite|extraction|limited")
+            return
+
+        lineage = parts[1].strip().lower()
+
+        try:
+            r = requests.post(
+                API_CHOOSE_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login, "lineage_key": lineage},
+                timeout=2,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} impossible: {r.text}")
+                return
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} erreur: choose indisponible.")
+            return
+
+        await ctx.send(f"@{ctx.author.name} ✅ lignée choisie : {lineage}. Ton CapsMons  sera attribué à l’éclosion.")
+
+bot = Bot()
+bot.run()

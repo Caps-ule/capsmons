@@ -1,0 +1,771 @@
+import os
+import json
+import secrets
+import hmac
+import hashlib
+
+import psycopg
+from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from starlette.templating import Jinja2Templates
+
+
+app = FastAPI()
+security = HTTPBasic()
+templates = Jinja2Templates(directory="templates")
+
+
+# -------------------------
+# DB helpers
+# -------------------------
+def get_db():
+    return psycopg.connect(
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+        host="db",
+        port=5432,
+    )
+
+
+# -------------------------
+# Auth helpers
+# -------------------------
+def require_internal_key(x_api_key: str | None):
+    if x_api_key != os.environ.get("INTERNAL_API_KEY"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def require_admin(creds: HTTPBasicCredentials):
+    admin_user = os.environ.get("ADMIN_USER", "")
+    admin_pass = os.environ.get("ADMIN_PASSWORD", "")
+    ok_user = secrets.compare_digest(creds.username, admin_user)
+    ok_pass = secrets.compare_digest(creds.password, admin_pass)
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+# -------------------------
+# XP / stages
+# -------------------------
+def thresholds():
+    hatch = int(os.environ["XP_HATCH"])
+    evo1 = int(os.environ["XP_EVOLVE_1"])
+    evo2 = int(os.environ["XP_EVOLVE_2"])
+    if not (0 < hatch < evo1 < evo2):
+        raise RuntimeError("Invalid thresholds: expected 0 < XP_HATCH < XP_EVOLVE_1 < XP_EVOLVE_2")
+    return hatch, evo1, evo2
+
+
+def stage_from_xp(xp_total: int) -> int:
+    hatch, evo1, evo2 = thresholds()
+    if xp_total < hatch:
+        return 0  # egg
+    if xp_total < evo1:
+        return 1  # hatchling
+    if xp_total < evo2:
+        return 2  # evolution 1
+    return 3      # evolution 2
+
+
+def next_threshold(xp_total: int):
+    hatch, evo1, evo2 = thresholds()
+    if xp_total < hatch:
+        return hatch, "Éclosion"
+    if xp_total < evo1:
+        return evo1, "Évolution 1"
+    if xp_total < evo2:
+        return evo2, "Évolution 2"
+    return None, "Max"
+
+
+def pick_cm_for_lineage(conn, lineage_key: str) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT key
+            FROM cms
+            WHERE lineage_key = %s
+              AND is_enabled = TRUE
+              AND in_hatch_pool = TRUE
+            ORDER BY random()
+            LIMIT 1;
+            """,
+            (lineage_key,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+# -------------------------
+# EventSub signature verify
+# -------------------------
+def verify_eventsub_signature(headers: dict, raw_body: bytes) -> bool:
+    """
+    Verifies Twitch EventSub signature.
+    Twitch sends:
+      - Twitch-Eventsub-Message-Id
+      - Twitch-Eventsub-Message-Timestamp
+      - Twitch-Eventsub-Message-Signature (sha256=...)
+    Signature base string: message_id + message_timestamp + raw_body
+    """
+    secret = os.environ.get("EVENTSUB_SECRET", "")
+    if not secret:
+        # If you don't use EventSub yet, keep endpoint but refuse signature checks.
+        return False
+
+    msg_id = headers.get("twitch-eventsub-message-id", "")
+    msg_ts = headers.get("twitch-eventsub-message-timestamp", "")
+    msg_sig = headers.get("twitch-eventsub-message-signature", "")
+
+    if not (msg_id and msg_ts and msg_sig):
+        return False
+
+    data = (msg_id + msg_ts).encode("utf-8") + raw_body
+    digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
+    expected = "sha256=" + digest
+    return hmac.compare_digest(expected, msg_sig)
+
+
+# -------------------------
+# DB init
+# -------------------------
+@app.on_event("startup")
+def init_db():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                  id SERIAL PRIMARY KEY,
+                  twitch_login TEXT UNIQUE NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS creatures (
+                  id SERIAL PRIMARY KEY,
+                  twitch_login TEXT UNIQUE NOT NULL,
+                  xp_total INT NOT NULL DEFAULT 0,
+                  stage INT NOT NULL DEFAULT 0,
+                  lineage_key TEXT NULL,
+                  cm_key TEXT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS xp_events (
+                  id SERIAL PRIMARY KEY,
+                  twitch_login TEXT NOT NULL,
+                  amount INT NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS kv (
+                  key TEXT PRIMARY KEY,
+                  value TEXT NOT NULL,
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS lineages (
+                  key TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  is_enabled BOOLEAN NOT NULL DEFAULT TRUE
+                );
+
+                CREATE TABLE IF NOT EXISTS cms (
+                  key TEXT PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  lineage_key TEXT NOT NULL REFERENCES lineages(key),
+                  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                  in_hatch_pool BOOLEAN NOT NULL DEFAULT FALSE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cms_lineage_pool
+                  ON cms(lineage_key, in_hatch_pool, is_enabled);
+                """
+            )
+
+            # default is_live
+            cur.execute(
+                """
+                INSERT INTO kv (key, value) VALUES ('is_live', 'false')
+                ON CONFLICT (key) DO NOTHING;
+                """
+            )
+
+            # seed lineages (Limited disabled by default)
+            cur.execute(
+                """
+                INSERT INTO lineages (key, name, is_enabled) VALUES
+                  ('biolab', 'Biolab', TRUE),
+                  ('securite', 'Sécurité', TRUE),
+                  ('extraction', 'Extraction', TRUE),
+                  ('limited', 'Limited', FALSE)
+                ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name;
+                """
+            )
+
+        conn.commit()
+
+
+# -------------------------
+# Basic endpoints
+# -------------------------
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+# -------------------------
+# Internal: live state
+# -------------------------
+@app.get("/internal/is_live")
+def internal_is_live(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM kv WHERE key='is_live';")
+            row = cur.fetchone()
+    return {"is_live": (row and row[0] == "true")}
+
+
+# -------------------------
+# Internal: choose lineage (ONLY egg stage)
+# -------------------------
+@app.post("/internal/choose_lineage")
+def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    lineage_key = str(payload.get("lineage_key", "")).strip().lower()
+
+    if not login or not lineage_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or lineage_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_enabled FROM lineages WHERE key=%s;", (lineage_key,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="Unknown lineage")
+            if not bool(row[0]):
+                raise HTTPException(status_code=400, detail="Lineage disabled")
+
+            # ensure creature exists
+            cur.execute(
+                """
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+                """,
+                (login,),
+            )
+
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            stage = int(cur.fetchone()[0])
+
+            if stage != 0:
+                raise HTTPException(status_code=400, detail="Choose only before hatching (egg stage)")
+
+            cur.execute(
+                """
+                UPDATE creatures
+                SET lineage_key = %s, updated_at = now()
+                WHERE twitch_login = %s;
+                """,
+                (lineage_key, login),
+            )
+
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "lineage_key": lineage_key}
+
+
+# -------------------------
+# Internal: add XP (+ stage change + assign CM on hatch)
+# -------------------------
+@app.post("/internal/xp")
+def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    try:
+        amount = int(payload.get("amount", 1))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    if amount <= 0 or amount > 100:
+        raise HTTPException(status_code=400, detail="Amount out of range")
+
+    prev_stage = 0
+    new_xp_total = 0
+    new_stage = 0
+    cm_assigned = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # ensure user
+            cur.execute(
+                "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
+                (login,),
+            )
+
+            # ensure creature exists
+            cur.execute(
+                """
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+                """,
+                (login,),
+            )
+
+            # log XP event
+            cur.execute(
+                "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
+                (login, amount),
+            )
+
+            # read prev stage
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            prev_row = cur.fetchone()
+            prev_stage = int(prev_row[0]) if prev_row else 0
+
+            # increment XP
+            cur.execute(
+                """
+                UPDATE creatures
+                SET xp_total = xp_total + %s,
+                    updated_at = now()
+                WHERE twitch_login = %s
+                RETURNING xp_total;
+                """,
+                (amount, login),
+            )
+            new_xp_total = int(cur.fetchone()[0])
+            new_stage = stage_from_xp(new_xp_total)
+
+            # update stage
+            cur.execute(
+                """
+                UPDATE creatures
+                SET stage = %s,
+                    updated_at = now()
+                WHERE twitch_login = %s;
+                """,
+                (new_stage, login),
+            )
+
+            # assign CM at the exact hatch moment (0 -> 1+)
+            if prev_stage == 0 and new_stage >= 1:
+                cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+                lrow = cur.fetchone()
+                lineage_key = lrow[0] if lrow else None
+                current_cm = lrow[1] if lrow else None
+
+                if lineage_key and current_cm is None:
+                    cm_key = pick_cm_for_lineage(conn, lineage_key)
+                    if cm_key:
+                        cur.execute(
+                            "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;",
+                            (cm_key, login),
+                        )
+                        cm_assigned = cm_key
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "xp_total": new_xp_total,
+        "stage_before": prev_stage,
+        "stage_after": new_stage,
+        "cm_assigned": cm_assigned,
+    }
+
+
+# -------------------------
+# Internal: creature state (includes lineage/cm)
+# -------------------------
+@app.get("/internal/creature/{login}")
+def creature_state(login: str, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = login.strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT twitch_login, xp_total, stage, lineage_key, cm_key
+                FROM creatures
+                WHERE twitch_login = %s;
+                """,
+                (login,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    else:
+        _, xp_total, stage, lineage_key, cm_key = row
+
+    nxt, label = next_threshold(int(xp_total))
+    remaining = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+
+    return {
+        "twitch_login": login,
+        "xp_total": int(xp_total),
+        "stage": int(stage),
+        "lineage_key": lineage_key,
+        "cm_key": cm_key,
+        "next": label,
+        "xp_to_next": remaining,
+    }
+
+
+# -------------------------
+# EventSub webhook (optional)
+# -------------------------
+@app.post("/eventsub", response_class=PlainTextResponse)
+async def eventsub_handler(request: Request):
+    body = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    if not verify_eventsub_signature(headers, body):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    msg_type = headers.get("twitch-eventsub-message-type", "")
+    payload = json.loads(body.decode("utf-8"))
+
+    # Challenge
+    if msg_type == "webhook_callback_verification":
+        return payload.get("challenge", "")
+
+    # Notification
+    if msg_type == "notification":
+        sub_type = payload.get("subscription", {}).get("type", "")
+        if sub_type in ("stream.online", "stream.offline"):
+            is_live = "true" if sub_type == "stream.online" else "false"
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO kv (key, value)
+                        VALUES ('is_live', %s)
+                        ON CONFLICT (key) DO UPDATE
+                        SET value = EXCLUDED.value, updated_at = now();
+                        """,
+                        (is_live,),
+                    )
+                conn.commit()
+        return "ok"
+
+    # Revocation
+    if msg_type == "revocation":
+        return "ok"
+
+    return "ok"
+
+
+# -------------------------
+# Admin pages
+# -------------------------
+@app.get("/admin", response_class=HTMLResponse)
+def admin_home(
+    request: Request,
+    q: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    q_clean = (q or "").strip().lower()
+    result = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT twitch_login, xp_total, stage
+                FROM creatures
+                ORDER BY xp_total DESC
+                LIMIT 50;
+                """
+            )
+            top = [{"twitch_login": r[0], "xp_total": r[1], "stage": r[2]} for r in cur.fetchall()]
+
+            if q_clean:
+                cur.execute(
+                    """
+                    SELECT twitch_login, xp_total, stage
+                    FROM creatures
+                    WHERE twitch_login = %s;
+                    """,
+                    (q_clean,),
+                )
+                row = cur.fetchone()
+                if row:
+                    result = {"twitch_login": row[0], "xp_total": row[1], "stage": row[2]}
+
+    return templates.TemplateResponse(
+        "admin.html",
+        {"request": request, "top": top, "q": q_clean, "result": result},
+    )
+
+
+@app.get("/admin/user/{login}", response_class=HTMLResponse)
+def admin_user(
+    request: Request,
+    login: str,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT xp_total, stage, lineage_key, cm_key FROM creatures WHERE twitch_login = %s;",
+                (login,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    else:
+        xp_total, stage, lineage_key, cm_key = row
+
+    nxt, label = next_threshold(int(xp_total))
+    xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+
+    return templates.TemplateResponse(
+        "user.html",
+        {
+            "request": request,
+            "login": login,
+            "xp_total": int(xp_total),
+            "stage": int(stage),
+            "next_label": label,
+            "xp_to_next": int(xp_to_next),
+            "flash": flash,
+            "flash_kind": flash_kind,
+            "lineage_key": lineage_key,
+            "cm_key": cm_key,
+        },
+    )
+
+
+@app.post("/admin/action")
+def admin_action(
+    login: str = Form(...),
+    action: str = Form(...),
+    amount: int | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+    action = action.strip().lower()
+
+    if action not in ("give", "set", "reset", "assign_cm"):
+        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Action%20invalide", status_code=303)
+
+    if action in ("give", "set") and amount is None:
+        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Montant%20manquant", status_code=303)
+
+    # assign_cm: no correlated SQL
+    if action == "assign_cm":
+        assigned = None
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT lineage_key, cm_key, stage FROM creatures WHERE twitch_login=%s;",
+                    (login,),
+                )
+                row = cur.fetchone()
+                if row:
+                    lineage_key, cm_key, stage = row
+                    if lineage_key and cm_key is None and int(stage) >= 1:
+                        cur.execute(
+                            """
+                            SELECT key
+                            FROM cms
+                            WHERE lineage_key=%s AND is_enabled=TRUE AND in_hatch_pool=TRUE
+                            ORDER BY random()
+                            LIMIT 1;
+                            """,
+                            (lineage_key,),
+                        )
+                        pick = cur.fetchone()
+                        assigned = pick[0] if pick else None
+                        if assigned:
+                            cur.execute(
+                                "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s AND cm_key IS NULL;",
+                                (assigned, login),
+                            )
+            conn.commit()
+
+        if assigned:
+            return RedirectResponse(
+                url=f"/admin/user/{login}?flash_kind=ok&flash=CM%20attribu%C3%A9%20:%20{assigned}",
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=f"/admin/user/{login}?flash_kind=err&flash=Aucun%20CM%20attribu%C3%A9%20(check%20stage%2C%20lign%C3%A9e%2C%20pool)",
+            status_code=303,
+        )
+
+    # give/set/reset
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+                """,
+                (login,),
+            )
+
+            if action == "reset":
+                new_xp = 0
+            elif action == "set":
+                new_xp = max(0, int(amount))
+            else:  # give
+                cur.execute("SELECT xp_total FROM creatures WHERE twitch_login=%s;", (login,))
+                current = int(cur.fetchone()[0])
+                new_xp = current + max(0, int(amount))
+
+            new_stage = stage_from_xp(int(new_xp))
+
+            cur.execute(
+                """
+                UPDATE creatures
+                SET xp_total=%s, stage=%s, updated_at=now()
+                WHERE twitch_login=%s;
+                """,
+                (int(new_xp), int(new_stage), login),
+            )
+
+        conn.commit()
+
+    if action == "reset":
+        msg = "Reset à 0"
+    elif action == "set":
+        msg = f"XP fixé à {new_xp}"
+    else:
+        msg = f"+{amount} XP (total {new_xp})"
+
+    return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg.replace(' ', '%20')}", status_code=303)
+
+
+# -------------------------
+# Admin stats
+# -------------------------
+@app.get("/admin/stats", response_class=HTMLResponse)
+def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # start of today in Paris, converted back to timestamptz
+            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
+            start_of_today_paris = cur.fetchone()[0]
+
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM xp_events WHERE created_at >= %s;",
+                (start_of_today_paris,),
+            )
+            xp_today = int(cur.fetchone()[0])
+
+            cur.execute(
+                "SELECT COALESCE(SUM(amount), 0) FROM xp_events WHERE created_at >= now() - interval '7 days';"
+            )
+            xp_7d = int(cur.fetchone()[0])
+
+            cur.execute(
+                """
+                SELECT COUNT(*) AS events, COUNT(DISTINCT twitch_login) AS users
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours';
+                """
+            )
+            events_24h, active_users_24h = cur.fetchone()
+            events_24h = int(events_24h)
+            active_users_24h = int(active_users_24h)
+
+            cur.execute(
+                """
+                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD') AS day,
+                       SUM(amount) AS xp
+                FROM xp_events
+                WHERE created_at >= now() - interval '7 days'
+                GROUP BY 1
+                ORDER BY 1 DESC;
+                """
+            )
+            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+            max_xp = max([r["xp"] for r in xp_by_day], default=0) or 1
+            for r in xp_by_day:
+                r["pct"] = int((r["xp"] / max_xp) * 100)
+
+            cur.execute(
+                """
+                SELECT twitch_login, SUM(amount) AS xp
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 20;
+                """
+            )
+            top_xp_24h = [{"twitch_login": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT twitch_login, COUNT(*) AS events
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 20;
+                """
+            )
+            top_events_24h = [{"twitch_login": r[0], "events": int(r[1])} for r in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT COUNT(DISTINCT twitch_login)
+                FROM xp_events
+                WHERE created_at >= now() - interval '15 minutes';
+                """
+            )
+            active_users_15m = int(cur.fetchone()[0])
+
+    return templates.TemplateResponse(
+        "stats.html",
+        {
+            "request": request,
+            "xp_today": xp_today,
+            "xp_7d": xp_7d,
+            "events_24h": events_24h,
+            "active_users_24h": active_users_24h,
+            "active_users_15m": active_users_15m,
+            "xp_by_day": xp_by_day,
+            "top_xp_24h": top_xp_24h,
+            "top_events_24h": top_events_24h,
+        },
+    )

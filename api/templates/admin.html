@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>CapsMons Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0b0f14;
+    --panel:#111826;
+    --panel2:#0f1623;
+    --text:#e6edf3;
+    --muted:#9aa4b2;
+    --border:#233044;
+    --tableHead:#0e1522;
+    --link:#7aa2ff;
+    --shadow: 0 12px 30px rgba(0,0,0,.35);
+    --radius: 14px;
+  }
+  [data-theme="light"]{
+    --bg:#ffffff;
+    --panel:#ffffff;
+    --panel2:#f7f7f9;
+    --text:#101418;
+    --muted:#5b6777;
+    --border:#e6e8ec;
+    --tableHead:#f2f4f7;
+    --link:#0b57d0;
+    --shadow: 0 10px 24px rgba(0,0,0,.08);
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; max-width:1100px; background:var(--bg); color:var(--text)}
+  a{color:var(--link); text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1{margin:0 0 12px; font-size:28px}
+  h2{margin:22px 0 10px; font-size:18px}
+  .muted{color:var(--muted); font-size:13px}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  input,button{padding:10px 12px; font-size:14px}
+  input{border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
+  button{cursor:pointer; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
+  button:hover{filter:brightness(1.08)}
+  .card{border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px; background:linear-gradient(180deg,var(--panel),var(--panel2)); box-shadow:var(--shadow)}
+  table{border-collapse:collapse; width:100%; margin-top:16px; border-radius:12px; overflow:hidden; border:1px solid var(--border)}
+  th,td{border-bottom:1px solid var(--border); padding:10px; text-align:left}
+  th{background:var(--tableHead); color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em}
+  tr:last-child td{border-bottom:none}
+  .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
+  .toggle{display:flex; gap:8px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel)}
+  .toggle input{transform:scale(1.1)}
+</style>
+
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <h1>CapsMons — Admin</h1>
+    <div class="muted">Protégé par HTTP Basic (MVP).</div>
+  </div>
+
+  <div class="row">
+    <a href="/admin/stats">📊 Stats</a>
+    <div class="toggle">
+      <input type="checkbox" id="themeToggle" checked>
+      <label for="themeToggle">Dark mode</label>
+    </div>
+  </div>
+</div>
+
+  <div class="muted">Protégé par HTTP Basic (MVP). URL: /admin</div>
+
+  <div class="card">
+    <form method="get" action="/admin" class="row">
+      <label>Rechercher un viewer :</label>
+      <input type="text" name="q" placeholder="pseudo twitch (ex: capsloque)" value="{{ q or '' }}">
+      <button type="submit">Rechercher</button>
+    </form>
+    <p><a href="/admin/stats">📊 Stats</a></p>
+
+    {% if q and result %}
+      <p>Résultat : <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a> — {{ result.xp_total }} XP — stage {{ result.stage }}</p>
+    {% elif q and not result %}
+      <p>Aucun résultat pour "{{ q }}".</p>
+    {% endif %}
+  </div>
+
+  <h2>Top XP</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Viewer</th>
+        <th>XP</th>
+        <th>Stage</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in top %}
+      <tr>
+        <td><a href="/admin/user/{{ u.twitch_login }}">{{ u.twitch_login }}</a></td>
+        <td>{{ u.xp_total }}</td>
+        <td>{{ u.stage }}</td>
+        <td><a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+<script>
+  (function () {
+    const KEY = "capsmons_theme";
+    const toggle = document.getElementById("themeToggle");
+
+    function apply(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      toggle.checked = (theme !== "light");
+    }
+
+    const saved = localStorage.getItem(KEY);
+    if (saved) apply(saved);
+    else apply("dark");
+
+    toggle.addEventListener("change", () => {
+      const theme = toggle.checked ? "dark" : "light";
+      localStorage.setItem(KEY, theme);
+      apply(theme);
+    });
+  })();
+</script>
+
+</body>
+</html>

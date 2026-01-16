@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    env_file: .env
+    depends_on:
+      - db
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  bot:
+    build: ./bot
+    env_file: .env
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  db_data:
