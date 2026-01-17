@@ -1194,14 +1194,13 @@ def overlay_show_page():
 <style>
   body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
 
-  /* Conteneur global */
   .wrap{
     position:fixed; inset:0;
     display:flex; align-items:center; justify-content:center;
     pointer-events:none;
   }
 
-  /* Carte principale */
+  /* Carte principale (animation) */
   .card{
     display:none;
     flex-direction:column;
@@ -1214,9 +1213,19 @@ def overlay_show_page():
     backdrop-filter: blur(8px);
     min-width:760px;
     max-width:1100px;
+
+    /* état animé */
+    opacity:0;
+    transform: translateY(10px) scale(0.98);
+    transition: opacity 220ms ease, transform 220ms ease;
+    will-change: opacity, transform;
+  }
+  .card.showing{
+    opacity:1;
+    transform: translateY(0) scale(1);
   }
 
-  /* Bandeau viewer (même largeur que la card) */
+  /* Bandeau viewer */
   .viewerBar{
     width:100%;
     display:flex;
@@ -1237,22 +1246,9 @@ def overlay_show_page():
     border:1px solid rgba(255,255,255,.15);
   }
 
-  .viewerText{
-    display:flex;
-    flex-direction:column;
-  }
-
-  .viewerName{
-    font-size:14px;
-    font-weight:800;
-    color:#e6edf3;
-    line-height:1.1;
-  }
-
-  .viewerSub{
-    font-size:11px;
-    color:#9aa4b2;
-  }
+  .viewerText{display:flex;flex-direction:column}
+  .viewerName{font-size:14px;font-weight:800;color:#e6edf3;line-height:1.1}
+  .viewerSub{font-size:11px;color:#9aa4b2}
 
   /* CM très grand */
   .cmimg{
@@ -1264,7 +1260,7 @@ def overlay_show_page():
     border:1px solid rgba(255,255,255,.10);
   }
 
-  /* Barre XP dessous */
+  /* Barre XP */
   .barWrap{
     width:520px;
     height:14px;
@@ -1277,9 +1273,9 @@ def overlay_show_page():
     height:100%;
     width:0%;
     background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45));
+    transition: width 280ms ease;
   }
 
-  /* Texte sous la barre */
   .cmname{
     font-size:28px;
     font-weight:900;
@@ -1299,9 +1295,7 @@ def overlay_show_page():
 <body>
   <div class="wrap">
     <div id="card" class="card">
-
-      <!-- Bandeau viewer -->
-      <div id="viewerBar" class="viewerBar">
+      <div class="viewerBar">
         <img id="avatar" class="avatar" src="" alt="">
         <div class="viewerText">
           <div id="viewer" class="viewerName"></div>
@@ -1309,38 +1303,53 @@ def overlay_show_page():
         </div>
       </div>
 
-      <!-- CM -->
       <img id="cmimg" class="cmimg" src="" alt="">
       <div class="barWrap"><div id="fill" class="fill"></div></div>
       <div id="cmname" class="cmname">CapsMons</div>
       <div id="xptext" class="xptext"></div>
-
     </div>
   </div>
 
 <script>
 let showing = false;
 
+function showCard(){
+  const card = document.getElementById('card');
+  if (showing) return;
+
+  card.style.display = 'flex';
+  // forcer un reflow pour que la transition s'applique
+  void card.offsetWidth;
+  card.classList.add('showing');
+  showing = true;
+}
+
+function hideCard(){
+  const card = document.getElementById('card');
+  if (!showing) return;
+
+  card.classList.remove('showing');
+  // attendre la fin de transition avant de display:none
+  setTimeout(() => {
+    card.style.display = 'none';
+  }, 230);
+  showing = false;
+}
+
 async function tick(){
   try{
     const r = await fetch('/overlay/state', {cache:'no-store'});
     const j = await r.json();
 
-    const card = document.getElementById('card');
-
     if(!j.show){
-      if(showing){
-        card.style.display='none';
-        showing=false;
-      }
+      hideCard();
       return;
     }
 
-    // Viewer
+    // Data bind
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
     document.getElementById('avatar').src = j.viewer.avatar || '';
 
-    // CM
     document.getElementById('cmimg').src = j.cm.media || '';
     document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
 
@@ -1352,8 +1361,7 @@ async function tick(){
       (toNext ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
               : `${j.xp.total} XP • stade max`);
 
-    card.style.display='flex';
-    showing=true;
+    showCard();
 
   }catch(e){
     // ignore
@@ -1365,5 +1373,6 @@ tick();
 </script>
 </body>
 </html>
+
 """)
 
