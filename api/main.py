@@ -1030,7 +1030,6 @@ def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicC
         lines = lines if isinstance(lines, list) else []
         text = "\n".join([str(x) for x in lines])
         items.append({"key": k, "count": len(lines), "text": text})
-
     return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
 
 
