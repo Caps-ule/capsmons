@@ -1211,8 +1211,8 @@ def overlay_show_page():
     background:rgba(10,15,20,.78);
     border:1px solid rgba(255,255,255,.12);
     backdrop-filter: blur(8px);
-    min-width:420px;
-    max-width:420px;
+    min-width:480px;
+    max-width:480px;
 
     /* état animé */
     opacity:0;
