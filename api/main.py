@@ -3,6 +3,7 @@ import json
 import secrets
 import hmac
 import hashlib
+import random
 
 import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
@@ -186,7 +187,15 @@ def init_db():
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_cms_lineage_pool
-                  ON cms(lineage_key, in_hatch_pool, is_enabled);
+                  ON cms(lineage_key, in_hatch_pool, is_enabled
+                );
+
+                CREATE TABLE IF NOT EXISTS rp_lines (
+                  key TEXT PRIMARY KEY,
+                  lines JSONB NOT NULL DEFAULT '[]'::jsonb,
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
                 """
             )
 
@@ -209,6 +218,13 @@ def init_db():
                 ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name;
                 """
             )
+            INSERT INTO rp_lines (key, lines) VALUES
+              ('creature.stage0', '["🥚 L’œuf vibre faiblement…", "🥚 Une chaleur étrange émane de l’œuf…"]'),
+              ('creature.stage1', '["🐣 *Crac !* Une nouvelle vie apparaît.", "🐣 Le CapsMons vient de naître."]'),
+              ('evolve.announce', '["✨ Transformation !", "⚡ Évolution en cours !"]'),
+              ('cm.assigned', '["👾 Un CM a été attribué !", "🧬 Signature génétique détectée…"]')
+            ON CONFLICT (key) DO NOTHING;
+
 
         conn.commit()
 
@@ -879,3 +895,92 @@ def admin_cms_action(
 
             return go("Action inconnue", "err")
 
+@app.get("/internal/rp_bundle")
+def rp_bundle(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, lines FROM rp_lines;")
+            rows = cur.fetchall()
+
+    # rows: [(key, jsonb), ...]
+    bundle = {}
+    for k, lines in rows:
+        # psycopg peut renvoyer dict/list directement (JSONB) ou string selon config
+        if isinstance(lines, str):
+            try:
+                import json
+                lines = json.loads(lines)
+            except Exception:
+                lines = []
+        bundle[k] = lines if isinstance(lines, list) else []
+    return {"rp": bundle}
+
+@app.get("/admin/rp", response_class=HTMLResponse)
+def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, lines, updated_at FROM rp_lines ORDER BY key;")
+            rows = cur.fetchall()
+
+    items = []
+    for k, lines, _ in rows:
+        if isinstance(lines, str):
+            try:
+                lines = json.loads(lines)
+            except Exception:
+                lines = []
+        lines = lines if isinstance(lines, list) else []
+        text = "\n".join([str(x) for x in lines])
+        items.append({"key": k, "count": len(lines), "text": text})
+
+    return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
+
+
+@app.post("/admin/rp/save")
+def admin_rp_save(
+    key: str = Form(...),
+    lines: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    key = key.strip()
+
+    # 1 ligne = 1 phrase
+    phrases = []
+    if lines is not None:
+        for line in lines.splitlines():
+            s = line.strip()
+            if s:
+                phrases.append(s)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO rp_lines (key, lines)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (key)
+                DO UPDATE SET lines = EXCLUDED.lines, updated_at = now();
+            """, (key, json.dumps(phrases)))
+        conn.commit()
+
+    return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:{key}", status_code=303)
+
+
+@app.post("/admin/rp/delete")
+def admin_rp_delete(
+    key: str = Form(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    key = key.strip()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM rp_lines WHERE key=%s;", (key,))
+        conn.commit()
+
+    return RedirectResponse(url=f"/admin/rp?flash=Supprim%C3%A9%20:{key}", status_code=303)
