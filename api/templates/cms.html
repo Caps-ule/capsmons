@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>CapsMons — CM & Pool</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
+      --border:#233044; --tableHead:#0e1522; --link:#7aa2ff; --shadow:0 12px 30px rgba(0,0,0,.35); --radius:14px;
+      --ok:#2bd576; --err:#ff5c5c;
+    }
+    [data-theme="light"]{
+      --bg:#fff; --panel:#fff; --panel2:#f7f7f9; --text:#101418; --muted:#5b6777; --border:#e6e8ec;
+      --tableHead:#f2f4f7; --link:#0b57d0; --shadow:0 10px 24px rgba(0,0,0,.08);
+      --ok:#0a7a2f; --err:#b00020;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; max-width:1200px; background:var(--bg); color:var(--text)}
+    a{color:var(--link); text-decoration:none}
+    a:hover{text-decoration:underline}
+    h1{margin:0 0 12px; font-size:28px}
+    .muted{color:var(--muted); font-size:13px}
+    .card{border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:14px; background:linear-gradient(180deg,var(--panel),var(--panel2)); box-shadow:var(--shadow)}
+    table{border-collapse:collapse; width:100%; border-radius:12px; overflow:hidden; border:1px solid var(--border)}
+    th,td{border-bottom:1px solid var(--border); padding:10px; text-align:left; vertical-align:middle}
+    th{background:var(--tableHead); color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em}
+    tr:last-child td{border-bottom:none}
+    input,select,button{padding:9px 10px; font-size:14px; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
+    button{cursor:pointer}
+    button:hover{filter:brightness(1.08)}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .pill{display:inline-block; padding:3px 10px; border-radius:999px; border:1px solid var(--border); font-size:12px; color:var(--muted)}
+    .ok{color:var(--ok)} .err{color:var(--err)}
+    .toggle{display:flex; gap:8px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel)}
+    .toggle input{transform:scale(1.1)}
+    .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <p><a href="/admin">← Retour admin</a></p>
+      <h1>🧬 CM & Pool</h1>
+      <div class="muted">Gérer les lineages et le pool d’éclosion sans SQL.</div>
+    </div>
+    <div class="toggle">
+      <input type="checkbox" id="themeToggle" checked>
+      <label for="themeToggle">Dark mode</label>
+    </div>
+  </div>
+
+  {% if flash %}
+    <div class="card {{ 'ok' if flash_kind=='ok' else 'err' }}">{{ flash }}</div>
+  {% endif %}
+
+  <div class="card">
+    <h2 style="margin:0 0 10px">Lineages</h2>
+    <table>
+      <thead>
+        <tr><th>Key</th><th>Nom</th><th>Enabled</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        {% for l in lineages %}
+        <tr>
+          <td><span class="pill">{{ l.key }}</span></td>
+          <td>{{ l.name }}</td>
+          <td>{{ '✅' if l.is_enabled else '❌' }}</td>
+          <td>
+            <form method="post" action="/admin/cms/action" style="display:inline">
+              <input type="hidden" name="action" value="toggle_lineage">
+              <input type="hidden" name="key" value="{{ l.key }}">
+              <button type="submit">{{ 'Désactiver' if l.is_enabled else 'Activer' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 10px">Créer un CM</h2>
+    <form method="post" action="/admin/cms/action" class="row">
+      <input type="hidden" name="action" value="add_cm">
+      <input name="cm_key" placeholder="key (ex: biolab_04)" required>
+      <input name="cm_name" placeholder="nom (ex: Biolab CM 04)" required>
+      <select name="lineage_key" required>
+        {% for l in lineages %}
+          <option value="{{ l.key }}">{{ l.name }} ({{ l.key }})</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Créer</button>
+      <span class="muted">Astuce: commence par le key, puis renomme plus tard.</span>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 10px">CM</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Nom</th>
+          <th>Lignée</th>
+          <th>Enabled</th>
+          <th>Dans pool</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cm in cms %}
+        <tr>
+          <td><span class="pill">{{ cm.key }}</span></td>
+          <td>
+            <form method="post" action="/admin/cms/action" class="row" style="margin:0">
+              <input type="hidden" name="action" value="rename_cm">
+              <input type="hidden" name="key" value="{{ cm.key }}">
+              <input name="cm_name" value="{{ cm.name }}" style="min-width:260px">
+              <button type="submit">Renommer</button>
+            </form>
+          </td>
+          <td><span class="pill">{{ cm.lineage_key }}</span></td>
+          <td>{{ '✅' if cm.is_enabled else '❌' }}</td>
+          <td>{{ '🎲' if cm.in_hatch_pool else '—' }}</td>
+          <td class="row">
+            <form method="post" action="/admin/cms/action" style="display:inline">
+              <input type="hidden" name="action" value="toggle_cm_enabled">
+              <input type="hidden" name="key" value="{{ cm.key }}">
+              <button type="submit">{{ 'Désactiver' if cm.is_enabled else 'Activer' }}</button>
+            </form>
+
+            <form method="post" action="/admin/cms/action" style="display:inline">
+              <input type="hidden" name="action" value="toggle_cm_pool">
+              <input type="hidden" name="key" value="{{ cm.key }}">
+              <button type="submit">{{ 'Retirer pool' if cm.in_hatch_pool else 'Ajouter pool' }}</button>
+            </form>
+
+            <form method="post" action="/admin/cms/action" style="display:inline">
+              <input type="hidden" name="action" value="delete_cm">
+              <input type="hidden" name="key" value="{{ cm.key }}">
+              <button type="submit" onclick="return confirm('Supprimer {{ cm.key }} ? (attention)')">Supprimer</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="muted" style="margin-top:10px">
+      ⚠️ “Supprimer” est définitif. Si tu veux éviter ça, on peut remplacer par “Archive” (is_enabled=false).
+    </div>
+  </div>
+
+<script>
+  (function () {
+    const KEY = "capsmons_theme";
+    const toggle = document.getElementById("themeToggle");
+    function apply(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      toggle.checked = (theme !== "light");
+    }
+    const saved = localStorage.getItem(KEY);
+    apply(saved || "dark");
+    toggle.addEventListener("change", () => {
+      const theme = toggle.checked ? "dark" : "light";
+      localStorage.setItem(KEY, theme);
+      apply(theme);
+    });
+  })();
+</script>
+</body>
+</html>

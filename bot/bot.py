@@ -51,33 +51,70 @@ class Bot(commands.Bot):
         if now - last >= cooldown:
             _last_xp_at[login] = now
 
+            resp = None
+
             try:
                 resp = requests.post(
                     API_XP_URL,
                     headers={"X-API-Key": API_KEY},
-                    json={"twitch_login": login, "amount": 1},
+                    json={
+                        "twitch_login": login,
+                        "amount": 1,
+                    },
                     timeout=2,
                 )
+            
+                # 1️⃣ Vérifier le code HTTP
                 if resp.status_code != 200:
-                    print("[BOT] XP API status:", resp.status_code, resp.text[:200], flush=True)
+                    print(
+                        "[BOT] XP API status:",
+                        resp.status_code,
+                        resp.text[:200],
+                        flush=True,
+                    )
                     return
-
+            
+                # 2️⃣ Vérifier que la réponse est bien du JSON
                 try:
                     data = resp.json()
                 except Exception:
-                    print("[BOT] API non-JSON response:", resp.status_code, resp.text[:200], flush=True)
-                    data = {}
-
+                    print(
+                        "[BOT] XP API non-JSON:",
+                        resp.text[:200],
+                        flush=True,
+                    )
+                    return
+            
+                # 3️⃣ Lecture sécurisée des champs
                 before = int(data.get("stage_before", 0))
                 after = int(data.get("stage_after", before))
-
+            
+                # 4️⃣ Annonce UNIQUEMENT si évolution réelle
                 if after > before:
-                    await message.channel.send(
-                        f"@{message.author.name} {stage_label(before)} ➜ {stage_label(after)} ✨"
+                    msg = (
+                        f"@{message.author.name} "
+                        f"{stage_label(before)} ➜ {stage_label(after)} ✨"
                     )
-
+            
+                    # 5️⃣ Annonce du CM uniquement si l’API l’indique
+                    cm_assigned = data.get("cm_assigned")
+                    if cm_assigned:
+                        msg += f" | CM obtenu : {cm_assigned} 👾"
+            
+                    await message.channel.send(msg)
+            
             except Exception as e:
-                print("[BOT] API error:", e, flush=True)
+                body = ""
+                if resp is not None:
+                    body = (resp.text or "")[:200]
+            
+                print(
+                    "[BOT] XP API error:",
+                    repr(e),
+                    body,
+                    flush=True,
+                )
+
 
         await self.handle_commands(message)
 

@@ -769,3 +769,113 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
             "top_events_24h": top_events_24h,
         },
     )
+@app.get("/admin/cms", response_class=HTMLResponse)
+def admin_cms(
+    request: Request,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, name, is_enabled FROM lineages ORDER BY key;")
+            lineages = [{"key": r[0], "name": r[1], "is_enabled": bool(r[2])} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT key, name, lineage_key, is_enabled, in_hatch_pool
+                FROM cms
+                ORDER BY lineage_key, key;
+            """)
+            cms = [{
+                "key": r[0],
+                "name": r[1],
+                "lineage_key": r[2],
+                "is_enabled": bool(r[3]),
+                "in_hatch_pool": bool(r[4]),
+            } for r in cur.fetchall()]
+
+    return templates.TemplateResponse("cms.html", {
+        "request": request,
+        "lineages": lineages,
+        "cms": cms,
+        "flash": flash,
+        "flash_kind": flash_kind,
+    })
+
+
+@app.post("/admin/cms/action")
+def admin_cms_action(
+    action: str = Form(...),
+    key: str | None = Form(None),
+    cm_key: str | None = Form(None),
+    cm_name: str | None = Form(None),
+    lineage_key: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    action = action.strip().lower()
+
+    def go(msg: str, kind: str = "ok"):
+        # encode minimal
+        safe = msg.replace(" ", "%20")
+        return RedirectResponse(url=f"/admin/cms?flash_kind={kind}&flash={safe}", status_code=303)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if action == "toggle_lineage":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE lineages SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"Lineage {key} toggled")
+
+            if action == "add_cm":
+                if not (cm_key and cm_name and lineage_key):
+                    return go("Champs manquants", "err")
+                cm_key = cm_key.strip().lower()
+                cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
+                if not cur.fetchone():
+                    return go("Lineage inconnue", "err")
+                cur.execute("""
+                    INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool)
+                    VALUES (%s, %s, %s, TRUE, FALSE)
+                    ON CONFLICT (key) DO NOTHING;
+                """, (cm_key, cm_name, lineage_key))
+                conn.commit()
+                return go(f"CM créé: {cm_key}")
+
+            if action == "rename_cm":
+                if not (key and cm_name):
+                    return go("Champs manquants", "err")
+                cur.execute("UPDATE cms SET name=%s WHERE key=%s;", (cm_name, key))
+                conn.commit()
+                return go(f"CM renommé: {key}")
+
+            if action == "toggle_cm_enabled":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE cms SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"CM enabled toggled: {key}")
+
+            if action == "toggle_cm_pool":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE cms SET in_hatch_pool = NOT in_hatch_pool WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"CM pool toggled: {key}")
+
+            if action == "delete_cm":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("DELETE FROM cms WHERE key=%s;", (key,))
+                # option : si des creatures pointent vers ce cm, on les null
+                cur.execute("UPDATE creatures SET cm_key=NULL, updated_at=now() WHERE cm_key=%s;", (key,))
+                conn.commit()
+                return go(f"CM supprimé: {key}")
+
+            return go("Action inconnue", "err")
+
