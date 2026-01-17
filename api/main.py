@@ -870,7 +870,7 @@ def admin_cms(
             lineages = [{"key": r[0], "name": r[1], "is_enabled": bool(r[2])} for r in cur.fetchall()]
 
             cur.execute("""
-                SELECT key, name, lineage_key, is_enabled, in_hatch_pool
+                SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
                 FROM cms
                 ORDER BY lineage_key, key;
             """)
@@ -880,7 +880,9 @@ def admin_cms(
                 "lineage_key": r[2],
                 "is_enabled": bool(r[3]),
                 "in_hatch_pool": bool(r[4]),
+                "media_url": r[5],
             } for r in cur.fetchall()]
+
 
     return templates.TemplateResponse("cms.html", {
         "request": request,
@@ -899,6 +901,7 @@ def admin_cms_action(
     cm_name: str | None = Form(None),
     lineage_key: str | None = Form(None),
     credentials: HTTPBasicCredentials = Depends(security),
+    media_url: str | None = Form(None),
 ):
     require_admin(credentials)
 
@@ -921,17 +924,30 @@ def admin_cms_action(
             if action == "add_cm":
                 if not (cm_key and cm_name and lineage_key):
                     return go("Champs manquants", "err")
+            
                 cm_key = cm_key.strip().lower()
+                cm_name = cm_name.strip()
+                lineage_key = lineage_key.strip().lower()
+                url = (media_url or "").strip()
+            
+                # Vérifier que la lignée existe
                 cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
                 if not cur.fetchone():
                     return go("Lineage inconnue", "err")
+            
+                # Créer le CM (hors pool par défaut)
                 cur.execute("""
-                    INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool)
-                    VALUES (%s, %s, %s, TRUE, FALSE)
-                    ON CONFLICT (key) DO NOTHING;
-                """, (cm_key, cm_name, lineage_key))
+                    INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool, media_url)
+                    VALUES (%s, %s, %s, TRUE, FALSE, %s)
+                    ON CONFLICT (key) DO UPDATE
+                    SET name = EXCLUDED.name,
+                        lineage_key = EXCLUDED.lineage_key,
+                        media_url = EXCLUDED.media_url;
+                """, (cm_key, cm_name, lineage_key, url))
+            
                 conn.commit()
                 return go(f"CM créé: {cm_key}")
+
 
             if action == "rename_cm":
                 if not (key and cm_name):
@@ -962,6 +978,14 @@ def admin_cms_action(
                 cur.execute("UPDATE creatures SET cm_key=NULL, updated_at=now() WHERE cm_key=%s;", (key,))
                 conn.commit()
                 return go(f"CM supprimé: {key}")
+            if action == "update_media_url":
+                if not key:
+                    return go("Key manquante", "err")
+                url = (media_url or "").strip()
+                cur.execute("UPDATE cms SET media_url=%s WHERE key=%s;", (url, key))
+                conn.commit()
+                return go(f"Media URL mis à jour: {key}")
+
 
             return go("Action inconnue", "err")
 
