@@ -218,13 +218,16 @@ def init_db():
                 ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name;
                 """
             )
-            INSERT INTO rp_lines (key, lines) VALUES
-              ('creature.stage0', '["🥚 L’œuf vibre faiblement…", "🥚 Une chaleur étrange émane de l’œuf…"]'),
-              ('creature.stage1', '["🐣 *Crac !* Une nouvelle vie apparaît.", "🐣 Le CapsMons vient de naître."]'),
-              ('evolve.announce', '["✨ Transformation !", "⚡ Évolution en cours !"]'),
-              ('cm.assigned', '["👾 Un CM a été attribué !", "🧬 Signature génétique détectée…"]')
-            ON CONFLICT (key) DO NOTHING;
-
+            cur.execute(
+                """
+                INSERT INTO rp_lines (key, lines) VALUES
+                  ('creature.stage0', '["🥚 L’œuf vibre faiblement…", "🥚 Une chaleur étrange émane de l’œuf…"]'),
+                  ('creature.stage1', '["🐣 *Crac !* Une nouvelle vie apparaît.", "🐣 Le CapsMons vient de naître."]'),
+                  ('evolve.announce', '["✨ Transformation !", "⚡ Évolution en cours !"]'),
+                  ('cm.assigned', '["👾 Un CM a été attribué !", "🧬 Signature génétique détectée…"]')
+                ON CONFLICT (key) DO NOTHING;
+                """
+            )
 
         conn.commit()
 
