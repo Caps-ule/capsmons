@@ -1217,7 +1217,7 @@ def overlay_show_page():
     /* état animé */
     opacity:0;
     transform: translateY(10px) scale(0.98);
-    transition: opacity 220ms ease, transform 220ms ease;
+    transition: opacity 500ms ease, transform 500ms ease;
     will-change: opacity, transform;
   }
   .card.showing{
