@@ -2,6 +2,8 @@ import os
 import time
 import asyncio
 import requests
+import aiohttp
+import random
 from twitchio.ext import commands
 
 API_CHOOSE_URL = "http://api:8000/internal/choose_lineage"
@@ -9,6 +11,9 @@ API_XP_URL = "http://api:8000/internal/xp"
 API_STATE_URL = "http://api:8000/internal/creature"
 API_LIVE_URL = "http://api:8000/internal/is_live"
 API_KEY = os.environ["INTERNAL_API_KEY"]
+API_RP_URL = "http://api:8000/internal/rp_bundle"
+_rp_cache = {"ts": 0.0, "rp": {}}
+
 
 _last_xp_at: dict[str, float] = {}
 _active_until: dict[str, float] = {}
@@ -20,6 +25,33 @@ def stage_label(stage: int) -> str:
         2: "🦴 Évolution 1",
         3: "👑 Évolution 2",
     }.get(stage, f"Stage {stage}")
+
+async def rp_get(key: str) -> str | None:
+    now = time.time()
+
+    # Refresh toutes les 60 secondes
+    if now - _rp_cache["ts"] > 60:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    API_RP_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=aiohttp.ClientTimeout(total=2),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        _rp_cache["rp"] = data.get("rp", {}) or {}
+                        _rp_cache["ts"] = now
+        except Exception:
+            # On garde le cache précédent si erreur
+            pass
+
+    lines = _rp_cache["rp"].get(key)
+    if not isinstance(lines, list) or not lines:
+        return None
+
+    return random.choice(lines)
+
 
 class Bot(commands.Bot):
     def __init__(self):
@@ -91,16 +123,14 @@ class Bot(commands.Bot):
             
                 # 4️⃣ Annonce UNIQUEMENT si évolution réelle
                 if after > before:
-                    msg = (
-                        f"@{message.author.name} "
-                        f"{stage_label(before)} ➜ {stage_label(after)} ✨"
-                    )
-            
-                    # 5️⃣ Annonce du CM uniquement si l’API l’indique
+                    intro = rp_get("evolve.announce") or "✨ Évolution !"
+                    msg = f"{intro} @{message.author.name} {stage_label(before)} ➜ {stage_label(after)}"
+                
                     cm_assigned = data.get("cm_assigned")
                     if cm_assigned:
-                        msg += f" | CM obtenu : {cm_assigned} 👾"
-            
+                        cm_line = rp_get("cm.assigned") or "👾 CM attribué !"
+                        msg += f" | {cm_line} {cm_assigned}"
+                
                     await message.channel.send(msg)
             
             except Exception as e:
@@ -159,41 +189,59 @@ class Bot(commands.Bot):
     @commands.command(name="creature")
     async def creature(self, ctx: commands.Context):
         login = ctx.author.name.lower()
+    
+        # 1) Récupérer l'état via l'API
         try:
             r = requests.get(
                 f"{API_STATE_URL}/{login}",
                 headers={"X-API-Key": API_KEY},
                 timeout=2,
             )
-            data = r.json()
-            lineage = data.get("lineage_key")
-            cm_key = data.get("cm_key")
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} erreur: API indisponible ({r.status_code}).")
+                return
+    
+            try:
+                data = r.json()
+            except Exception:
+                await ctx.send(f"@{ctx.author.name} erreur: réponse API invalide.")
+                return
+    
         except Exception:
             await ctx.send(f"@{ctx.author.name} erreur: impossible de récupérer ta créature.")
             return
-
+    
+        # 2) Champs principaux
         stage = int(data.get("stage", 0))
         xp_total = int(data.get("xp_total", 0))
         nxt = data.get("next", "Max")
         xp_to_next = int(data.get("xp_to_next", 0))
-
-        extra = ""
+    
+        lineage = data.get("lineage_key")
+        cm_key = data.get("cm_key")
+    
+        # 3) RP (phrase aléatoire selon le stage)
+        # clé attendue: creature.stage0/1/2/3
+        flavor = await rp_get(f"creature.stage{stage}")
+        flavor_txt = f" | {flavor}" if flavor else ""
+    
+        # 4) Infos lignée / CM
         if cm_key:
             extra = f" — CM: {cm_key} (lignée {lineage})"
         elif lineage:
             extra = f" — lignée: {lineage} (CM à l’éclosion)"
         else:
             extra = " — lignée: non choisie (utilise !choose)"
-
+    
+        # 5) Message final
         if nxt == "Max":
             await ctx.send(
-            f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — stade max.{extra}"
-        )
+                f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — stade max.{extra}{flavor_txt}"
+            )
         else:
             await ctx.send(
-                f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — prochain: {nxt} dans {xp_to_next} XP.{extra}"
-        )
-
+                f"@{ctx.author.name} {stage_label(stage)} — {xp_total} XP — prochain: {nxt} dans {xp_to_next} XP.{extra}{flavor_txt}"
+            )
 
     @commands.command(name="choose")
     async def choose(self, ctx: commands.Context):
