@@ -5,7 +5,7 @@ import hmac
 import hashlib
 import random
 import time
-import request
+import requests
 import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
@@ -248,6 +248,24 @@ def init_db():
                   lines JSONB NOT NULL DEFAULT '[]'::jsonb,
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
+                CREATE TABLE IF NOT EXISTS overlay_events (
+                   id SERIAL PRIMARY KEY,
+                   twitch_login TEXT NOT NULL,
+                   viewer_display TEXT NOT NULL,
+                   viewer_avatar TEXT NOT NULL,
+                   cm_key TEXT NOT NULL,
+                   cm_name TEXT NOT NULL,
+                   cm_media_url TEXT NOT NULL,
+                   xp_total INT NOT NULL,
+                   stage INT NOT NULL,
+                   stage_start_xp INT NOT NULL,
+                   next_stage_xp INT,
+                   expires_at TIMESTAMPTZ NOT NULL
+                );
+
+
+CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
+ON overlay_events(expires_at);
 
                 """
             )
@@ -1027,9 +1045,9 @@ def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicC
                 lines = json.loads(lines)
             except Exception:
                 lines = []
-                lines = lines if isinstance(lines, list) else []
-                text = "\n".join([str(x) for x in lines])
-                items.append({"key": k, "count": len(lines), "text": text})
+            lines = lines if isinstance(lines, list) else []
+            text = "\n".join([str(x) for x in lines])
+            items.append({"key": k, "count": len(lines), "text": text})
 
     return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
 
@@ -1129,7 +1147,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
 
     return {"ok": True}
 
-    @app.get("/overlay/state")
+@app.get("/overlay/state")
 def overlay_state():
     with get_db() as conn:
         with conn.cursor() as cur:
