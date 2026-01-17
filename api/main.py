@@ -1212,7 +1212,7 @@ def overlay_show_page():
     border:1px solid rgba(255,255,255,.12);
     backdrop-filter: blur(8px);
     min-width:760px;
-    max-width:900px;
+    max-width:700px;
 
     /* état animé */
     opacity:0;
