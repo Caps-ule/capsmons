@@ -660,7 +660,21 @@ def admin_action(
             )
 
             if action == "reset":
-                new_xp = 0
+                # Reset complet (solution B) : retour Œuf + efface lignée + efface CM
+                cur.execute("""
+                    UPDATE creatures
+                    SET xp_total = 0,
+                        stage = 0,
+                        lineage_key = NULL,
+                        cm_key = NULL,
+                        updated_at = now()
+                    WHERE twitch_login = %s;
+                """, (login,))
+                conn.commit()
+                return RedirectResponse(
+                    url=f"/admin/user/{login}?flash_kind=ok&flash=Reset%20complet%20(oeuf%20+%20lign%C3%A9e%20effac%C3%A9e)",
+                    status_code=303,
+                )
             elif action == "set":
                 new_xp = max(0, int(amount))
             else:  # give
