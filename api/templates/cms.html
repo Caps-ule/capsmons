@@ -105,6 +105,7 @@
           <th>Lignée</th>
           <th>Enabled</th>
           <th>Dans pool</th>
+          <th>Media</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -123,6 +124,14 @@
           <td><span class="pill">{{ cm.lineage_key }}</span></td>
           <td>{{ '✅' if cm.is_enabled else '❌' }}</td>
           <td>{{ '🎲' if cm.in_hatch_pool else '—' }}</td>
+          <td>
+            <form method="post" action="/admin/cms/action" class="row" style="margin:0">
+              <input type="hidden" name="action" value="update_media_url">
+              <input type="hidden" name="key" value="{{ cm.key }}">
+              <input name="media_url" value="{{ cm.media_url }}" placeholder="https://...gif/png" style="min-width:320px">
+              <button type="submit">Save</button>
+            </form>
+          </td>
           <td class="row">
             <form method="post" action="/admin/cms/action" style="display:inline">
               <input type="hidden" name="action" value="toggle_cm_enabled">
