@@ -13,10 +13,44 @@ API_LIVE_URL = "http://api:8000/internal/is_live"
 API_KEY = os.environ["INTERNAL_API_KEY"]
 API_RP_URL = "http://api:8000/internal/rp_bundle"
 _rp_cache = {"ts": 0.0, "rp": {}}
+API_SHOW_URL = "http://api:8000/internal/trigger_show"
 
 
 _last_xp_at: dict[str, float] = {}
 _active_until: dict[str, float] = {}
+_show_last = {"global": 0.0, "users": {}}
+
+@commands.command(name="show")
+async def show(self, ctx: commands.Context):
+    import time
+    now = time.time()
+    login = ctx.author.name.lower()
+
+    # cooldowns
+    if now - _show_last["global"] < 8:
+        return
+    if now - _show_last["users"].get(login, 0) < 30:
+        return
+
+    try:
+        r = requests.post(
+            API_SHOW_URL,
+            headers={"X-API-Key": API_KEY},
+            json={"twitch_login": login},
+            timeout=2,
+        )
+        if r.status_code != 200:
+            # pas de spam chat, juste log
+            print("[BOT] show fail:", r.status_code, r.text[:200], flush=True)
+            return
+    except Exception as e:
+        print("[BOT] show error:", e, flush=True)
+        return
+
+    _show_last["global"] = now
+    _show_last["users"][login] = now
+    await ctx.send(f"@{ctx.author.name} 👾 affichage du CapsMons !")
+
 
 def stage_label(stage: int) -> str:
     return {

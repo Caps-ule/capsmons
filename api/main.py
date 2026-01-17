@@ -4,7 +4,8 @@ import secrets
 import hmac
 import hashlib
 import random
-
+import time
+import request
 import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
@@ -15,6 +16,7 @@ from starlette.templating import Jinja2Templates
 app = FastAPI()
 security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
+_twitch_token_cache = {"token": None, "exp": 0.0}
 
 
 # -------------------------
@@ -49,6 +51,57 @@ def require_admin(creds: HTTPBasicCredentials):
             detail="Unauthorized",
             headers={"WWW-Authenticate": "Basic"},
         )
+
+# -------------------------
+# Auth app_twitch_show
+# -------------------------
+
+def stage_bounds(stage: int):
+    hatch, evo1, evo2 = thresholds()
+    if stage <= 0:
+        return 0, hatch
+    if stage == 1:
+        return hatch, evo1
+    if stage == 2:
+        return evo1, evo2
+    return evo2, None  # max
+
+def twitch_app_token() -> str:
+    now = time.time()
+    if _twitch_token_cache["token"] and now < _twitch_token_cache["exp"] - 60:
+        return _twitch_token_cache["token"]
+
+    cid = os.environ["TWITCH_CLIENT_ID"]
+    secret = os.environ["TWITCH_CLIENT_SECRET"]
+
+    r = requests.post(
+        "https://id.twitch.tv/oauth2/token",
+        data={"client_id": cid, "client_secret": secret, "grant_type": "client_credentials"},
+        timeout=5,
+    )
+    r.raise_for_status()
+    data = r.json()
+    token = data["access_token"]
+    exp = now + int(data.get("expires_in", 3600))
+    _twitch_token_cache.update({"token": token, "exp": exp})
+    return token
+
+def twitch_user_profile(login: str) -> tuple[str, str]:
+    """Returns (display_name, avatar_url)."""
+    cid = os.environ["TWITCH_CLIENT_ID"]
+    token = twitch_app_token()
+
+    r = requests.get(
+        f"https://api.twitch.tv/helix/users?login={login}",
+        headers={"Authorization": f"Bearer {token}", "Client-Id": cid},
+        timeout=5,
+    )
+    r.raise_for_status()
+    data = r.json().get("data", [])
+    if not data:
+        return login, ""
+    u = data[0]
+    return u.get("display_name", login), u.get("profile_image_url", "")
 
 
 # -------------------------
@@ -1001,3 +1054,169 @@ def admin_rp_delete(
         conn.commit()
 
     return RedirectResponse(url=f"/admin/rp?flash=Supprim%C3%A9%20:{key}", status_code=303)
+
+@app.post("/internal/trigger_show")
+def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "5"))
+    duration = max(2, min(duration, 15))  # clamp
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # creature
+            cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No creature")
+            xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
+            if not cm_key:
+                raise HTTPException(status_code=400, detail="No CM assigned")
+
+            # cm info
+            cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
+            cmrow = cur.fetchone()
+            if not cmrow:
+                raise HTTPException(status_code=400, detail="Unknown CM")
+            cm_name, media_url = cmrow[0], cmrow[1]
+            if not media_url:
+                raise HTTPException(status_code=400, detail="CM missing media_url")
+
+        # Twitch profile (outside cursor, but inside conn is ok)
+    display, avatar = twitch_user_profile(login)
+
+    stage_start, next_xp = stage_bounds(stage)
+    expires_sql = f"now() + interval '{duration} seconds'"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                INSERT INTO overlay_events
+                  (twitch_login, viewer_display, viewer_avatar, cm_key, cm_name, cm_media_url,
+                   xp_total, stage, stage_start_xp, next_stage_xp, expires_at)
+                VALUES
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,{expires_sql});
+            """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp))
+        conn.commit()
+
+    return {"ok": True}
+
+    @app.get("/overlay/state")
+def overlay_state():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
+                       xp_total, stage, stage_start_xp, next_stage_xp
+                FROM overlay_events
+                WHERE expires_at > now()
+                ORDER BY id DESC
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+
+    if not row:
+        return {"show": False}
+
+    viewer_display, viewer_avatar, cm_name, cm_media_url, xp_total, stage, start_xp, next_xp = row
+    xp_total = int(xp_total)
+    start_xp = int(start_xp)
+    next_xp = int(next_xp) if next_xp is not None else None
+
+    pct = None
+    if next_xp is not None and next_xp > start_xp:
+        pct = int(((xp_total - start_xp) / (next_xp - start_xp)) * 100)
+        pct = max(0, min(pct, 100))
+
+    return {
+        "show": True,
+        "viewer": {"name": viewer_display, "avatar": viewer_avatar},
+        "cm": {"name": cm_name, "media": cm_media_url},
+        "xp": {"total": xp_total, "stage": int(stage), "pct": pct, "to_next": (next_xp - xp_total) if next_xp else None},
+    }
+
+
+@app.get("/overlay/show", response_class=HTMLResponse)
+def overlay_show_page():
+    # HTML simple (pas de template obligatoire)
+    return HTMLResponse("""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+  .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .card{display:none;gap:16px;align-items:center;background:rgba(10,15,20,.85);border:1px solid rgba(255,255,255,.12);
+        border-radius:18px;padding:18px 20px;min-width:720px;max-width:1000px}
+  .avatar{width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid rgba(255,255,255,.15)}
+  .cmimg{width:140px;height:140px;border-radius:18px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
+  .title{font-size:22px;color:#e6edf3;font-weight:800;line-height:1.1}
+  .sub{font-size:14px;color:#9aa4b2;margin-top:2px}
+  .bar{margin-top:10px;height:12px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.12)}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.5))}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="card" class="card">
+    <img id="avatar" class="avatar" src="" alt="">
+    <div style="flex:1">
+      <div id="viewer" class="sub"></div>
+      <div id="cmname" class="title"></div>
+      <div id="xptext" class="sub"></div>
+      <div class="bar"><div id="fill" class="fill"></div></div>
+    </div>
+    <img id="cmimg" class="cmimg" src="" alt="">
+  </div>
+</div>
+
+<script>
+let showing = false;
+let hideTimer = null;
+
+async function tick(){
+  try{
+    const r = await fetch('/overlay/state', {cache:'no-store'});
+    const j = await r.json();
+    const card = document.getElementById('card');
+
+    if(!j.show){
+      if(showing){
+        card.style.display='none';
+        showing=false;
+      }
+      return;
+    }
+
+    // show
+    document.getElementById('viewer').textContent = `@${j.viewer.name}`;
+    document.getElementById('avatar').src = j.viewer.avatar || '';
+    document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
+    document.getElementById('cmimg').src = j.cm.media || '';
+
+    const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
+    document.getElementById('fill').style.width = pct + '%';
+    const toNext = j.xp.to_next;
+    document.getElementById('xptext').textContent = (toNext ? `${j.xp.total} XP • prochain palier dans ${toNext} XP` : `${j.xp.total} XP • stade max`);
+
+    card.style.display='flex';
+    showing=true;
+
+  }catch(e){
+    // ignore
+  }
+}
+
+setInterval(tick, 500);
+tick();
+</script>
+</body>
+</html>
+""")
+
