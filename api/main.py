@@ -1193,59 +1193,157 @@ def overlay_show_page():
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
-  .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-  .card{display:none;gap:16px;align-items:center;background:rgba(10,15,20,.85);border:1px solid rgba(255,255,255,.12);
-        border-radius:18px;padding:18px 20px;min-width:720px;max-width:1000px}
-  .avatar{width:64px;height:64px;border-radius:16px;object-fit:cover;border:1px solid rgba(255,255,255,.15)}
-  .cmimg{width:140px;height:140px;border-radius:18px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
-  .title{font-size:22px;color:#e6edf3;font-weight:800;line-height:1.1}
-  .sub{font-size:14px;color:#9aa4b2;margin-top:2px}
-  .bar{margin-top:10px;height:12px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.12)}
-  .fill{height:100%;width:0%;background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.5))}
+
+  /* Conteneur global */
+  .wrap{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+
+  /* Viewer petit en haut à gauche */
+  .viewer{
+    position:fixed;
+    top:24px; left:24px;
+    display:none;
+    align-items:center; gap:10px;
+    padding:10px 12px;
+    border-radius:14px;
+    background:rgba(10,15,20,.70);
+    border:1px solid rgba(255,255,255,.12);
+    backdrop-filter: blur(6px);
+  }
+  .avatar{
+    width:44px; height:44px;
+    border-radius:12px;
+    object-fit:cover;
+    border:1px solid rgba(255,255,255,.15)
+  }
+  .viewerName{
+    font-size:14px;
+    font-weight:800;
+    color:#e6edf3;
+    line-height:1.1;
+  }
+  .viewerSub{
+    font-size:12px;
+    color:#9aa4b2;
+    margin-top:2px;
+  }
+
+  /* Bloc principal CM */
+  .card{
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+    padding:22px 26px;
+    border-radius:22px;
+    background:rgba(10,15,20,.78);
+    border:1px solid rgba(255,255,255,.12);
+    backdrop-filter: blur(8px);
+    min-width:760px;
+    max-width:1100px;
+  }
+
+  /* CM très grand */
+  .cmimg{
+    width:420px;
+    height:420px;
+    object-fit:contain;
+    border-radius:24px;
+    background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.10);
+  }
+
+  /* Barre XP dessous */
+  .barWrap{
+    width:520px;
+    height:14px;
+    border-radius:999px;
+    background:rgba(255,255,255,.10);
+    border:1px solid rgba(255,255,255,.12);
+    overflow:hidden;
+  }
+  .fill{
+    height:100%;
+    width:0%;
+    background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45));
+  }
+
+  /* Texte sous la barre */
+  .cmname{
+    font-size:28px;
+    font-weight:900;
+    color:#e6edf3;
+    text-align:center;
+    line-height:1.1;
+  }
+  .xptext{
+    font-size:13px;
+    color:#9aa4b2;
+    text-align:center;
+    margin-top:-6px;
+  }
 </style>
 </head>
+
 <body>
-<div class="wrap">
-  <div id="card" class="card">
-    <img id="avatar" class="avatar" src="" alt="">
-    <div style="flex:1">
-      <div id="viewer" class="sub"></div>
-      <div id="cmname" class="title"></div>
-      <div id="xptext" class="sub"></div>
-      <div class="bar"><div id="fill" class="fill"></div></div>
+  <div class="wrap">
+    <!-- Viewer petit -->
+    <div id="viewerBox" class="viewer">
+      <img id="avatar" class="avatar" src="" alt="">
+      <div>
+        <div id="viewer" class="viewerName"></div>
+        <div class="viewerSub">a utilisé !show</div>
+      </div>
     </div>
-    <img id="cmimg" class="cmimg" src="" alt="">
+
+    <!-- Bloc CM -->
+    <div id="card" class="card">
+      <img id="cmimg" class="cmimg" src="" alt="">
+      <div class="barWrap"><div id="fill" class="fill"></div></div>
+      <div id="cmname" class="cmname">CapsMons</div>
+      <div id="xptext" class="xptext"></div>
+    </div>
   </div>
-</div>
 
 <script>
 let showing = false;
-let hideTimer = null;
 
 async function tick(){
   try{
     const r = await fetch('/overlay/state', {cache:'no-store'});
     const j = await r.json();
+
     const card = document.getElementById('card');
+    const viewerBox = document.getElementById('viewerBox');
 
     if(!j.show){
       if(showing){
         card.style.display='none';
+        viewerBox.style.display='none';
         showing=false;
       }
       return;
     }
 
-    // show
+    // Viewer (petit)
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
     document.getElementById('avatar').src = j.viewer.avatar || '';
-    document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
+    viewerBox.style.display = 'flex';
+
+    // CM (grand)
     document.getElementById('cmimg').src = j.cm.media || '';
+    document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
 
     const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
     document.getElementById('fill').style.width = pct + '%';
+
     const toNext = j.xp.to_next;
-    document.getElementById('xptext').textContent = (toNext ? `${j.xp.total} XP • prochain palier dans ${toNext} XP` : `${j.xp.total} XP • stade max`);
+    document.getElementById('xptext').textContent =
+      (toNext ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
+              : `${j.xp.total} XP • stade max`);
 
     card.style.display='flex';
     showing=true;
