@@ -1201,37 +1201,7 @@ def overlay_show_page():
     pointer-events:none;
   }
 
-  /* Viewer petit en haut à gauche */
-  .viewer{
-    position:fixed;
-    top:24px; left:24px;
-    display:none;
-    align-items:center; gap:10px;
-    padding:10px 12px;
-    border-radius:14px;
-    background:rgba(10,15,20,.70);
-    border:1px solid rgba(255,255,255,.12);
-    backdrop-filter: blur(6px);
-  }
-  .avatar{
-    width:44px; height:44px;
-    border-radius:12px;
-    object-fit:cover;
-    border:1px solid rgba(255,255,255,.15)
-  }
-  .viewerName{
-    font-size:14px;
-    font-weight:800;
-    color:#e6edf3;
-    line-height:1.1;
-  }
-  .viewerSub{
-    font-size:12px;
-    color:#9aa4b2;
-    margin-top:2px;
-  }
-
-  /* Bloc principal CM */
+  /* Carte principale */
   .card{
     display:none;
     flex-direction:column;
@@ -1244,6 +1214,44 @@ def overlay_show_page():
     backdrop-filter: blur(8px);
     min-width:760px;
     max-width:1100px;
+  }
+
+  /* Bandeau viewer (même largeur que la card) */
+  .viewerBar{
+    width:100%;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:10px 14px;
+    margin-bottom:6px;
+    border-radius:14px;
+    background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.10);
+  }
+
+  .avatar{
+    width:40px;
+    height:40px;
+    border-radius:10px;
+    object-fit:cover;
+    border:1px solid rgba(255,255,255,.15);
+  }
+
+  .viewerText{
+    display:flex;
+    flex-direction:column;
+  }
+
+  .viewerName{
+    font-size:14px;
+    font-weight:800;
+    color:#e6edf3;
+    line-height:1.1;
+  }
+
+  .viewerSub{
+    font-size:11px;
+    color:#9aa4b2;
   }
 
   /* CM très grand */
@@ -1290,21 +1298,23 @@ def overlay_show_page():
 
 <body>
   <div class="wrap">
-    <!-- Viewer petit -->
-    <div id="viewerBox" class="viewer">
-      <img id="avatar" class="avatar" src="" alt="">
-      <div>
-        <div id="viewer" class="viewerName"></div>
-        <div class="viewerSub">a utilisé !show</div>
-      </div>
-    </div>
-
-    <!-- Bloc CM -->
     <div id="card" class="card">
+
+      <!-- Bandeau viewer -->
+      <div id="viewerBar" class="viewerBar">
+        <img id="avatar" class="avatar" src="" alt="">
+        <div class="viewerText">
+          <div id="viewer" class="viewerName"></div>
+          <div class="viewerSub">a utilisé !show</div>
+        </div>
+      </div>
+
+      <!-- CM -->
       <img id="cmimg" class="cmimg" src="" alt="">
       <div class="barWrap"><div id="fill" class="fill"></div></div>
       <div id="cmname" class="cmname">CapsMons</div>
       <div id="xptext" class="xptext"></div>
+
     </div>
   </div>
 
@@ -1317,23 +1327,20 @@ async function tick(){
     const j = await r.json();
 
     const card = document.getElementById('card');
-    const viewerBox = document.getElementById('viewerBox');
 
     if(!j.show){
       if(showing){
         card.style.display='none';
-        viewerBox.style.display='none';
         showing=false;
       }
       return;
     }
 
-    // Viewer (petit)
+    // Viewer
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
     document.getElementById('avatar').src = j.viewer.avatar || '';
-    viewerBox.style.display = 'flex';
 
-    // CM (grand)
+    // CM
     document.getElementById('cmimg').src = j.cm.media || '';
     document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
 
