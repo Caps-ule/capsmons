@@ -1312,16 +1312,21 @@ def overlay_show_page():
 
 <script>
 let showing = false;
+let hideTimer = null;
+const DISPLAY_MS = 7000;
 
 function showCard(){
   const card = document.getElementById('card');
-  if (showing) return;
+  if (!showing) {
+    card.style.display = 'flex';
+    void card.offsetWidth; // force reflow
+    card.classList.add('showing');
+    showing = true;
+  }
 
-  card.style.display = 'flex';
-  // forcer un reflow pour que la transition s'applique
-  void card.offsetWidth;
-  card.classList.add('showing');
-  showing = true;
+  // reset timer
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = setTimeout(hideCard, DISPLAY_MS);
 }
 
 function hideCard(){
@@ -1329,11 +1334,12 @@ function hideCard(){
   if (!showing) return;
 
   card.classList.remove('showing');
-  // attendre la fin de transition avant de display:none
   setTimeout(() => {
     card.style.display = 'none';
   }, 230);
+
   showing = false;
+  hideTimer = null;
 }
 
 async function tick(){
@@ -1342,24 +1348,27 @@ async function tick(){
     const j = await r.json();
 
     if(!j.show){
-      hideCard();
+      // on NE cache PLUS ici → timer only
       return;
     }
 
-    // Data bind
+    // Viewer
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
     document.getElementById('avatar').src = j.viewer.avatar || '';
 
+    // CM
     document.getElementById('cmimg').src = j.cm.media || '';
     document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
 
+    // XP
     const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
     document.getElementById('fill').style.width = pct + '%';
 
     const toNext = j.xp.to_next;
     document.getElementById('xptext').textContent =
-      (toNext ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
-              : `${j.xp.total} XP • stade max`);
+      toNext
+        ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
+        : `${j.xp.total} XP • stade max`;
 
     showCard();
 
@@ -1371,6 +1380,7 @@ async function tick(){
 setInterval(tick, 500);
 tick();
 </script>
+
 </body>
 </html>
 
