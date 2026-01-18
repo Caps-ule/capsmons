@@ -817,6 +817,101 @@ def drop_start(payload: dict, x_api_key: str | None = Header(default=None)):
 
     return {"ok": True, "drop_id": int(drop_id), "mode": mode, "title": title, "duration_seconds": duration}
 
+@app.post("/internal/drop/join")
+def drop_join(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # drop actif ?
+            cur.execute("""
+                SELECT id, title, mode, ends_at
+                FROM drops
+                WHERE is_active = TRUE
+                ORDER BY ends_at ASC
+                LIMIT 1;
+            """)
+            d = cur.fetchone()
+            if not d:
+                return {"ok": True, "active": False}
+
+            drop_id, title, mode, ends_at = d
+
+            # encore dans le temps ?
+            cur.execute("SELECT now() < %s;", (ends_at,))
+            if not bool(cur.fetchone()[0]):
+                # terminé -> on le laisse à resolve
+                return {"ok": True, "active": False}
+
+            # insert participation (unique)
+            joined = True
+            try:
+                cur.execute("""
+                    INSERT INTO drop_participants (drop_id, twitch_login)
+                    VALUES (%s, %s);
+                """, (drop_id, login))
+            except Exception:
+                joined = False
+
+            # count participants
+            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
+            count = int(cur.fetchone()[0])
+
+        conn.commit()
+
+    return {"ok": True, "active": True, "drop_id": int(drop_id), "title": title, "mode": mode, "joined": joined, "count": count}
+
+@app.post("/internal/drop/resolve")
+def drop_resolve(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, mode, ends_at, is_active
+                FROM drops
+                WHERE is_active = TRUE
+                ORDER BY ends_at ASC
+                LIMIT 1;
+            """)
+            d = cur.fetchone()
+            if not d:
+                return {"ok": True, "resolved": False}
+
+            drop_id, title, mode, ends_at, is_active = d
+
+            cur.execute("SELECT now() >= %s;", (ends_at,))
+            if not bool(cur.fetchone()[0]):
+                # pas fini
+                cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (ends_at,))
+                remaining = max(0, int(cur.fetchone()[0]))
+                return {"ok": True, "resolved": False, "remaining": remaining, "title": title, "mode": mode}
+
+            # fini -> récupérer participants
+            cur.execute("""
+                SELECT twitch_login, joined_at
+                FROM drop_participants
+                WHERE drop_id=%s
+                ORDER BY joined_at ASC;
+            """, (drop_id,))
+            participants = [r[0] for r in cur.fetchall()]
+
+            winner = None
+            if mode == "first":
+                winner = participants[0] if participants else None
+            else:  # random
+                winner = random.choice(participants) if participants else None
+
+            # désactiver le drop
+            cur.execute("UPDATE drops SET is_active = FALSE WHERE id=%s;", (drop_id,))
+        conn.commit()
+
+    return {"ok": True, "resolved": True, "title": title, "mode": mode, "winner": winner, "participants": participants}
+
 # -------------------------
 # EventSub webhook (optional)
 # -------------------------
