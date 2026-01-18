@@ -10,10 +10,12 @@ import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
 _twitch_token_cache = {"token": None, "exp": 0.0}
@@ -1309,11 +1311,14 @@ def overlay_show_page():
       <div id="xptext" class="xptext"></div>
     </div>
   </div>
+  <audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
 
 <script>
 let showing = false;
 let hideTimer = null;
 const DISPLAY_MS = 7000;
+let lastSig = "";
+const sfx = document.getElementById('sfx');
 
 function showCard(){
   const card = document.getElementById('card');
@@ -1351,6 +1356,15 @@ async function tick(){
       // on NE cache PLUS ici → timer only
       return;
     }
+
+    const sig = `${j.viewer.name}|${j.cm.name}|${j.xp.total}`;
+
+    if (sig !== lastSig) {
+      lastSig = sig;
+      playSfx();      // 🔊 SON SYNCHRONISÉ
+    }
+
+
 
     // Viewer
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
