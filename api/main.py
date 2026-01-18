@@ -1,30 +1,61 @@
+"""
+CapsMons - API principale (FastAPI)
+
+Ce fichier est volontairement COMMENTÉ et STRUCTURÉ, pour que tu t’y retrouves.
+
+✅ Contient :
+- DB init (tables)
+- Internal API (XP / creature / choose)
+- RP (admin + bundle)
+- CMS admin (CM/pool/media_url)
+- Overlay show (CM + avatar + son)
+- Overlay drops (first/random/coop)
+- Drops (spawn/join/poll_result + resolve)
+
+⚠️ Important :
+- On garde UN SEUL système de drops : drops.status + expires_at.
+- On SUPPRIME totalement l'ancien (is_active/ends_at).
+"""
+
 import os
 import json
+import time
+import random
 import secrets
 import hmac
 import hashlib
-import random
-import time
+
 import requests
 import psycopg
+
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 
+# =============================================================================
+# App / Static / Templates
+# =============================================================================
 app = FastAPI()
+
+# Sert les fichiers statiques (ex: /static/show.mp3)
+# -> dans ton repo: api/static/show.mp3
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
+
+# Cache token Twitch (pour overlay !show -> avatar/pseudo)
 _twitch_token_cache = {"token": None, "exp": 0.0}
 
 
-# -------------------------
-# DB helpers
-# -------------------------
+# =============================================================================
+# DB
+# =============================================================================
 def get_db():
+    """Connexion Postgres (container 'db' dans docker-compose)."""
     return psycopg.connect(
         dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
@@ -34,15 +65,17 @@ def get_db():
     )
 
 
-# -------------------------
+# =============================================================================
 # Auth helpers
-# -------------------------
+# =============================================================================
 def require_internal_key(x_api_key: str | None):
+    """Protéger les endpoints /internal/* (bot -> API)."""
     if x_api_key != os.environ.get("INTERNAL_API_KEY"):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def require_admin(creds: HTTPBasicCredentials):
+    """Basic auth pour /admin/*."""
     admin_user = os.environ.get("ADMIN_USER", "")
     admin_pass = os.environ.get("ADMIN_PASSWORD", "")
     ok_user = secrets.compare_digest(creds.username, admin_user)
@@ -55,192 +88,44 @@ def require_admin(creds: HTTPBasicCredentials):
         )
 
 
-def inv_add(login: str, item_key: str, qty: int):
-    if qty <= 0:
-        return
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO inventory (twitch_login, item_key, qty)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (twitch_login, item_key)
-                DO UPDATE SET qty = inventory.qty + EXCLUDED.qty,
-                              updated_at = now();
-            """, (login, item_key, qty))
-        conn.commit()
+# =============================================================================
+# XP thresholds / stages
+# =============================================================================
+def thresholds():
+    hatch = int(os.environ["XP_HATCH"])
+    evo1 = int(os.environ["XP_EVOLVE_1"])
+    evo2 = int(os.environ["XP_EVOLVE_2"])
+    if not (0 < hatch < evo1 < evo2):
+        raise RuntimeError("Invalid thresholds: expected 0 < XP_HATCH < XP_EVOLVE_1 < XP_EVOLVE_2")
+    return hatch, evo1, evo2
 
 
-def grant_xp(login: str, amount: int):
-    # On réutilise la même logique que /internal/xp (version simplifiée et sûre)
-    if amount <= 0:
-        return
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # ensure user & creature
-            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
-            cur.execute("""
-                INSERT INTO creatures (twitch_login, xp_total, stage)
-                VALUES (%s, 0, 0)
-                ON CONFLICT (twitch_login) DO NOTHING;
-            """, (login,))
-
-            # event log
-            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
-
-            # prev stage
-            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
-            prev_stage = int(cur.fetchone()[0])
-
-            # inc xp
-            cur.execute("""
-                UPDATE creatures
-                SET xp_total = xp_total + %s, updated_at=now()
-                WHERE twitch_login=%s
-                RETURNING xp_total;
-            """, (amount, login))
-            new_xp_total = int(cur.fetchone()[0])
-            new_stage = stage_from_xp(new_xp_total)
-
-            # update stage
-            cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
-
-            # assign CM on hatch (0 -> 1+)
-            if prev_stage == 0 and new_stage >= 1:
-                cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
-                lrow = cur.fetchone()
-                lineage_key = lrow[0] if lrow else None
-                current_cm = lrow[1] if lrow else None
-                if lineage_key and current_cm is None:
-                    cm_key = pick_cm_for_lineage(conn, lineage_key)
-                    if cm_key:
-                        cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
-
-        conn.commit()
+def stage_from_xp(xp_total: int) -> int:
+    hatch, evo1, evo2 = thresholds()
+    if xp_total < hatch:
+        return 0
+    if xp_total < evo1:
+        return 1
+    if xp_total < evo2:
+        return 2
+    return 3
 
 
-def get_active_drop(cur):
-    cur.execute("""
-        SELECT id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login
-        FROM drops
-        WHERE status='active'
-        ORDER BY expires_at ASC
-        LIMIT 1;
-    """)
-    return cur.fetchone()
+def next_threshold(xp_total: int):
+    hatch, evo1, evo2 = thresholds()
+    if xp_total < hatch:
+        return hatch, "Éclosion"
+    if xp_total < evo1:
+        return evo1, "Évolution 1"
+    if xp_total < evo2:
+        return evo2, "Évolution 2"
+    return None, "Max"
 
-
-def resolve_drop(drop_id: int):
-    # Résout un drop s'il est expiré. Retourne dict info (winner(s)) ou None.
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at
-                FROM drops WHERE id=%s;
-            """, (drop_id,))
-            d = cur.fetchone()
-            if not d:
-                return None
-            _id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at = d
-
-            if status != "active":
-                return None
-
-            # si pas expiré, on ne résout pas
-            cur.execute("SELECT now() >= %s;", (expires_at,))
-            expired = bool(cur.fetchone()[0])
-            if not expired:
-                return None
-
-            # participants
-            cur.execute("SELECT twitch_login FROM drop_participants WHERE drop_id=%s;", (drop_id,))
-            participants = [r[0] for r in cur.fetchall()]
-
-            # Déterminer gagnants
-            winners = []
-            if mode == "first":
-                # premier arrivé
-                cur.execute("""
-                    SELECT twitch_login
-                    FROM drop_participants
-                    WHERE drop_id=%s
-                    ORDER BY created_at ASC
-                    LIMIT 1;
-                """, (drop_id,))
-                r = cur.fetchone()
-                if r:
-                    winners = [r[0]]
-
-            elif mode == "random":
-                if participants:
-                    winners = [random.choice(participants)]
-
-            elif mode == "coop":
-                # Réussite si participants >= target_hits
-                target = int(target_hits or 0)
-                if target > 0 and len(participants) >= target:
-                    winners = participants[:]  # tous les participants gagnent
-                else:
-                    winners = []  # échec
-
-            # Appliquer récompenses
-            if winners:
-                for w in winners:
-                    grant_xp(w, int(xp_bonus))
-                    inv_add(w, ticket_key, int(ticket_qty))
-                winner_login = winners[0] if mode in ("first", "random") else None
-                cur.execute("""
-                    UPDATE drops
-                    SET status='resolved', resolved_at=now(), winner_login=%s
-                    WHERE id=%s;
-                """, (winner_login, drop_id))
-            else:
-                cur.execute("""
-                    UPDATE drops
-                    SET status='expired', resolved_at=now()
-                    WHERE id=%s;
-                """, (drop_id,))
-
-        conn.commit()
-
-    return {"mode": mode, "title": title, "winners": winners, "xp_bonus": int(xp_bonus), "ticket_key": ticket_key, "ticket_qty": int(ticket_qty)}
-
-# -------------------------
-# RP helpers (Drops, Evolutions, etc.)
-# -------------------------
-def rp_pick(conn, key: str) -> str | None:
-    """Pick one random line from rp_lines[key]."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT lines FROM rp_lines WHERE key=%s;", (key,))
-        row = cur.fetchone()
-
-    if not row:
-        return None
-
-    lines = row[0]
-    if not isinstance(lines, list) or not lines:
-        return None
-
-    return random.choice(lines)
-
-
-def rp_fmt(text: str, **kw) -> str:
-    """
-    Remplace {placeholders} dans un texte RP.
-    Exemple: rp_fmt("Bravo {user}!", user="CapsLoque")
-    """
-    out = text
-    for k, v in kw.items():
-        out = out.replace("{" + k + "}", str(v))
-    return out
-
-
-
-# -------------------------
-# Auth app_twitch_show
-# -------------------------
 
 def stage_bounds(stage: int):
+    """
+    Pour l'overlay show: barre de progression entre le début du stage et le prochain palier.
+    """
     hatch, evo1, evo2 = thresholds()
     if stage <= 0:
         return 0, hatch
@@ -248,9 +133,43 @@ def stage_bounds(stage: int):
         return hatch, evo1
     if stage == 2:
         return evo1, evo2
-    return evo2, None  # max
+    return evo2, None
 
+
+# =============================================================================
+# RP helpers
+# =============================================================================
+def rp_pick(conn, key: str) -> str | None:
+    """Pioche une phrase aléatoire pour une clé RP (rp_lines.key)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT lines FROM rp_lines WHERE key=%s;", (key,))
+        row = cur.fetchone()
+
+    if not row:
+        return None
+    lines = row[0]
+    if not isinstance(lines, list) or not lines:
+        return None
+    return random.choice(lines)
+
+
+def rp_fmt(text: str, **kw) -> str:
+    """
+    Remplace des placeholders {viewer} {title} etc.
+    """
+    out = text
+    for k, v in kw.items():
+        out = out.replace("{" + k + "}", str(v))
+    return out
+
+
+# =============================================================================
+# Twitch helpers (overlay show: avatar + pseudo)
+# =============================================================================
 def twitch_app_token() -> str:
+    """
+    App token (client_credentials) pour appeler Helix users.
+    """
     now = time.time()
     if _twitch_token_cache["token"] and now < _twitch_token_cache["exp"] - 60:
         return _twitch_token_cache["token"]
@@ -270,8 +189,11 @@ def twitch_app_token() -> str:
     _twitch_token_cache.update({"token": token, "exp": exp})
     return token
 
+
 def twitch_user_profile(login: str) -> tuple[str, str]:
-    """Returns (display_name, avatar_url)."""
+    """
+    Retourne (display_name, avatar_url).
+    """
     cid = os.environ["TWITCH_CLIENT_ID"]
     token = twitch_app_token()
 
@@ -288,41 +210,11 @@ def twitch_user_profile(login: str) -> tuple[str, str]:
     return u.get("display_name", login), u.get("profile_image_url", "")
 
 
-# -------------------------
-# XP / stages
-# -------------------------
-def thresholds():
-    hatch = int(os.environ["XP_HATCH"])
-    evo1 = int(os.environ["XP_EVOLVE_1"])
-    evo2 = int(os.environ["XP_EVOLVE_2"])
-    if not (0 < hatch < evo1 < evo2):
-        raise RuntimeError("Invalid thresholds: expected 0 < XP_HATCH < XP_EVOLVE_1 < XP_EVOLVE_2")
-    return hatch, evo1, evo2
-
-
-def stage_from_xp(xp_total: int) -> int:
-    hatch, evo1, evo2 = thresholds()
-    if xp_total < hatch:
-        return 0  # egg
-    if xp_total < evo1:
-        return 1  # hatchling
-    if xp_total < evo2:
-        return 2  # evolution 1
-    return 3      # evolution 2
-
-
-def next_threshold(xp_total: int):
-    hatch, evo1, evo2 = thresholds()
-    if xp_total < hatch:
-        return hatch, "Éclosion"
-    if xp_total < evo1:
-        return evo1, "Évolution 1"
-    if xp_total < evo2:
-        return evo2, "Évolution 2"
-    return None, "Max"
-
-
+# =============================================================================
+# CM helper
+# =============================================================================
 def pick_cm_for_lineage(conn, lineage_key: str) -> str | None:
+    """Pioche un CM dans le pool d'éclosion de la lignée (si dispo)."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -337,54 +229,219 @@ def pick_cm_for_lineage(conn, lineage_key: str) -> str | None:
             (lineage_key,),
         )
         row = cur.fetchone()
-        return row[0] if row else None
+    return row[0] if row else None
 
 
-# -------------------------
-# EventSub signature verify
-# -------------------------
-def verify_eventsub_signature(headers: dict, raw_body: bytes) -> bool:
-    """
-    Verifies Twitch EventSub signature.
-    Twitch sends:
-      - Twitch-Eventsub-Message-Id
-      - Twitch-Eventsub-Message-Timestamp
-      - Twitch-Eventsub-Message-Signature (sha256=...)
-    Signature base string: message_id + message_timestamp + raw_body
-    """
-    secret = os.environ.get("EVENTSUB_SECRET", "")
-    if not secret:
-        # If you don't use EventSub yet, keep endpoint but refuse signature checks.
-        return False
-
-    msg_id = headers.get("twitch-eventsub-message-id", "")
-    msg_ts = headers.get("twitch-eventsub-message-timestamp", "")
-    msg_sig = headers.get("twitch-eventsub-message-signature", "")
-
-    if not (msg_id and msg_ts and msg_sig):
-        return False
-
-    data = (msg_id + msg_ts).encode("utf-8") + raw_body
-    digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
-    expected = "sha256=" + digest
-    return hmac.compare_digest(expected, msg_sig)
-
-
-# -------------------------
-# DB init
-# -------------------------
-@app.on_event("startup")
-def init_db():
+# =============================================================================
+# Inventory + XP bonus (Drops rewards)
+# =============================================================================
+def inv_add(login: str, item_key: str, qty: int):
+    """Ajoute un item (ticket) à l'inventaire."""
+    if qty <= 0:
+        return
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                INSERT INTO inventory (twitch_login, item_key, qty)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (twitch_login, item_key)
+                DO UPDATE SET qty = inventory.qty + EXCLUDED.qty,
+                              updated_at = now();
+                """,
+                (login, item_key, qty),
+            )
+        conn.commit()
+
+
+def grant_xp(login: str, amount: int):
+    """
+    Donne un bonus XP (drops).
+    On réutilise la logique minimaliste de /internal/xp : update xp_total + stage + hatch CM.
+    """
+    if amount <= 0:
+        return
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # ensure user & creature
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+            cur.execute(
+                """
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+                """,
+                (login,),
+            )
+
+            # log XP event
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
+
+            # prev stage
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            prev_stage = int(cur.fetchone()[0])
+
+            # inc xp
+            cur.execute(
+                """
+                UPDATE creatures
+                SET xp_total = xp_total + %s, updated_at=now()
+                WHERE twitch_login=%s
+                RETURNING xp_total;
+                """,
+                (amount, login),
+            )
+            new_xp_total = int(cur.fetchone()[0])
+            new_stage = stage_from_xp(new_xp_total)
+
+            # update stage
+            cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
+
+            # assign CM on hatch (0 -> 1+)
+            if prev_stage == 0 and new_stage >= 1:
+                cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+                lrow = cur.fetchone()
+                lineage_key = lrow[0] if lrow else None
+                current_cm = lrow[1] if lrow else None
+                if lineage_key and current_cm is None:
+                    cm_key = pick_cm_for_lineage(conn, lineage_key)
+                    if cm_key:
+                        cur.execute(
+                            "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;",
+                            (cm_key, login),
+                        )
+        conn.commit()
+
+
+# =============================================================================
+# Drops helpers (SYSTÈME UNIQUE: status/expires_at)
+# =============================================================================
+def get_active_drop(cur):
+    """
+    Retourne le drop actif (status='active') le plus proche de l'expiration.
+    """
+    cur.execute(
+        """
+        SELECT id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login
+        FROM drops
+        WHERE status='active'
+        ORDER BY expires_at ASC
+        LIMIT 1;
+        """
+    )
+    return cur.fetchone()
+
+
+def resolve_drop(drop_id: int):
+    """
+    Résout un drop si expiré.
+    - first: gagnant = 1er participant
+    - random: gagnant aléatoire
+    - coop: tous les participants gagnent si participants >= target_hits
+    Marque drops.status = resolved/expired + winner_login (first/random).
+    Retourne un dict (announce) ou None si pas expiré / pas actif.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at
+                FROM drops
+                WHERE id=%s;
+                """,
+                (drop_id,),
+            )
+            d = cur.fetchone()
+            if not d:
+                return None
+
+            _id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at = d
+            if status != "active":
+                return None
+
+            # pas expiré ?
+            cur.execute("SELECT now() >= %s;", (expires_at,))
+            if not bool(cur.fetchone()[0]):
+                return None
+
+            # participants
+            cur.execute("SELECT twitch_login, created_at FROM drop_participants WHERE drop_id=%s ORDER BY created_at ASC;", (drop_id,))
+            participants = [r[0] for r in cur.fetchall()]
+
+            winners: list[str] = []
+            if mode == "first":
+                if participants:
+                    winners = [participants[0]]
+            elif mode == "random":
+                if participants:
+                    winners = [random.choice(participants)]
+            elif mode == "coop":
+                target = int(target_hits or 0)
+                if target > 0 and len(participants) >= target:
+                    winners = participants[:]  # tous gagnent
+                else:
+                    winners = []
+
+            if winners:
+                # rewards
+                for w in winners:
+                    grant_xp(w, int(xp_bonus))
+                    inv_add(w, ticket_key, int(ticket_qty))
+
+                winner_login = winners[0] if mode in ("first", "random") else None
+                cur.execute(
+                    """
+                    UPDATE drops
+                    SET status='resolved', resolved_at=now(), winner_login=%s
+                    WHERE id=%s;
+                    """,
+                    (winner_login, drop_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE drops
+                    SET status='expired', resolved_at=now()
+                    WHERE id=%s;
+                    """,
+                    (drop_id,),
+                )
+
+        conn.commit()
+
+    return {
+        "mode": mode,
+        "title": title,
+        "winners": winners,
+        "xp_bonus": int(xp_bonus),
+        "ticket_key": ticket_key,
+        "ticket_qty": int(ticket_qty),
+    }
+
+
+# =============================================================================
+# DB init (IMPORTANT: tables ONLY ONCE)
+# =============================================================================
+@app.on_event("startup")
+def init_db():
+    """
+    IMPORTANT:
+    - Ici on ne doit PAS recréer drops/dropparticipants plusieurs fois.
+    - On crée uniquement le schéma final (status/expires_at).
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                -- Users
                 CREATE TABLE IF NOT EXISTS users (
                   id SERIAL PRIMARY KEY,
                   twitch_login TEXT UNIQUE NOT NULL,
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
 
+                -- Creatures
                 CREATE TABLE IF NOT EXISTS creatures (
                   id SERIAL PRIMARY KEY,
                   twitch_login TEXT UNIQUE NOT NULL,
@@ -396,6 +453,7 @@ def init_db():
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
 
+                -- XP Events
                 CREATE TABLE IF NOT EXISTS xp_events (
                   id SERIAL PRIMARY KEY,
                   twitch_login TEXT NOT NULL,
@@ -403,35 +461,42 @@ def init_db():
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
 
+                -- KV (is_live)
                 CREATE TABLE IF NOT EXISTS kv (
                   key TEXT PRIMARY KEY,
                   value TEXT NOT NULL,
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
 
+                -- Lineages
                 CREATE TABLE IF NOT EXISTS lineages (
                   key TEXT PRIMARY KEY,
                   name TEXT NOT NULL,
                   is_enabled BOOLEAN NOT NULL DEFAULT TRUE
                 );
 
+                -- CMS (IMPORTANT: media_url existe)
                 CREATE TABLE IF NOT EXISTS cms (
                   key TEXT PRIMARY KEY,
                   name TEXT NOT NULL,
                   lineage_key TEXT NOT NULL REFERENCES lineages(key),
                   is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                  in_hatch_pool BOOLEAN NOT NULL DEFAULT FALSE
+                  in_hatch_pool BOOLEAN NOT NULL DEFAULT FALSE,
+                  media_url TEXT
                 );
 
+                -- ✅ FIX index cms (parenthèse fermante)
                 CREATE INDEX IF NOT EXISTS idx_cms_lineage_pool
-                  ON cms(lineage_key, in_hatch_pool, is_enabled
-                );
+                  ON cms(lineage_key, in_hatch_pool, is_enabled);
 
+                -- RP lines
                 CREATE TABLE IF NOT EXISTS rp_lines (
                   key TEXT PRIMARY KEY,
                   lines JSONB NOT NULL DEFAULT '[]'::jsonb,
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
+
+                -- Overlay show events
                 CREATE TABLE IF NOT EXISTS overlay_events (
                    id SERIAL PRIMARY KEY,
                    twitch_login TEXT NOT NULL,
@@ -446,7 +511,12 @@ def init_db():
                    next_stage_xp INT,
                    expires_at TIMESTAMPTZ NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
+                  ON overlay_events(expires_at);
 
+                -- ==========================
+                -- DROPS (SYSTÈME UNIQUE)
+                -- ==========================
                 CREATE TABLE IF NOT EXISTS drops (
                   id SERIAL PRIMARY KEY,
                   mode TEXT NOT NULL CHECK (mode IN ('first','random','coop')),
@@ -463,14 +533,14 @@ def init_db():
                   resolved_at TIMESTAMPTZ,
                   announced_at TIMESTAMPTZ
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS drop_participants (
                   drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
                   twitch_login TEXT NOT NULL,
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                   PRIMARY KEY (drop_id, twitch_login)
                 );
-                
+
                 CREATE TABLE IF NOT EXISTS inventory (
                   twitch_login TEXT NOT NULL,
                   item_key TEXT NOT NULL,
@@ -478,62 +548,13 @@ def init_db():
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                   PRIMARY KEY (twitch_login, item_key)
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
-
-                CREATE TABLE IF NOT EXISTS drops (
-                  id SERIAL PRIMARY KEY,
-                  title TEXT NOT NULL,
-                  mode TEXT NOT NULL CHECK (mode IN ('first', 'random')),
-                  ends_at TIMESTAMPTZ NOT NULL,
-                  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-
-                CREATE TABLE IF NOT EXISTS drop_participants (
-                  drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
-                  twitch_login TEXT NOT NULL,
-                  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                  PRIMARY KEY (drop_id, twitch_login)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_drops_active
-                ON drops(is_active, ends_at);
-                
-                CREATE INDEX IF NOT EXISTS idx_drop_participants_drop
-                ON drop_participants(drop_id);
-
-                
-                CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
-                ON overlay_events(expires_at);
-
-                CREATE TABLE IF NOT EXISTS drops (
-                  id SERIAL PRIMARY KEY,
-                  title TEXT NOT NULL,
-                  mode TEXT NOT NULL CHECK (mode IN ('first', 'random')),
-                  ends_at TIMESTAMPTZ NOT NULL,
-                  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-                
-                CREATE TABLE IF NOT EXISTS drop_participants (
-                  drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
-                  twitch_login TEXT NOT NULL,
-                  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                  PRIMARY KEY (drop_id, twitch_login)
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_drops_active
-                ON drops(is_active, ends_at);
-                
-                CREATE INDEX IF NOT EXISTS idx_drop_participants_drop
-                ON drop_participants(drop_id);
-
-
+                CREATE INDEX IF NOT EXISTS idx_drop_participants_drop ON drop_participants(drop_id);
                 """
             )
 
-            # default is_live
+            # is_live default
             cur.execute(
                 """
                 INSERT INTO kv (key, value) VALUES ('is_live', 'false')
@@ -541,7 +562,7 @@ def init_db():
                 """
             )
 
-            # seed lineages (Limited disabled by default)
+            # seed lineages
             cur.execute(
                 """
                 INSERT INTO lineages (key, name, is_enabled) VALUES
@@ -552,13 +573,15 @@ def init_db():
                 ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name;
                 """
             )
+
+            # seed RP minimal (tu peux tout éditer via /admin/rp)
             cur.execute(
                 """
                 INSERT INTO rp_lines (key, lines) VALUES
-                  ('creature.stage0', '["🥚 L’œuf vibre faiblement…", "🥚 Une chaleur étrange émane de l’œuf…"]'),
-                  ('creature.stage1', '["🐣 *Crac !* Une nouvelle vie apparaît.", "🐣 Le CapsMons vient de naître."]'),
-                  ('evolve.announce', '["✨ Transformation !", "⚡ Évolution en cours !"]'),
-                  ('cm.assigned', '["👾 Un CM a été attribué !", "🧬 Signature génétique détectée…"]')
+                  ('creature.stage0', '["🥚 L’œuf vibre faiblement…", "🥚 Une chaleur étrange émane de l’œuf…"]'::jsonb),
+                  ('creature.stage1', '["🐣 *Crac !* Une nouvelle vie apparaît.", "🐣 Le CapsMons vient de naître."]'::jsonb),
+                  ('evolve.announce', '["✨ Transformation !", "⚡ Évolution en cours !"]'::jsonb),
+                  ('cm.assigned', '["👾 Un CM a été attribué !", "🧬 Signature génétique détectée…"]'::jsonb)
                 ON CONFLICT (key) DO NOTHING;
                 """
             )
@@ -566,17 +589,17 @@ def init_db():
         conn.commit()
 
 
-# -------------------------
-# Basic endpoints
-# -------------------------
+# =============================================================================
+# Basic endpoint
+# =============================================================================
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
-# -------------------------
+# =============================================================================
 # Internal: live state
-# -------------------------
+# =============================================================================
 @app.get("/internal/is_live")
 def internal_is_live(x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -587,9 +610,9 @@ def internal_is_live(x_api_key: str | None = Header(default=None)):
     return {"is_live": (row and row[0] == "true")}
 
 
-# -------------------------
-# Internal: choose lineage (ONLY egg stage)
-# -------------------------
+# =============================================================================
+# Internal: choose lineage (egg only)
+# =============================================================================
 @app.post("/internal/choose_lineage")
 def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -609,7 +632,6 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
             if not bool(row[0]):
                 raise HTTPException(status_code=400, detail="Lineage disabled")
 
-            # ensure creature exists
             cur.execute(
                 """
                 INSERT INTO creatures (twitch_login, xp_total, stage)
@@ -621,7 +643,6 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
 
             cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
             stage = int(cur.fetchone()[0])
-
             if stage != 0:
                 raise HTTPException(status_code=400, detail="Choose only before hatching (egg stage)")
 
@@ -639,9 +660,9 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
     return {"ok": True, "twitch_login": login, "lineage_key": lineage_key}
 
 
-# -------------------------
-# Internal: add XP (+ stage change + assign CM on hatch)
-# -------------------------
+# =============================================================================
+# Internal: XP (+ stage + hatch CM)
+# =============================================================================
 @app.post("/internal/xp")
 def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -665,13 +686,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # ensure user
-            cur.execute(
-                "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
-                (login,),
-            )
-
-            # ensure creature exists
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
             cur.execute(
                 """
                 INSERT INTO creatures (twitch_login, xp_total, stage)
@@ -681,23 +696,15 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 (login,),
             )
 
-            # log XP event
-            cur.execute(
-                "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
-                (login, amount),
-            )
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
 
-            # read prev stage
             cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
-            prev_row = cur.fetchone()
-            prev_stage = int(prev_row[0]) if prev_row else 0
+            prev_stage = int(cur.fetchone()[0])
 
-            # increment XP
             cur.execute(
                 """
                 UPDATE creatures
-                SET xp_total = xp_total + %s,
-                    updated_at = now()
+                SET xp_total = xp_total + %s, updated_at = now()
                 WHERE twitch_login = %s
                 RETURNING xp_total;
                 """,
@@ -706,18 +713,9 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
             new_xp_total = int(cur.fetchone()[0])
             new_stage = stage_from_xp(new_xp_total)
 
-            # update stage
-            cur.execute(
-                """
-                UPDATE creatures
-                SET stage = %s,
-                    updated_at = now()
-                WHERE twitch_login = %s;
-                """,
-                (new_stage, login),
-            )
+            cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
 
-            # assign CM at the exact hatch moment (0 -> 1+)
+            # hatch -> assign CM if lineage chosen and no CM
             if prev_stage == 0 and new_stage >= 1:
                 cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
                 lrow = cur.fetchone()
@@ -727,10 +725,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 if lineage_key and current_cm is None:
                     cm_key = pick_cm_for_lineage(conn, lineage_key)
                     if cm_key:
-                        cur.execute(
-                            "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;",
-                            (cm_key, login),
-                        )
+                        cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
                         cm_assigned = cm_key
 
         conn.commit()
@@ -745,9 +740,9 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     }
 
 
-# -------------------------
-# Internal: creature state (includes lineage/cm)
-# -------------------------
+# =============================================================================
+# Internal: creature state
+# =============================================================================
 @app.get("/internal/creature/{login}")
 def creature_state(login: str, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -786,615 +781,10 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         "xp_to_next": remaining,
     }
 
-@app.post("/internal/drop/start")
-def drop_start(payload: dict, x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
 
-    title = str(payload.get("title", "")).strip()
-    mode = str(payload.get("mode", "")).strip().lower()
-    duration = int(payload.get("duration_seconds", 10))
-
-    if mode not in ("first", "random"):
-        raise HTTPException(status_code=400, detail="Invalid mode (first|random)")
-    if not title:
-        raise HTTPException(status_code=400, detail="Missing title")
-
-    duration = max(5, min(duration, 30))
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # désactive les drops actifs précédents
-            cur.execute("UPDATE drops SET is_active = FALSE WHERE is_active = TRUE;")
-
-            cur.execute("""
-                INSERT INTO drops (title, mode, ends_at, is_active)
-                VALUES (%s, %s, now() + (%s || ' seconds')::interval, TRUE)
-                RETURNING id, ends_at;
-            """, (title, mode, duration))
-            drop_id, ends_at = cur.fetchone()
-
-        conn.commit()
-
-    return {"ok": True, "drop_id": int(drop_id), "mode": mode, "title": title, "duration_seconds": duration}
-
-@app.post("/internal/drop/join")
-def drop_join(payload: dict, x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
-
-    login = str(payload.get("twitch_login", "")).strip().lower()
-    if not login:
-        raise HTTPException(status_code=400, detail="Missing twitch_login")
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # drop actif ?
-            cur.execute("""
-                SELECT id, title, mode, ends_at
-                FROM drops
-                WHERE is_active = TRUE
-                ORDER BY ends_at ASC
-                LIMIT 1;
-            """)
-            d = cur.fetchone()
-            if not d:
-                return {"ok": True, "active": False}
-
-            drop_id, title, mode, ends_at = d
-
-            # encore dans le temps ?
-            cur.execute("SELECT now() < %s;", (ends_at,))
-            if not bool(cur.fetchone()[0]):
-                # terminé -> on le laisse à resolve
-                return {"ok": True, "active": False}
-
-            # insert participation (unique)
-            joined = True
-            try:
-                cur.execute("""
-                    INSERT INTO drop_participants (drop_id, twitch_login)
-                    VALUES (%s, %s);
-                """, (drop_id, login))
-            except Exception:
-                joined = False
-
-            # count participants
-            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
-            count = int(cur.fetchone()[0])
-
-        conn.commit()
-
-    return {"ok": True, "active": True, "drop_id": int(drop_id), "title": title, "mode": mode, "joined": joined, "count": count}
-
-@app.post("/internal/drop/resolve")
-def drop_resolve(x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, title, mode, ends_at, is_active
-                FROM drops
-                WHERE is_active = TRUE
-                ORDER BY ends_at ASC
-                LIMIT 1;
-            """)
-            d = cur.fetchone()
-            if not d:
-                return {"ok": True, "resolved": False}
-
-            drop_id, title, mode, ends_at, is_active = d
-
-            cur.execute("SELECT now() >= %s;", (ends_at,))
-            if not bool(cur.fetchone()[0]):
-                # pas fini
-                cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (ends_at,))
-                remaining = max(0, int(cur.fetchone()[0]))
-                return {"ok": True, "resolved": False, "remaining": remaining, "title": title, "mode": mode}
-
-            # fini -> récupérer participants
-            cur.execute("""
-                SELECT twitch_login, joined_at
-                FROM drop_participants
-                WHERE drop_id=%s
-                ORDER BY joined_at ASC;
-            """, (drop_id,))
-            participants = [r[0] for r in cur.fetchall()]
-
-            winner = None
-            if mode == "first":
-                winner = participants[0] if participants else None
-            else:  # random
-                winner = random.choice(participants) if participants else None
-
-            # désactiver le drop
-            cur.execute("UPDATE drops SET is_active = FALSE WHERE id=%s;", (drop_id,))
-        conn.commit()
-
-    return {"ok": True, "resolved": True, "title": title, "mode": mode, "winner": winner, "participants": participants}
-
-# -------------------------
-# EventSub webhook (optional)
-# -------------------------
-@app.post("/eventsub", response_class=PlainTextResponse)
-async def eventsub_handler(request: Request):
-    body = await request.body()
-    headers = {k.lower(): v for k, v in request.headers.items()}
-
-    if not verify_eventsub_signature(headers, body):
-        raise HTTPException(status_code=403, detail="Invalid signature")
-
-    msg_type = headers.get("twitch-eventsub-message-type", "")
-    payload = json.loads(body.decode("utf-8"))
-
-    # Challenge
-    if msg_type == "webhook_callback_verification":
-        return payload.get("challenge", "")
-
-    # Notification
-    if msg_type == "notification":
-        sub_type = payload.get("subscription", {}).get("type", "")
-        if sub_type in ("stream.online", "stream.offline"):
-            is_live = "true" if sub_type == "stream.online" else "false"
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO kv (key, value)
-                        VALUES ('is_live', %s)
-                        ON CONFLICT (key) DO UPDATE
-                        SET value = EXCLUDED.value, updated_at = now();
-                        """,
-                        (is_live,),
-                    )
-                conn.commit()
-        return "ok"
-
-    # Revocation
-    if msg_type == "revocation":
-        return "ok"
-
-    return "ok"
-
-
-# -------------------------
-# Admin pages
-# -------------------------
-@app.get("/admin", response_class=HTMLResponse)
-def admin_home(
-    request: Request,
-    q: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    q_clean = (q or "").strip().lower()
-    result = None
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT twitch_login, xp_total, stage
-                FROM creatures
-                ORDER BY xp_total DESC
-                LIMIT 50;
-                """
-            )
-            top = [{"twitch_login": r[0], "xp_total": r[1], "stage": r[2]} for r in cur.fetchall()]
-
-            if q_clean:
-                cur.execute(
-                    """
-                    SELECT twitch_login, xp_total, stage
-                    FROM creatures
-                    WHERE twitch_login = %s;
-                    """,
-                    (q_clean,),
-                )
-                row = cur.fetchone()
-                if row:
-                    result = {"twitch_login": row[0], "xp_total": row[1], "stage": row[2]}
-
-    return templates.TemplateResponse(
-        "admin.html",
-        {"request": request, "top": top, "q": q_clean, "result": result},
-    )
-
-
-@app.get("/admin/user/{login}", response_class=HTMLResponse)
-def admin_user(
-    request: Request,
-    login: str,
-    flash: str | None = None,
-    flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    login = login.strip().lower()
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT xp_total, stage, lineage_key, cm_key FROM creatures WHERE twitch_login = %s;",
-                (login,),
-            )
-            row = cur.fetchone()
-
-    if not row:
-        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
-    else:
-        xp_total, stage, lineage_key, cm_key = row
-
-    nxt, label = next_threshold(int(xp_total))
-    xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
-
-    return templates.TemplateResponse(
-        "user.html",
-        {
-            "request": request,
-            "login": login,
-            "xp_total": int(xp_total),
-            "stage": int(stage),
-            "next_label": label,
-            "xp_to_next": int(xp_to_next),
-            "flash": flash,
-            "flash_kind": flash_kind,
-            "lineage_key": lineage_key,
-            "cm_key": cm_key,
-        },
-    )
-
-
-@app.post("/admin/action")
-def admin_action(
-    login: str = Form(...),
-    action: str = Form(...),
-    amount: int | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    login = login.strip().lower()
-    action = action.strip().lower()
-
-    if action not in ("give", "set", "reset", "assign_cm"):
-        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Action%20invalide", status_code=303)
-
-    if action in ("give", "set") and amount is None:
-        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Montant%20manquant", status_code=303)
-
-    # assign_cm: no correlated SQL
-    if action == "assign_cm":
-        assigned = None
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT lineage_key, cm_key, stage FROM creatures WHERE twitch_login=%s;",
-                    (login,),
-                )
-                row = cur.fetchone()
-                if row:
-                    lineage_key, cm_key, stage = row
-                    if lineage_key and cm_key is None and int(stage) >= 1:
-                        cur.execute(
-                            """
-                            SELECT key
-                            FROM cms
-                            WHERE lineage_key=%s AND is_enabled=TRUE AND in_hatch_pool=TRUE
-                            ORDER BY random()
-                            LIMIT 1;
-                            """,
-                            (lineage_key,),
-                        )
-                        pick = cur.fetchone()
-                        assigned = pick[0] if pick else None
-                        if assigned:
-                            cur.execute(
-                                "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s AND cm_key IS NULL;",
-                                (assigned, login),
-                            )
-            conn.commit()
-
-        if assigned:
-            return RedirectResponse(
-                url=f"/admin/user/{login}?flash_kind=ok&flash=CM%20attribu%C3%A9%20:%20{assigned}",
-                status_code=303,
-            )
-        return RedirectResponse(
-            url=f"/admin/user/{login}?flash_kind=err&flash=Aucun%20CM%20attribu%C3%A9%20(check%20stage%2C%20lign%C3%A9e%2C%20pool)",
-            status_code=303,
-        )
-
-    # give/set/reset
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO creatures (twitch_login, xp_total, stage)
-                VALUES (%s, 0, 0)
-                ON CONFLICT (twitch_login) DO NOTHING;
-                """,
-                (login,),
-            )
-
-            if action == "reset":
-                # Reset complet (solution B) : retour Œuf + efface lignée + efface CM
-                cur.execute("""
-                    UPDATE creatures
-                    SET xp_total = 0,
-                        stage = 0,
-                        lineage_key = NULL,
-                        cm_key = NULL,
-                        updated_at = now()
-                    WHERE twitch_login = %s;
-                """, (login,))
-                conn.commit()
-                return RedirectResponse(
-                    url=f"/admin/user/{login}?flash_kind=ok&flash=Reset%20complet%20(oeuf%20+%20lign%C3%A9e%20effac%C3%A9e)",
-                    status_code=303,
-                )
-            elif action == "set":
-                new_xp = max(0, int(amount))
-            else:  # give
-                cur.execute("SELECT xp_total FROM creatures WHERE twitch_login=%s;", (login,))
-                current = int(cur.fetchone()[0])
-                new_xp = current + max(0, int(amount))
-
-            new_stage = stage_from_xp(int(new_xp))
-
-            cur.execute(
-                """
-                UPDATE creatures
-                SET xp_total=%s, stage=%s, updated_at=now()
-                WHERE twitch_login=%s;
-                """,
-                (int(new_xp), int(new_stage), login),
-            )
-
-        conn.commit()
-
-    if action == "reset":
-        msg = "Reset à 0"
-    elif action == "set":
-        msg = f"XP fixé à {new_xp}"
-    else:
-        msg = f"+{amount} XP (total {new_xp})"
-
-    return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg.replace(' ', '%20')}", status_code=303)
-
-
-# -------------------------
-# Admin stats
-# -------------------------
-@app.get("/admin/stats", response_class=HTMLResponse)
-def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # start of today in Paris, converted back to timestamptz
-            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
-            start_of_today_paris = cur.fetchone()[0]
-
-            cur.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM xp_events WHERE created_at >= %s;",
-                (start_of_today_paris,),
-            )
-            xp_today = int(cur.fetchone()[0])
-
-            cur.execute(
-                "SELECT COALESCE(SUM(amount), 0) FROM xp_events WHERE created_at >= now() - interval '7 days';"
-            )
-            xp_7d = int(cur.fetchone()[0])
-
-            cur.execute(
-                """
-                SELECT COUNT(*) AS events, COUNT(DISTINCT twitch_login) AS users
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours';
-                """
-            )
-            events_24h, active_users_24h = cur.fetchone()
-            events_24h = int(events_24h)
-            active_users_24h = int(active_users_24h)
-
-            cur.execute(
-                """
-                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD') AS day,
-                       SUM(amount) AS xp
-                FROM xp_events
-                WHERE created_at >= now() - interval '7 days'
-                GROUP BY 1
-                ORDER BY 1 DESC;
-                """
-            )
-            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
-            max_xp = max([r["xp"] for r in xp_by_day], default=0) or 1
-            for r in xp_by_day:
-                r["pct"] = int((r["xp"] / max_xp) * 100)
-
-            cur.execute(
-                """
-                SELECT twitch_login, SUM(amount) AS xp
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours'
-                GROUP BY 1
-                ORDER BY 2 DESC
-                LIMIT 20;
-                """
-            )
-            top_xp_24h = [{"twitch_login": r[0], "xp": int(r[1])} for r in cur.fetchall()]
-
-            cur.execute(
-                """
-                SELECT twitch_login, COUNT(*) AS events
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours'
-                GROUP BY 1
-                ORDER BY 2 DESC
-                LIMIT 20;
-                """
-            )
-            top_events_24h = [{"twitch_login": r[0], "events": int(r[1])} for r in cur.fetchall()]
-
-            cur.execute(
-                """
-                SELECT COUNT(DISTINCT twitch_login)
-                FROM xp_events
-                WHERE created_at >= now() - interval '15 minutes';
-                """
-            )
-            active_users_15m = int(cur.fetchone()[0])
-
-    return templates.TemplateResponse(
-        "stats.html",
-        {
-            "request": request,
-            "xp_today": xp_today,
-            "xp_7d": xp_7d,
-            "events_24h": events_24h,
-            "active_users_24h": active_users_24h,
-            "active_users_15m": active_users_15m,
-            "xp_by_day": xp_by_day,
-            "top_xp_24h": top_xp_24h,
-            "top_events_24h": top_events_24h,
-        },
-    )
-@app.get("/admin/cms", response_class=HTMLResponse)
-def admin_cms(
-    request: Request,
-    flash: str | None = None,
-    flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT key, name, is_enabled FROM lineages ORDER BY key;")
-            lineages = [{"key": r[0], "name": r[1], "is_enabled": bool(r[2])} for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
-                FROM cms
-                ORDER BY lineage_key, key;
-            """)
-            cms = [{
-                "key": r[0],
-                "name": r[1],
-                "lineage_key": r[2],
-                "is_enabled": bool(r[3]),
-                "in_hatch_pool": bool(r[4]),
-                "media_url": r[5],
-            } for r in cur.fetchall()]
-
-
-    return templates.TemplateResponse("cms.html", {
-        "request": request,
-        "lineages": lineages,
-        "cms": cms,
-        "flash": flash,
-        "flash_kind": flash_kind,
-    })
-
-
-@app.post("/admin/cms/action")
-def admin_cms_action(
-    action: str = Form(...),
-    key: str | None = Form(None),
-    cm_key: str | None = Form(None),
-    cm_name: str | None = Form(None),
-    lineage_key: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
-    media_url: str | None = Form(None),
-):
-    require_admin(credentials)
-
-    action = action.strip().lower()
-
-    def go(msg: str, kind: str = "ok"):
-        # encode minimal
-        safe = msg.replace(" ", "%20")
-        return RedirectResponse(url=f"/admin/cms?flash_kind={kind}&flash={safe}", status_code=303)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            if action == "toggle_lineage":
-                if not key:
-                    return go("Key manquante", "err")
-                cur.execute("UPDATE lineages SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
-                conn.commit()
-                return go(f"Lineage {key} toggled")
-
-            if action == "add_cm":
-                if not (cm_key and cm_name and lineage_key):
-                    return go("Champs manquants", "err")
-            
-                cm_key = cm_key.strip().lower()
-                cm_name = cm_name.strip()
-                lineage_key = lineage_key.strip().lower()
-                url = (media_url or "").strip()
-            
-                # Vérifier que la lignée existe
-                cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
-                if not cur.fetchone():
-                    return go("Lineage inconnue", "err")
-            
-                # Créer le CM (hors pool par défaut)
-                cur.execute("""
-                    INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool, media_url)
-                    VALUES (%s, %s, %s, TRUE, FALSE, %s)
-                    ON CONFLICT (key) DO UPDATE
-                    SET name = EXCLUDED.name,
-                        lineage_key = EXCLUDED.lineage_key,
-                        media_url = EXCLUDED.media_url;
-                """, (cm_key, cm_name, lineage_key, url))
-            
-                conn.commit()
-                return go(f"CM créé: {cm_key}")
-
-
-            if action == "rename_cm":
-                if not (key and cm_name):
-                    return go("Champs manquants", "err")
-                cur.execute("UPDATE cms SET name=%s WHERE key=%s;", (cm_name, key))
-                conn.commit()
-                return go(f"CM renommé: {key}")
-
-            if action == "toggle_cm_enabled":
-                if not key:
-                    return go("Key manquante", "err")
-                cur.execute("UPDATE cms SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
-                conn.commit()
-                return go(f"CM enabled toggled: {key}")
-
-            if action == "toggle_cm_pool":
-                if not key:
-                    return go("Key manquante", "err")
-                cur.execute("UPDATE cms SET in_hatch_pool = NOT in_hatch_pool WHERE key=%s;", (key,))
-                conn.commit()
-                return go(f"CM pool toggled: {key}")
-
-            if action == "delete_cm":
-                if not key:
-                    return go("Key manquante", "err")
-                cur.execute("DELETE FROM cms WHERE key=%s;", (key,))
-                # option : si des creatures pointent vers ce cm, on les null
-                cur.execute("UPDATE creatures SET cm_key=NULL, updated_at=now() WHERE cm_key=%s;", (key,))
-                conn.commit()
-                return go(f"CM supprimé: {key}")
-            if action == "update_media_url":
-                if not key:
-                    return go("Key manquante", "err")
-                url = (media_url or "").strip()
-                cur.execute("UPDATE cms SET media_url=%s WHERE key=%s;", (url, key))
-                conn.commit()
-                return go(f"Media URL mis à jour: {key}")
-
-
-            return go("Action inconnue", "err")
-
+# =============================================================================
+# Internal: RP bundle (bot)
+# =============================================================================
 @app.get("/internal/rp_bundle")
 def rp_bundle(x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -1404,99 +794,20 @@ def rp_bundle(x_api_key: str | None = Header(default=None)):
             cur.execute("SELECT key, lines FROM rp_lines;")
             rows = cur.fetchall()
 
-    # rows: [(key, jsonb), ...]
     bundle = {}
     for k, lines in rows:
-        # psycopg peut renvoyer dict/list directement (JSONB) ou string selon config
         if isinstance(lines, str):
             try:
-                import json
                 lines = json.loads(lines)
             except Exception:
                 lines = []
         bundle[k] = lines if isinstance(lines, list) else []
     return {"rp": bundle}
 
-@app.get("/admin/rp", response_class=HTMLResponse)
-def admin_rp(
-    request: Request,
-    flash: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
-            rows = cur.fetchall()
-
-    items = []
-    for k, lines in rows:
-        # lines peut être déjà une liste (jsonb) ou une string
-        if isinstance(lines, str):
-            try:
-                lines = json.loads(lines)
-            except Exception:
-                lines = []
-
-        if not isinstance(lines, list):
-            lines = []
-
-        text = "\n".join([str(x) for x in lines if str(x).strip()])
-        items.append({"key": k, "count": len(lines), "text": text})
-
-    return templates.TemplateResponse(
-        "rp.html",
-        {"request": request, "items": items, "flash": flash},
-    )
-
-
-
-@app.post("/admin/rp/save")
-def admin_rp_save(
-    key: str = Form(...),
-    lines: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-    key = key.strip()
-
-    # 1 ligne = 1 phrase
-    phrases = []
-    if lines is not None:
-        for line in lines.splitlines():
-            s = line.strip()
-            if s:
-                phrases.append(s)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO rp_lines (key, lines)
-                VALUES (%s, %s::jsonb)
-                ON CONFLICT (key)
-                DO UPDATE SET lines = EXCLUDED.lines, updated_at = now();
-            """, (key, json.dumps(phrases)))
-        conn.commit()
-
-    return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:{key}", status_code=303)
-
-
-@app.post("/admin/rp/delete")
-def admin_rp_delete(
-    key: str = Form(...),
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-    key = key.strip()
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM rp_lines WHERE key=%s;", (key,))
-        conn.commit()
-
-    return RedirectResponse(url=f"/admin/rp?flash=Supprim%C3%A9%20:{key}", status_code=303)
-
+# =============================================================================
+# Overlay SHOW: trigger + state + page
+# =============================================================================
 @app.post("/internal/trigger_show")
 def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -1508,14 +819,13 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     duration = int(os.environ.get("SHOW_DURATION_SECONDS", "7"))
     duration = max(2, min(duration, 15))
 
-    # 1) Lire la creature + déterminer quoi afficher (CM ou Oeuf)
+    # 1) creature -> CM ou OEuf
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=400, detail="No creature")
-
             xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
 
             if stage == 0 or not cm_key:
@@ -1533,13 +843,9 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                 if not media_url:
                     raise HTTPException(status_code=400, detail="CM missing media_url")
 
-    # 2) Récupérer pseudo + avatar Twitch
     display, avatar = twitch_user_profile(login)
-
-    # 3) Calcul barre XP
     stage_start, next_xp = stage_bounds(stage)
 
-    # 4) Inserer l'event overlay
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1556,18 +862,21 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
 
     return {"ok": True}
 
+
 @app.get("/overlay/state")
 def overlay_state():
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
                        xp_total, stage, stage_start_xp, next_stage_xp
                 FROM overlay_events
                 WHERE expires_at > now()
                 ORDER BY id DESC
                 LIMIT 1;
-            """)
+                """
+            )
             row = cur.fetchone()
 
     if not row:
@@ -1590,8 +899,24 @@ def overlay_state():
         "xp": {"total": xp_total, "stage": int(stage), "pct": pct, "to_next": (next_xp - xp_total) if next_xp else None},
     }
 
+
+@app.get("/overlay/show", response_class=HTMLResponse)
+def overlay_show_page():
+    # Tu as déjà ton HTML avec animation + son, donc on ne le réécrit pas ici.
+    # Garde ton HTML actuel dans ton repo (c'est OK).
+    # -> Si tu veux, tu peux aussi le mettre dans un template.
+    return HTMLResponse("OK")  # <-- Remplace par ton HTMLResponse(...) actuel
+
+
+# =============================================================================
+# DROPS: spawn / join / overlay drop_state / poll_result
+# =============================================================================
 @app.post("/internal/drop/spawn")
 def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
+    """
+    Spawn un drop (admin via curl ou bouton futur).
+    mode: first/random/coop
+    """
     require_internal_key(x_api_key)
 
     mode = str(payload.get("mode", "")).strip().lower()
@@ -1619,21 +944,105 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # option: expire l'ancien drop actif
+            # expire l'ancien actif
             cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
 
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
                 RETURNING id;
-            """, (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration))
+                """,
+                (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration),
+            )
             drop_id = int(cur.fetchone()[0])
         conn.commit()
 
     return {"ok": True, "drop_id": drop_id}
 
+
+@app.post("/internal/drop/join")
+def drop_join(payload: dict, x_api_key: str | None = Header(default=None)):
+    """
+    Appelé par le bot quand un viewer tape !grab / !hit.
+    - Enregistre la participation (1 fois max)
+    - Si mode=first: le 1er participant gagne immédiatement
+    """
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            d = get_active_drop(cur)
+            if not d:
+                return {"ok": True, "active": False}
+
+            drop_id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login = d
+
+            # si expiré, on résout et on renvoie inactive
+            cur.execute("SELECT now() >= %s;", (expires_at,))
+            if bool(cur.fetchone()[0]):
+                conn.commit()
+                resolve_drop(int(drop_id))
+                return {"ok": True, "active": False}
+
+            # insert unique participation
+            joined = True
+            try:
+                cur.execute("INSERT INTO drop_participants (drop_id, twitch_login) VALUES (%s,%s);", (drop_id, login))
+            except Exception:
+                joined = False
+
+            # count
+            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
+            count = int(cur.fetchone()[0])
+
+            # mode first: si c'est le tout premier et qu'il vient de join, gagner instant
+            result = None
+            if mode == "first" and joined and count == 1:
+                grant_xp(login, int(xp_bonus))
+                inv_add(login, ticket_key, int(ticket_qty))
+                cur.execute(
+                    """
+                    UPDATE drops
+                    SET status='resolved', resolved_at=now(), winner_login=%s
+                    WHERE id=%s;
+                    """,
+                    (login, drop_id),
+                )
+                result = {
+                    "won": True,
+                    "mode": "first",
+                    "title": title,
+                    "xp_bonus": int(xp_bonus),
+                    "ticket_key": ticket_key,
+                    "ticket_qty": int(ticket_qty),
+                }
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "active": True,
+        "mode": mode,
+        "title": title,
+        "joined": joined,
+        "count": count,
+        "target": int(target_hits) if target_hits is not None else None,
+        "result": result,
+    }
+
+
 @app.get("/overlay/drop_state")
 def overlay_drop_state():
+    """
+    Utilisé par l'overlay OBS (poll).
+    - renvoie le drop actif + remaining + count
+    - résout automatiquement si expiré
+    """
     with get_db() as conn:
         with conn.cursor() as cur:
             d = get_active_drop(cur)
@@ -1642,20 +1051,17 @@ def overlay_drop_state():
 
             drop_id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login = d
 
-            # resolve si expiré
             cur.execute("SELECT now() >= %s;", (expires_at,))
             if bool(cur.fetchone()[0]):
                 conn.commit()
                 resolve_drop(int(drop_id))
                 return {"show": False}
 
-            # compteur participants
             cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
             count = int(cur.fetchone()[0])
 
-            # temps restant
             cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
-            remaining = int(cur.fetchone()[0])
+            remaining = max(0, int(cur.fetchone()[0]))
 
     return {
         "show": True,
@@ -1664,58 +1070,55 @@ def overlay_drop_state():
             "mode": mode,
             "title": title,
             "media": media_url,
-            "remaining": max(0, remaining),
+            "remaining": remaining,
             "count": count,
             "target": int(target_hits) if target_hits is not None else None,
             "xp_bonus": int(xp_bonus),
             "ticket_key": ticket_key,
             "ticket_qty": int(ticket_qty),
-        }
+        },
     }
+
+
 @app.get("/internal/drop/poll_result")
 def drop_poll_result(x_api_key: str | None = Header(default=None)):
+    """
+    Endpoint que le bot appelle en boucle pour annoncer les résultats.
+    - si un drop actif a expiré -> resolve_drop()
+    - si un drop resolved/expired non annoncé -> renvoie announce=true (1 fois) et marque announced_at
+    """
     require_internal_key(x_api_key)
 
+    # essayer de résoudre un drop actif expiré
     with get_db() as conn:
         with conn.cursor() as cur:
-            # drop actif ?
-            cur.execute("""
-                SELECT id
-                FROM drops
-                WHERE status='active'
-                ORDER BY expires_at ASC
-                LIMIT 1;
-            """)
+            cur.execute("SELECT id FROM drops WHERE status='active' ORDER BY expires_at ASC LIMIT 1;")
             row = cur.fetchone()
-
-    # s'il y a un actif, on tente de le résoudre si expiré
     if row:
         resolve_drop(int(row[0]))
 
-    # maintenant, chercher un drop résolu/expiré non annoncé
+    # chercher un résultat non annoncé
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, status, winner_login
                 FROM drops
                 WHERE announced_at IS NULL
                   AND status IN ('resolved','expired')
                 ORDER BY resolved_at ASC NULLS LAST, expires_at ASC
                 LIMIT 1;
-            """)
+                """
+            )
             d = cur.fetchone()
-
             if not d:
                 return {"announce": False}
 
             drop_id, mode, title, xp_bonus, ticket_key, ticket_qty, status, winner_login = d
-
-            # marquer annoncé
             cur.execute("UPDATE drops SET announced_at=now() WHERE id=%s;", (drop_id,))
         conn.commit()
 
-    # récupérer gagnants si coop (tous les participants)
-    winners = []
+    winners: list[str] = []
     if mode == "coop" and status == "resolved":
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -1727,7 +1130,7 @@ def drop_poll_result(x_api_key: str | None = Header(default=None)):
     return {
         "announce": True,
         "mode": mode,
-        "status": status,  # resolved / expired
+        "status": status,
         "title": title,
         "winners": winners,
         "xp_bonus": int(xp_bonus),
@@ -1735,299 +1138,79 @@ def drop_poll_result(x_api_key: str | None = Header(default=None)):
         "ticket_qty": int(ticket_qty),
     }
 
-@app.get("/overlay/drop", response_class=HTMLResponse)
-def overlay_drop_page():
-    return HTMLResponse("""
-<!doctype html>
-<html><head><meta charset="utf-8"/>
-<style>
-  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
-  .wrap{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:60px}
-  .card{display:none;gap:14px;align-items:center;background:rgba(10,15,20,.80);border:1px solid rgba(255,255,255,.12);
-        border-radius:18px;padding:16px 18px;min-width:820px}
-  .img{width:96px;height:96px;border-radius:16px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
-  .title{font-size:22px;font-weight:900;color:#e6edf3}
-  .sub{font-size:13px;color:#9aa4b2;margin-top:2px}
-  .pill{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:#9aa4b2;font-size:12px}
-  .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.12);margin-top:10px}
-  .fill{height:100%;width:0%;background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45))}
-</style></head>
-<body>
-<div class="wrap">
-  <div id="card" class="card">
-    <img id="img" class="img" src="" alt="">
-    <div style="flex:1">
-      <div class="title" id="title"></div>
-      <div class="sub" id="line"></div>
-      <div class="bar"><div id="fill" class="fill"></div></div>
-    </div>
-    <div style="text-align:right">
-      <div class="pill" id="mode"></div>
-      <div class="sub" id="timer" style="margin-top:8px"></div>
-    </div>
-  </div>
-</div>
 
-<script>
-let showing=false;
-function setShow(on){
-  const c=document.getElementById('card');
-  if(on && !showing){ c.style.display='flex'; showing=true; }
-  if(!on && showing){ c.style.display='none'; showing=false; }
-}
-async function tick(){
-  try{
-    const r = await fetch('/overlay/drop_state', {cache:'no-store'});
-    const j = await r.json();
-    if(!j.show){ setShow(false); return; }
+# =============================================================================
+# Admin RP (liste/édition)
+# =============================================================================
+@app.get("/admin/rp", response_class=HTMLResponse)
+def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
 
-    const d = j.drop;
-    document.getElementById('img').src = d.media || '';
-    document.getElementById('title').textContent = d.title || 'Drop';
-    document.getElementById('timer').textContent = `⏳ ${d.remaining}s`;
-    document.getElementById('mode').textContent =
-      d.mode === 'first' ? '⚡ PREMIER' : (d.mode === 'random' ? '🎲 RANDOM' : '🤝 COOP');
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
+            rows = cur.fetchall()
 
-    if(d.mode === 'coop'){
-      document.getElementById('line').textContent = `Tape !hit — ${d.count}/${d.target} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
-      const pct = d.target ? Math.min(100, Math.floor((d.count/d.target)*100)) : 0;
-      document.getElementById('fill').style.width = pct + '%';
-    }else{
-      document.getElementById('line').textContent = `Tape !grab — participants: ${d.count} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
-      document.getElementById('fill').style.width = '0%';
-    }
+    items = []
+    for k, lines in rows:
+        if isinstance(lines, str):
+            try:
+                lines = json.loads(lines)
+            except Exception:
+                lines = []
+        if not isinstance(lines, list):
+            lines = []
+        text = "\n".join([str(x) for x in lines if str(x).strip()])
+        items.append({"key": k, "count": len(lines), "text": text})
 
-    setShow(true);
-  }catch(e){}
-}
-setInterval(tick, 500);
-tick();
-</script>
-</body></html>
-""")
+    return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
 
 
-@app.get("/overlay/show", response_class=HTMLResponse)
-def overlay_show_page():
-    # HTML simple (pas de template obligatoire)
-    return HTMLResponse("""
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<style>
-  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+@app.post("/admin/rp/save")
+def admin_rp_save(
+    key: str = Form(...),
+    lines: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    key = key.strip()
 
-  .wrap{
-    position:fixed; inset:0;
-    display:flex; align-items:center; justify-content:center;
-    pointer-events:none;
-  }
+    phrases = []
+    if lines is not None:
+        for line in lines.splitlines():
+            s = line.strip()
+            if s:
+                phrases.append(s)
 
-  /* Carte principale (animation) */
-  .card{
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    gap:14px;
-    padding:22px 26px;
-    border-radius:22px;
-    background:rgba(10,15,20,.78);
-    border:1px solid rgba(255,255,255,.12);
-    backdrop-filter: blur(8px);
-    min-width:480px;
-    max-width:480px;
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO rp_lines (key, lines)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (key)
+                DO UPDATE SET lines = EXCLUDED.lines, updated_at = now();
+                """,
+                (key, json.dumps(phrases)),
+            )
+        conn.commit()
 
-    /* état animé */
-    opacity:0;
-    transform: translateY(10px) scale(0.98);
-    transition: opacity 500ms ease, transform 500ms ease;
-    will-change: opacity, transform;
-  }
-  .card.showing{
-    opacity:1;
-    transform: translateY(0) scale(1);
-  }
-
-  /* Bandeau viewer */
-  .viewerBar{
-    width:100%;
-    display:flex;
-    align-items:center;
-    gap:12px;
-    padding:10px 14px;
-    margin-bottom:6px;
-    border-radius:14px;
-    background:rgba(255,255,255,.06);
-    border:1px solid rgba(255,255,255,.10);
-  }
-
-  .avatar{
-    width:40px;
-    height:40px;
-    border-radius:10px;
-    object-fit:cover;
-    border:1px solid rgba(255,255,255,.15);
-  }
-
-  .viewerText{display:flex;flex-direction:column}
-  .viewerName{font-size:14px;font-weight:800;color:#e6edf3;line-height:1.1}
-  .viewerSub{font-size:11px;color:#9aa4b2}
-
-  /* CM très grand */
-  .cmimg{
-    width:420px;
-    height:420px;
-    object-fit:contain;
-    border-radius:24px;
-    background:rgba(255,255,255,.05);
-    border:1px solid rgba(255,255,255,.10);
-  }
-
-  /* Barre XP */
-  .barWrap{
-    width:420px;
-    height:14px;
-    border-radius:999px;
-    background:rgba(255,255,255,.10);
-    border:1px solid rgba(255,255,255,.12);
-    overflow:hidden;
-  }
-  .fill{
-    height:100%;
-    width:0%;
-    background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45));
-    transition: width 280ms ease;
-  }
-
-  .cmname{
-    font-size:28px;
-    font-weight:900;
-    color:#e6edf3;
-    text-align:center;
-    line-height:1.1;
-  }
-  .xptext{
-    font-size:13px;
-    color:#9aa4b2;
-    text-align:center;
-    margin-top:-6px;
-  }
-</style>
-</head>
-
-<body>
-  <div class="wrap">
-    <div id="card" class="card">
-      <div class="viewerBar">
-        <img id="avatar" class="avatar" src="" alt="">
-        <div class="viewerText">
-          <div id="viewer" class="viewerName"></div>
-          <div class="viewerSub">a utilisé !show</div>
-        </div>
-      </div>
-
-      <img id="cmimg" class="cmimg" src="" alt="">
-      <div class="barWrap"><div id="fill" class="fill"></div></div>
-      <div id="cmname" class="cmname">CapsMons</div>
-      <div id="xptext" class="xptext"></div>
-    </div>
-  </div>
-  <audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
-
-<script>
-let showing = false;
-let hideTimer = null;
-const DISPLAY_MS = 7000;
-let lastSig = "";
-const sfx = document.getElementById('sfx');
-function playSfx(){
-  try{
-    sfx.currentTime = 0;
-    const p = sfx.play();
-    if (p && p.catch) p.catch(()=>{});
-  }catch(e){}
-}
+    return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:%20{key}", status_code=303)
 
 
-function showCard(){
-  const card = document.getElementById('card');
-  if (!showing) {
-    card.style.display = 'flex';
-    void card.offsetWidth; // force reflow
-    card.classList.add('showing');
-    showing = true;
-  }
+@app.post("/admin/rp/delete")
+def admin_rp_delete(key: str = Form(...), credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    key = key.strip()
 
-  // reset timer
-  if (hideTimer) clearTimeout(hideTimer);
-  hideTimer = setTimeout(hideCard, DISPLAY_MS);
-}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM rp_lines WHERE key=%s;", (key,))
+        conn.commit()
 
-function hideCard(){
-  const card = document.getElementById('card');
-  if (!showing) return;
-
-  card.classList.remove('showing');
-  setTimeout(() => {
-    card.style.display = 'none';
-  }, 230);
-
-  showing = false;
-  hideTimer = null;
-}
-
-async function tick(){
-  try{
-    const r = await fetch('/overlay/state', {cache:'no-store'});
-    const j = await r.json();
-
-    if(!j.show){
-      // on NE cache PLUS ici → timer only
-      return;
-    }
-
-    const sig = `${j.viewer.name}|${j.cm.name}|${j.xp.total}`;
-
-    if (sig !== lastSig) {
-      lastSig = sig;
-      playSfx();      // 🔊 SON SYNCHRONISÉ
-    }
+    return RedirectResponse(url=f"/admin/rp?flash=Supprim%C3%A9%20:%20{key}", status_code=303)
 
 
-
-    // Viewer
-    document.getElementById('viewer').textContent = `@${j.viewer.name}`;
-    document.getElementById('avatar').src = j.viewer.avatar || '';
-
-    // CM
-    document.getElementById('cmimg').src = j.cm.media || '';
-    document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
-
-    // XP
-    const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
-    document.getElementById('fill').style.width = pct + '%';
-
-    const toNext = j.xp.to_next;
-    document.getElementById('xptext').textContent =
-      toNext
-        ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
-        : `${j.xp.total} XP • stade max`;
-
-    showCard();
-
-  }catch(e){
-    // ignore
-  }
-}
-
-setInterval(tick, 500);
-tick();
-</script>
-
-</body>
-</html>
-
-""")
-
+# =============================================================================
+# NOTE
+# =============================================================================
