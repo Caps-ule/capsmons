@@ -177,57 +177,57 @@ class Bot(commands.Bot):
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
     async def drop_resolve_loop(self):
-    await asyncio.sleep(2)
-
-    while True:
         await asyncio.sleep(2)
-
-        try:
-            r = requests.post(
-                API_DROP_RESOLVE_URL,
-                headers={"X-API-Key": API_KEY},
-                timeout=2,
-            )
-            if r.status_code != 200:
+    
+        while True:
+            await asyncio.sleep(2)
+    
+            try:
+                r = requests.post(
+                    API_DROP_RESOLVE_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=2,
+                )
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+            except Exception:
                 continue
-            data = r.json()
-        except Exception:
-            continue
-
-        if not data.get("resolved"):
-            continue
-
-        title = data.get("title", "un objet")
-        mode = data.get("mode", "random")
-        winner = data.get("winner")  # peut être None
-        participants = data.get("participants") or []
-
-        # signature anti double annonce
-        sig = f"{mode}|{title}|{winner}|{len(participants)}"
-        if _last_drop_announce["sig"] == sig:
-            continue
-        _last_drop_announce["sig"] = sig
-
-        # Choix RP
-        if not participants:
-            line = await rp_get("drop.no_participants") or "🌫️ Personne n’a participé."
-            msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count="0")
-        elif not winner:
-            # cas très rare (ex: random sans participants)
-            line = await rp_get("drop.no_participants") or "🌫️ Drop terminé."
-            msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
-        else:
-            key = "drop.win.first" if mode == "first" else "drop.win.random"
-            line = await rp_get(key) or "🏆 {viewer} gagne {title} !"
-            msg = rp_format(line, viewer=f"@{winner}", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
-
-        # envoyer dans le channel
-        try:
-            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-            if chan:
-                await chan.send(msg)
-        except Exception:
-            pass
+    
+            if not data.get("resolved"):
+                continue
+    
+            title = data.get("title", "un objet")
+            mode = data.get("mode", "random")
+            winner = data.get("winner")  # peut être None
+            participants = data.get("participants") or []
+    
+            # signature anti double annonce
+            sig = f"{mode}|{title}|{winner}|{len(participants)}"
+            if _last_drop_announce["sig"] == sig:
+                continue
+            _last_drop_announce["sig"] = sig
+    
+            # Choix RP
+            if not participants:
+                line = await rp_get("drop.no_participants") or "🌫️ Personne n’a participé."
+                msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count="0")
+            elif not winner:
+                # cas très rare (ex: random sans participants)
+                line = await rp_get("drop.no_participants") or "🌫️ Drop terminé."
+                msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
+            else:
+                key = "drop.win.first" if mode == "first" else "drop.win.random"
+                line = await rp_get(key) or "🏆 {viewer} gagne {title} !"
+                msg = rp_format(line, viewer=f"@{winner}", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
+    
+            # envoyer dans le channel
+            try:
+                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                if chan:
+                    await chan.send(msg)
+            except Exception:
+                pass
 
 
     @commands.command(name="creature")
