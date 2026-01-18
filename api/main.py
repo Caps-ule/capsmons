@@ -205,6 +205,36 @@ def resolve_drop(drop_id: int):
 
     return {"mode": mode, "title": title, "winners": winners, "xp_bonus": int(xp_bonus), "ticket_key": ticket_key, "ticket_qty": int(ticket_qty)}
 
+# -------------------------
+# RP helpers (Drops, Evolutions, etc.)
+# -------------------------
+def rp_pick(conn, key: str) -> str | None:
+    """Pick one random line from rp_lines[key]."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT lines FROM rp_lines WHERE key=%s;", (key,))
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    lines = row[0]
+    if not isinstance(lines, list) or not lines:
+        return None
+
+    return random.choice(lines)
+
+
+def rp_fmt(text: str, **kw) -> str:
+    """
+    Remplace {placeholders} dans un texte RP.
+    Exemple: rp_fmt("Bravo {user}!", user="CapsLoque")
+    """
+    out = text
+    for k, v in kw.items():
+        out = out.replace("{" + k + "}", str(v))
+    return out
+
+
 
 # -------------------------
 # Auth app_twitch_show
@@ -450,11 +480,55 @@ def init_db():
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
+
+                CREATE TABLE IF NOT EXISTS drops (
+                  id SERIAL PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  mode TEXT NOT NULL CHECK (mode IN ('first', 'random')),
+                  ends_at TIMESTAMPTZ NOT NULL,
+                  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS drop_participants (
+                  drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
+                  twitch_login TEXT NOT NULL,
+                  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  PRIMARY KEY (drop_id, twitch_login)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_drops_active
+                ON drops(is_active, ends_at);
                 
-                
+                CREATE INDEX IF NOT EXISTS idx_drop_participants_drop
+                ON drop_participants(drop_id);
+
                 
                 CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
-ON overlay_events(expires_at);
+                ON overlay_events(expires_at);
+
+                CREATE TABLE IF NOT EXISTS drops (
+                  id SERIAL PRIMARY KEY,
+                  title TEXT NOT NULL,
+                  mode TEXT NOT NULL CHECK (mode IN ('first', 'random')),
+                  ends_at TIMESTAMPTZ NOT NULL,
+                  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                
+                CREATE TABLE IF NOT EXISTS drop_participants (
+                  drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
+                  twitch_login TEXT NOT NULL,
+                  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  PRIMARY KEY (drop_id, twitch_login)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_drops_active
+                ON drops(is_active, ends_at);
+                
+                CREATE INDEX IF NOT EXISTS idx_drop_participants_drop
+                ON drop_participants(drop_id);
+
 
                 """
             )
@@ -712,6 +786,36 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         "xp_to_next": remaining,
     }
 
+@app.post("/internal/drop/start")
+def drop_start(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    title = str(payload.get("title", "")).strip()
+    mode = str(payload.get("mode", "")).strip().lower()
+    duration = int(payload.get("duration_seconds", 10))
+
+    if mode not in ("first", "random"):
+        raise HTTPException(status_code=400, detail="Invalid mode (first|random)")
+    if not title:
+        raise HTTPException(status_code=400, detail="Missing title")
+
+    duration = max(5, min(duration, 30))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # désactive les drops actifs précédents
+            cur.execute("UPDATE drops SET is_active = FALSE WHERE is_active = TRUE;")
+
+            cur.execute("""
+                INSERT INTO drops (title, mode, ends_at, is_active)
+                VALUES (%s, %s, now() + (%s || ' seconds')::interval, TRUE)
+                RETURNING id, ends_at;
+            """, (title, mode, duration))
+            drop_id, ends_at = cur.fetchone()
+
+        conn.commit()
+
+    return {"ok": True, "drop_id": int(drop_id), "mode": mode, "title": title, "duration_seconds": duration}
 
 # -------------------------
 # EventSub webhook (optional)
