@@ -1319,6 +1319,14 @@ let hideTimer = null;
 const DISPLAY_MS = 7000;
 let lastSig = "";
 const sfx = document.getElementById('sfx');
+function playSfx(){
+  try{
+    sfx.currentTime = 0;
+    const p = sfx.play();
+    if (p && p.catch) p.catch(()=>{});
+  }catch(e){}
+}
+
 
 function showCard(){
   const card = document.getElementById('card');
