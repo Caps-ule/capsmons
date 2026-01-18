@@ -318,7 +318,7 @@ class Bot(commands.Bot):
     @commands.command(name="hit")
     async def hit(self, ctx: commands.Context):
     # MVP: on utilise le même endpoint join (1 participation max)
-    await self.grab(ctx)
+        await self.grab(ctx)
 
 
 
