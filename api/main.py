@@ -1122,13 +1122,31 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                 raise HTTPException(status_code=400, detail="No CM assigned")
 
             # cm info
-            cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
-            cmrow = cur.fetchone()
-            if not cmrow:
-                raise HTTPException(status_code=400, detail="Unknown CM")
-            cm_name, media_url = cmrow[0], cmrow[1]
-            if not media_url:
-                raise HTTPException(status_code=400, detail="CM missing media_url")
+            # creature
+            cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No creature")
+            
+            xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
+            
+            # ---- NOUVEAU : gérer oeuf ----
+            if stage == 0 or not cm_key:
+                cm_name = "Œuf"
+                media_url = os.environ.get("EGG_MEDIA_URL", "").strip()
+                if not media_url:
+                    raise HTTPException(status_code=400, detail="EGG_MEDIA_URL missing")
+            else:
+                # cm info normal
+                cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
+                cmrow = cur.fetchone()
+                if not cmrow:
+                    raise HTTPException(status_code=400, detail="Unknown CM")
+                cm_name, media_url = cmrow[0], cmrow[1]
+                if not media_url:
+                    raise HTTPException(status_code=400, detail="CM missing media_url")
+            # ---- FIN NOUVEAU ----
+
 
         # Twitch profile (outside cursor, but inside conn is ok)
     display, avatar = twitch_user_profile(login)
