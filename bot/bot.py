@@ -14,6 +14,9 @@ API_LIVE_URL = "http://api:8000/internal/is_live"
 API_RP_URL = "http://api:8000/internal/rp_bundle"
 API_SHOW_URL = "http://api:8000/internal/trigger_show"
 API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
+API_DROP_RESOLVE_URL = "http://api:8000/internal/drop/resolve"
+_last_drop_announce = {"sig": None}
+
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
@@ -71,6 +74,8 @@ class Bot(commands.Bot):
     async def event_ready(self):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
         self.loop.create_task(self.presence_loop())
+        self.loop.create_task(self.drop_resolve_loop())
+
 
     async def event_message(self, message):
         if message.echo:
@@ -171,6 +176,59 @@ class Bot(commands.Bot):
                     )
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
+    async def drop_resolve_loop(self):
+    await asyncio.sleep(2)
+
+    while True:
+        await asyncio.sleep(2)
+
+        try:
+            r = requests.post(
+                API_DROP_RESOLVE_URL,
+                headers={"X-API-Key": API_KEY},
+                timeout=2,
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json()
+        except Exception:
+            continue
+
+        if not data.get("resolved"):
+            continue
+
+        title = data.get("title", "un objet")
+        mode = data.get("mode", "random")
+        winner = data.get("winner")  # peut être None
+        participants = data.get("participants") or []
+
+        # signature anti double annonce
+        sig = f"{mode}|{title}|{winner}|{len(participants)}"
+        if _last_drop_announce["sig"] == sig:
+            continue
+        _last_drop_announce["sig"] = sig
+
+        # Choix RP
+        if not participants:
+            line = await rp_get("drop.no_participants") or "🌫️ Personne n’a participé."
+            msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count="0")
+        elif not winner:
+            # cas très rare (ex: random sans participants)
+            line = await rp_get("drop.no_participants") or "🌫️ Drop terminé."
+            msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
+        else:
+            key = "drop.win.first" if mode == "first" else "drop.win.random"
+            line = await rp_get(key) or "🏆 {viewer} gagne {title} !"
+            msg = rp_format(line, viewer=f"@{winner}", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
+
+        # envoyer dans le channel
+        try:
+            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+            if chan:
+                await chan.send(msg)
+        except Exception:
+            pass
+
 
     @commands.command(name="creature")
     async def creature(self, ctx: commands.Context):
@@ -319,6 +377,43 @@ class Bot(commands.Bot):
     async def hit(self, ctx: commands.Context):
     # MVP: on utilise le même endpoint join (1 participation max)
         await self.grab(ctx)
+
+    @commands.command(name="grab")
+    async def grab(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+    
+        try:
+            r = requests.post(
+                API_DROP_JOIN_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login},
+                timeout=2,
+            )
+            if r.status_code != 200:
+                return
+            data = r.json()
+        except Exception:
+            return
+    
+        if not data.get("active"):
+            # RP "trop tard" si tu veux
+            late = await rp_get("drop.claim.late") or "⌛ Trop tard…"
+            await ctx.send(f"@{ctx.author.name} {late}")
+            return
+    
+        joined = data.get("joined", False)
+        title = data.get("title", "un objet")
+        mode = data.get("mode", "random")
+    
+        if not joined:
+            # déjà participé
+            ok = await rp_get("drop.claim.ok") or "📡 Déjà enregistré."
+            await ctx.send(f"@{ctx.author.name} {ok}")
+            return
+    
+        # Participation OK
+        ok = await rp_get("drop.claim.ok") or "📡 Participation validée."
+        await ctx.send(f"@{ctx.author.name} {ok} ({title})")
 
 
 
