@@ -13,6 +13,7 @@ API_STATE_URL = "http://api:8000/internal/creature"
 API_LIVE_URL = "http://api:8000/internal/is_live"
 API_RP_URL = "http://api:8000/internal/rp_bundle"
 API_SHOW_URL = "http://api:8000/internal/trigger_show"
+API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
@@ -280,6 +281,46 @@ class Bot(commands.Bot):
 
         # message court en chat
         await ctx.send(f"@{ctx.author.name} 👾 affichage du CapsMons !")
+
+    @commands.command(name="grab")
+    async def grab(self, ctx: commands.Context):
+    login = ctx.author.name.lower()
+    try:
+        r = requests.post(
+            API_DROP_JOIN_URL,
+            headers={"X-API-Key": API_KEY},
+            json={"twitch_login": login},
+            timeout=2,
+        )
+        data = r.json() if r.status_code == 200 else None
+    except Exception:
+        return
+
+    if not data or not data.get("active"):
+        # RP possible: drop.fail.timeout
+        return
+
+    mode = data.get("mode")
+    title = data.get("title")
+    joined = data.get("joined")
+    result = data.get("result")
+
+    # messages RP simples (tu remplaceras par rp_get + placeholders ensuite)
+    if result and result.get("won"):
+        await ctx.send(f"@{ctx.author.name} 🏆 Tu as gagné **{title}** ! +{result['xp_bonus']} XP et {result['ticket_qty']} {result['ticket_key']}")
+        return
+
+    if joined:
+        if mode == "random":
+            await ctx.send(f"@{ctx.author.name} 🎲 Participation enregistrée pour **{title}** !")
+        else:
+            await ctx.send(f"@{ctx.author.name} ⚡ Tentative enregistrée pour **{title}** !")
+    @commands.command(name="hit")
+    async def hit(self, ctx: commands.Context):
+    # MVP: on utilise le même endpoint join (1 participation max)
+    await self.grab(ctx)
+
+
 
 
 bot = Bot()

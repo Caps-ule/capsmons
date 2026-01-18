@@ -8,7 +8,7 @@ import time
 import requests
 import psycopg
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
@@ -53,6 +53,158 @@ def require_admin(creds: HTTPBasicCredentials):
             detail="Unauthorized",
             headers={"WWW-Authenticate": "Basic"},
         )
+
+
+def inv_add(login: str, item_key: str, qty: int):
+    if qty <= 0:
+        return
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO inventory (twitch_login, item_key, qty)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (twitch_login, item_key)
+                DO UPDATE SET qty = inventory.qty + EXCLUDED.qty,
+                              updated_at = now();
+            """, (login, item_key, qty))
+        conn.commit()
+
+
+def grant_xp(login: str, amount: int):
+    # On réutilise la même logique que /internal/xp (version simplifiée et sûre)
+    if amount <= 0:
+        return
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # ensure user & creature
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            # event log
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
+
+            # prev stage
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            prev_stage = int(cur.fetchone()[0])
+
+            # inc xp
+            cur.execute("""
+                UPDATE creatures
+                SET xp_total = xp_total + %s, updated_at=now()
+                WHERE twitch_login=%s
+                RETURNING xp_total;
+            """, (amount, login))
+            new_xp_total = int(cur.fetchone()[0])
+            new_stage = stage_from_xp(new_xp_total)
+
+            # update stage
+            cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
+
+            # assign CM on hatch (0 -> 1+)
+            if prev_stage == 0 and new_stage >= 1:
+                cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+                lrow = cur.fetchone()
+                lineage_key = lrow[0] if lrow else None
+                current_cm = lrow[1] if lrow else None
+                if lineage_key and current_cm is None:
+                    cm_key = pick_cm_for_lineage(conn, lineage_key)
+                    if cm_key:
+                        cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
+
+        conn.commit()
+
+
+def get_active_drop(cur):
+    cur.execute("""
+        SELECT id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login
+        FROM drops
+        WHERE status='active'
+        ORDER BY expires_at ASC
+        LIMIT 1;
+    """)
+    return cur.fetchone()
+
+
+def resolve_drop(drop_id: int):
+    # Résout un drop s'il est expiré. Retourne dict info (winner(s)) ou None.
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at
+                FROM drops WHERE id=%s;
+            """, (drop_id,))
+            d = cur.fetchone()
+            if not d:
+                return None
+            _id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at = d
+
+            if status != "active":
+                return None
+
+            # si pas expiré, on ne résout pas
+            cur.execute("SELECT now() >= %s;", (expires_at,))
+            expired = bool(cur.fetchone()[0])
+            if not expired:
+                return None
+
+            # participants
+            cur.execute("SELECT twitch_login FROM drop_participants WHERE drop_id=%s;", (drop_id,))
+            participants = [r[0] for r in cur.fetchall()]
+
+            # Déterminer gagnants
+            winners = []
+            if mode == "first":
+                # premier arrivé
+                cur.execute("""
+                    SELECT twitch_login
+                    FROM drop_participants
+                    WHERE drop_id=%s
+                    ORDER BY created_at ASC
+                    LIMIT 1;
+                """, (drop_id,))
+                r = cur.fetchone()
+                if r:
+                    winners = [r[0]]
+
+            elif mode == "random":
+                if participants:
+                    winners = [random.choice(participants)]
+
+            elif mode == "coop":
+                # Réussite si participants >= target_hits
+                target = int(target_hits or 0)
+                if target > 0 and len(participants) >= target:
+                    winners = participants[:]  # tous les participants gagnent
+                else:
+                    winners = []  # échec
+
+            # Appliquer récompenses
+            if winners:
+                for w in winners:
+                    grant_xp(w, int(xp_bonus))
+                    inv_add(w, ticket_key, int(ticket_qty))
+                winner_login = winners[0] if mode in ("first", "random") else None
+                cur.execute("""
+                    UPDATE drops
+                    SET status='resolved', resolved_at=now(), winner_login=%s
+                    WHERE id=%s;
+                """, (winner_login, drop_id))
+            else:
+                cur.execute("""
+                    UPDATE drops
+                    SET status='expired', resolved_at=now()
+                    WHERE id=%s;
+                """, (drop_id,))
+
+        conn.commit()
+
+    return {"mode": mode, "title": title, "winners": winners, "xp_bonus": int(xp_bonus), "ticket_key": ticket_key, "ticket_qty": int(ticket_qty)}
+
 
 # -------------------------
 # Auth app_twitch_show
@@ -265,8 +417,42 @@ def init_db():
                    expires_at TIMESTAMPTZ NOT NULL
                 );
 
-
-CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
+                CREATE TABLE IF NOT EXISTS drops (
+                  id SERIAL PRIMARY KEY,
+                  mode TEXT NOT NULL CHECK (mode IN ('first','random','coop')),
+                  title TEXT NOT NULL,
+                  media_url TEXT NOT NULL,
+                  xp_bonus INT NOT NULL DEFAULT 0,
+                  ticket_key TEXT NOT NULL DEFAULT 'ticket_basic',
+                  ticket_qty INT NOT NULL DEFAULT 1,
+                  target_hits INT,
+                  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','resolved','expired')),
+                  winner_login TEXT,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  expires_at TIMESTAMPTZ NOT NULL,
+                  resolved_at TIMESTAMPTZ
+                );
+                
+                CREATE TABLE IF NOT EXISTS drop_participants (
+                  drop_id INT NOT NULL REFERENCES drops(id) ON DELETE CASCADE,
+                  twitch_login TEXT NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  PRIMARY KEY (drop_id, twitch_login)
+                );
+                
+                CREATE TABLE IF NOT EXISTS inventory (
+                  twitch_login TEXT NOT NULL,
+                  item_key TEXT NOT NULL,
+                  qty INT NOT NULL DEFAULT 0,
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  PRIMARY KEY (twitch_login, item_key)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
+                
+                
+                
+                CREATE INDEX IF NOT EXISTS idx_overlay_events_expires
 ON overlay_events(expires_at);
 
                 """
@@ -1191,6 +1377,159 @@ def overlay_state():
         "cm": {"name": cm_name, "media": cm_media_url},
         "xp": {"total": xp_total, "stage": int(stage), "pct": pct, "to_next": (next_xp - xp_total) if next_xp else None},
     }
+
+@app.post("/internal/drop/spawn")
+def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    mode = str(payload.get("mode", "")).strip().lower()
+    title = str(payload.get("title", "")).strip()
+    media_url = str(payload.get("media_url", "")).strip()
+    duration = int(payload.get("duration_seconds", 10))
+    xp_bonus = int(payload.get("xp_bonus", 50))
+    ticket_key = str(payload.get("ticket_key", "ticket_basic")).strip()
+    ticket_qty = int(payload.get("ticket_qty", 1))
+    target_hits = payload.get("target_hits", None)
+
+    if mode not in ("first", "random", "coop"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    if not title or not media_url:
+        raise HTTPException(status_code=400, detail="Missing title/media_url")
+
+    duration = max(5, min(duration, 30))
+    xp_bonus = max(0, min(xp_bonus, 1000))
+    ticket_qty = max(1, min(ticket_qty, 50))
+    if mode == "coop":
+        target_hits = int(target_hits or 10)
+        target_hits = max(2, min(target_hits, 999))
+    else:
+        target_hits = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # option: expire l'ancien drop actif
+            cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+
+            cur.execute("""
+                INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
+                RETURNING id;
+            """, (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration))
+            drop_id = int(cur.fetchone()[0])
+        conn.commit()
+
+    return {"ok": True, "drop_id": drop_id}
+
+@app.get("/overlay/drop_state")
+def overlay_drop_state():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            d = get_active_drop(cur)
+            if not d:
+                return {"show": False}
+
+            drop_id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login = d
+
+            # resolve si expiré
+            cur.execute("SELECT now() >= %s;", (expires_at,))
+            if bool(cur.fetchone()[0]):
+                conn.commit()
+                resolve_drop(int(drop_id))
+                return {"show": False}
+
+            # compteur participants
+            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
+            count = int(cur.fetchone()[0])
+
+            # temps restant
+            cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
+            remaining = int(cur.fetchone()[0])
+
+    return {
+        "show": True,
+        "drop": {
+            "id": int(drop_id),
+            "mode": mode,
+            "title": title,
+            "media": media_url,
+            "remaining": max(0, remaining),
+            "count": count,
+            "target": int(target_hits) if target_hits is not None else None,
+            "xp_bonus": int(xp_bonus),
+            "ticket_key": ticket_key,
+            "ticket_qty": int(ticket_qty),
+        }
+    }
+@app.get("/overlay/drop", response_class=HTMLResponse)
+def overlay_drop_page():
+    return HTMLResponse("""
+<!doctype html>
+<html><head><meta charset="utf-8"/>
+<style>
+  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+  .wrap{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:60px}
+  .card{display:none;gap:14px;align-items:center;background:rgba(10,15,20,.80);border:1px solid rgba(255,255,255,.12);
+        border-radius:18px;padding:16px 18px;min-width:820px}
+  .img{width:96px;height:96px;border-radius:16px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
+  .title{font-size:22px;font-weight:900;color:#e6edf3}
+  .sub{font-size:13px;color:#9aa4b2;margin-top:2px}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:#9aa4b2;font-size:12px}
+  .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.12);margin-top:10px}
+  .fill{height:100%;width:0%;background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45))}
+</style></head>
+<body>
+<div class="wrap">
+  <div id="card" class="card">
+    <img id="img" class="img" src="" alt="">
+    <div style="flex:1">
+      <div class="title" id="title"></div>
+      <div class="sub" id="line"></div>
+      <div class="bar"><div id="fill" class="fill"></div></div>
+    </div>
+    <div style="text-align:right">
+      <div class="pill" id="mode"></div>
+      <div class="sub" id="timer" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let showing=false;
+function setShow(on){
+  const c=document.getElementById('card');
+  if(on && !showing){ c.style.display='flex'; showing=true; }
+  if(!on && showing){ c.style.display='none'; showing=false; }
+}
+async function tick(){
+  try{
+    const r = await fetch('/overlay/drop_state', {cache:'no-store'});
+    const j = await r.json();
+    if(!j.show){ setShow(false); return; }
+
+    const d = j.drop;
+    document.getElementById('img').src = d.media || '';
+    document.getElementById('title').textContent = d.title || 'Drop';
+    document.getElementById('timer').textContent = `⏳ ${d.remaining}s`;
+    document.getElementById('mode').textContent =
+      d.mode === 'first' ? '⚡ PREMIER' : (d.mode === 'random' ? '🎲 RANDOM' : '🤝 COOP');
+
+    if(d.mode === 'coop'){
+      document.getElementById('line').textContent = `Tape !hit — ${d.count}/${d.target} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
+      const pct = d.target ? Math.min(100, Math.floor((d.count/d.target)*100)) : 0;
+      document.getElementById('fill').style.width = pct + '%';
+    }else{
+      document.getElementById('line').textContent = `Tape !grab — participants: ${d.count} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
+      document.getElementById('fill').style.width = '0%';
+    }
+
+    setShow(true);
+  }catch(e){}
+}
+setInterval(tick, 500);
+tick();
+</script>
+</body></html>
+""")
 
 
 @app.get("/overlay/show", response_class=HTMLResponse)
