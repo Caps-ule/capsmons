@@ -1107,19 +1107,21 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     if not login:
         raise HTTPException(status_code=400, detail="Missing twitch_login")
 
-    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "5"))
-    duration = max(2, min(duration, 15))  # clamp
+    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "7"))
+    duration = max(2, min(duration, 15))
 
+    # 1) Lire la creature + déterminer quoi afficher (CM ou Oeuf)
     with get_db() as conn:
         with conn.cursor() as cur:
-            # creature
             cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=400, detail="No creature")
+
             xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
-            # si oeuf (stage 0) ou pas de CM, on affiche l'oeuf
+
             if stage == 0 or not cm_key:
+                cm_key = "egg"
                 cm_name = "Œuf"
                 media_url = os.environ.get("EGG_MEDIA_URL", "").strip()
                 if not media_url:
@@ -1133,49 +1135,25 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                 if not media_url:
                     raise HTTPException(status_code=400, detail="CM missing media_url")
 
-
-            # cm info
-            # creature
-            cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=400, detail="No creature")
-            
-            xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
-            
-            # ---- NOUVEAU : gérer oeuf ----
-            if stage == 0 or not cm_key:
-                cm_name = "Œuf"
-                media_url = os.environ.get("EGG_MEDIA_URL", "").strip()
-                if not media_url:
-                    raise HTTPException(status_code=400, detail="EGG_MEDIA_URL missing")
-            else:
-                # cm info normal
-                cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
-                cmrow = cur.fetchone()
-                if not cmrow:
-                    raise HTTPException(status_code=400, detail="Unknown CM")
-                cm_name, media_url = cmrow[0], cmrow[1]
-                if not media_url:
-                    raise HTTPException(status_code=400, detail="CM missing media_url")
-            # ---- FIN NOUVEAU ----
-
-
-        # Twitch profile (outside cursor, but inside conn is ok)
+    # 2) Récupérer pseudo + avatar Twitch
     display, avatar = twitch_user_profile(login)
 
+    # 3) Calcul barre XP
     stage_start, next_xp = stage_bounds(stage)
-    expires_sql = f"now() + interval '{duration} seconds'"
 
+    # 4) Inserer l'event overlay
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute(
+                """
                 INSERT INTO overlay_events
                   (twitch_login, viewer_display, viewer_avatar, cm_key, cm_name, cm_media_url,
                    xp_total, stage, stage_start_xp, next_stage_xp, expires_at)
                 VALUES
-                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,{expires_sql});
-            """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp))
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' seconds')::interval);
+                """,
+                (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp, duration),
+            )
         conn.commit()
 
     return {"ok": True}
