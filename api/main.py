@@ -430,7 +430,8 @@ def init_db():
                   winner_login TEXT,
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                   expires_at TIMESTAMPTZ NOT NULL,
-                  resolved_at TIMESTAMPTZ
+                  resolved_at TIMESTAMPTZ,
+                  announced_at TIMESTAMPTZ
                 );
                 
                 CREATE TABLE IF NOT EXISTS drop_participants (
@@ -1218,26 +1219,38 @@ def rp_bundle(x_api_key: str | None = Header(default=None)):
     return {"rp": bundle}
 
 @app.get("/admin/rp", response_class=HTMLResponse)
-def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_rp(
+    request: Request,
+    flash: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
     require_admin(credentials)
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT key, lines, updated_at FROM rp_lines ORDER BY key;")
+            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
             rows = cur.fetchall()
 
     items = []
-    for k, lines, _ in rows:
+    for k, lines in rows:
+        # lines peut être déjà une liste (jsonb) ou une string
         if isinstance(lines, str):
             try:
                 lines = json.loads(lines)
             except Exception:
                 lines = []
-            lines = lines if isinstance(lines, list) else []
-            text = "\n".join([str(x) for x in lines])
-            items.append({"key": k, "count": len(lines), "text": text})
 
-    return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
+        if not isinstance(lines, list):
+            lines = []
+
+        text = "\n".join([str(x) for x in lines if str(x).strip()])
+        items.append({"key": k, "count": len(lines), "text": text})
+
+    return templates.TemplateResponse(
+        "rp.html",
+        {"request": request, "items": items, "flash": flash},
+    )
+
 
 
 @app.post("/admin/rp/save")
@@ -1460,6 +1473,69 @@ def overlay_drop_state():
             "ticket_qty": int(ticket_qty),
         }
     }
+@app.get("/internal/drop/poll_result")
+def drop_poll_result(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # drop actif ?
+            cur.execute("""
+                SELECT id
+                FROM drops
+                WHERE status='active'
+                ORDER BY expires_at ASC
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+
+    # s'il y a un actif, on tente de le résoudre si expiré
+    if row:
+        resolve_drop(int(row[0]))
+
+    # maintenant, chercher un drop résolu/expiré non annoncé
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, status, winner_login
+                FROM drops
+                WHERE announced_at IS NULL
+                  AND status IN ('resolved','expired')
+                ORDER BY resolved_at ASC NULLS LAST, expires_at ASC
+                LIMIT 1;
+            """)
+            d = cur.fetchone()
+
+            if not d:
+                return {"announce": False}
+
+            drop_id, mode, title, xp_bonus, ticket_key, ticket_qty, status, winner_login = d
+
+            # marquer annoncé
+            cur.execute("UPDATE drops SET announced_at=now() WHERE id=%s;", (drop_id,))
+        conn.commit()
+
+    # récupérer gagnants si coop (tous les participants)
+    winners = []
+    if mode == "coop" and status == "resolved":
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT twitch_login FROM drop_participants WHERE drop_id=%s ORDER BY created_at ASC;", (drop_id,))
+                winners = [r[0] for r in cur.fetchall()]
+    elif status == "resolved" and winner_login:
+        winners = [winner_login]
+
+    return {
+        "announce": True,
+        "mode": mode,
+        "status": status,  # resolved / expired
+        "title": title,
+        "winners": winners,
+        "xp_bonus": int(xp_bonus),
+        "ticket_key": ticket_key,
+        "ticket_qty": int(ticket_qty),
+    }
+
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
     return HTMLResponse("""
