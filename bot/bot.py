@@ -175,14 +175,14 @@ class Bot(commands.Bot):
 
     def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
     # twitchio fournit généralement ces flags
-    try:
-        if getattr(ctx.author, "is_broadcaster", False):
-            return True
-        if getattr(ctx.author, "is_mod", False):
-            return True
-    except Exception:
-        pass
-    return False
+        try:
+            if getattr(ctx.author, "is_broadcaster", False):
+                return True
+            if getattr(ctx.author, "is_mod", False):
+                return True
+        except Exception:
+            pass
+        return False
 
     @commands.command(name="spawn")
 async def spawn(self, ctx: commands.Context):
@@ -576,7 +576,7 @@ async def spawn(self, ctx: commands.Context):
     async def hit(self, ctx: commands.Context):
         await self.grab(ctx)
 
-    
+
 
 
 # ============================================================================
