@@ -272,7 +272,7 @@ class Bot(commands.Bot):
         rp_key = f"drop.spawn.{mode}"
         line = await rp_get(rp_key) or "✨ Drop lancé !"
         msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
-    await ctx.send(msg)
+        await ctx.send(msg)
 
 
 
