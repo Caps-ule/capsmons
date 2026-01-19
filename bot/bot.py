@@ -112,10 +112,10 @@ class Bot(commands.Bot):
         self.loop.create_task(self.drop_announce_loop())
 
         def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
-        try:
-            return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
-        except Exception:
-            return False
+            try:
+                return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
+            except Exception:
+                return False
 
     # ------------------------------------------------------------------------
     # Verif si mod ou broadcaster
