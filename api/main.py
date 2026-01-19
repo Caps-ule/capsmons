@@ -948,6 +948,255 @@ tick();
 </html>
 
 """)
+
+@app.get("/admin/cms", response_class=HTMLResponse)
+def admin_cms(
+    request: Request,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, name, is_enabled FROM lineages ORDER BY key;")
+            lineages = [{"key": r[0], "name": r[1], "is_enabled": bool(r[2])} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
+                FROM cms
+                ORDER BY lineage_key, key;
+            """)
+            cms = [{
+                "key": r[0],
+                "name": r[1],
+                "lineage_key": r[2],
+                "is_enabled": bool(r[3]),
+                "in_hatch_pool": bool(r[4]),
+                "media_url": r[5],
+            } for r in cur.fetchall()]
+
+    return templates.TemplateResponse("cms.html", {
+        "request": request,
+        "lineages": lineages,
+        "cms": cms,
+        "flash": flash,
+        "flash_kind": flash_kind,
+    })
+
+# =============================================================================
+# ADMIN: CMS ACTION 
+# =============================================================================
+
+
+@app.post("/admin/cms/action")
+def admin_cms_action(
+    action: str = Form(...),
+    key: str | None = Form(None),
+    cm_key: str | None = Form(None),
+    cm_name: str | None = Form(None),
+    lineage_key: str | None = Form(None),
+    media_url: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    action = action.strip().lower()
+
+    def go(msg: str, kind: str = "ok"):
+        safe = msg.replace(" ", "%20")
+        return RedirectResponse(url=f"/admin/cms?flash_kind={kind}&flash={safe}", status_code=303)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if action == "toggle_lineage":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE lineages SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"Lineage {key} toggled")
+
+            if action == "add_cm":
+                if not (cm_key and cm_name and lineage_key):
+                    return go("Champs manquants", "err")
+
+                cm_key = cm_key.strip().lower()
+                cm_name = cm_name.strip()
+                lineage_key = lineage_key.strip().lower()
+                url = (media_url or "").strip()
+
+                cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
+                if not cur.fetchone():
+                    return go("Lineage inconnue", "err")
+
+                cur.execute("""
+                    INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool, media_url)
+                    VALUES (%s, %s, %s, TRUE, FALSE, %s)
+                    ON CONFLICT (key) DO UPDATE
+                    SET name = EXCLUDED.name,
+                        lineage_key = EXCLUDED.lineage_key,
+                        media_url = EXCLUDED.media_url;
+                """, (cm_key, cm_name, lineage_key, url))
+
+                conn.commit()
+                return go(f"CM créé: {cm_key}")
+
+            if action == "rename_cm":
+                if not (key and cm_name):
+                    return go("Champs manquants", "err")
+                cur.execute("UPDATE cms SET name=%s WHERE key=%s;", (cm_name, key))
+                conn.commit()
+                return go(f"CM renommé: {key}")
+
+            if action == "toggle_cm_enabled":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE cms SET is_enabled = NOT is_enabled WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"CM enabled toggled: {key}")
+
+            if action == "toggle_cm_pool":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("UPDATE cms SET in_hatch_pool = NOT in_hatch_pool WHERE key=%s;", (key,))
+                conn.commit()
+                return go(f"CM pool toggled: {key}")
+
+            if action == "update_media_url":
+                if not key:
+                    return go("Key manquante", "err")
+                url = (media_url or "").strip()
+                cur.execute("UPDATE cms SET media_url=%s WHERE key=%s;", (url, key))
+                conn.commit()
+                return go(f"Media URL mis à jour: {key}")
+
+            if action == "delete_cm":
+                if not key:
+                    return go("Key manquante", "err")
+                cur.execute("DELETE FROM cms WHERE key=%s;", (key,))
+                cur.execute("UPDATE creatures SET cm_key=NULL, updated_at=now() WHERE cm_key=%s;", (key,))
+                conn.commit()
+                return go(f"CM supprimé: {key}")
+
+    return go("Action inconnue", "err")
+
+# =============================================================================
+# ADMIN: RP
+# =============================================================================
+
+@app.get("/admin/rp", response_class=HTMLResponse)
+def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
+            rows = cur.fetchall()
+
+    items = []
+    for k, lines in rows:
+        if isinstance(lines, str):
+            try:
+                lines = json.loads(lines)
+            except Exception:
+                lines = []
+        if not isinstance(lines, list):
+            lines = []
+        text = "\n".join([str(x) for x in lines if str(x).strip()])
+        items.append({"key": k, "count": len(lines), "text": text})
+
+    return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
+
+# =============================================================================
+# ADMIN: admin Stats
+# =============================================================================
+
+@app.get("/admin/stats", response_class=HTMLResponse)
+def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
+            start_of_today_paris = cur.fetchone()[0]
+
+            cur.execute("""
+                SELECT COALESCE(SUM(amount), 0)
+                FROM xp_events
+                WHERE created_at >= %s;
+            """, (start_of_today_paris,))
+            xp_today = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT COALESCE(SUM(amount), 0)
+                FROM xp_events
+                WHERE created_at >= now() - interval '7 days';
+            """)
+            xp_7d = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT COUNT(*) AS events, COUNT(DISTINCT twitch_login) AS users
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours';
+            """)
+            events_24h, active_users_24h = cur.fetchone()
+            events_24h = int(events_24h)
+            active_users_24h = int(active_users_24h)
+
+            cur.execute("""
+                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD') AS day,
+                       SUM(amount) AS xp
+                FROM xp_events
+                WHERE created_at >= now() - interval '7 days'
+                GROUP BY 1
+                ORDER BY 1 DESC;
+            """)
+            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+            max_xp = max([r["xp"] for r in xp_by_day], default=0) or 1
+            for r in xp_by_day:
+                r["pct"] = int((r["xp"] / max_xp) * 100)
+
+            cur.execute("""
+                SELECT twitch_login, SUM(amount) AS xp
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 20;
+            """)
+            top_xp_24h = [{"twitch_login": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT twitch_login, COUNT(*) AS events
+                FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1
+                ORDER BY 2 DESC
+                LIMIT 20;
+            """)
+            top_events_24h = [{"twitch_login": r[0], "events": int(r[1])} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT COUNT(DISTINCT twitch_login)
+                FROM xp_events
+                WHERE created_at >= now() - interval '15 minutes';
+            """)
+            active_users_15m = int(cur.fetchone()[0])
+
+    return templates.TemplateResponse("stats.html", {
+        "request": request,
+        "xp_today": xp_today,
+        "xp_7d": xp_7d,
+        "events_24h": events_24h,
+        "active_users_24h": active_users_24h,
+        "active_users_15m": active_users_15m,
+        "xp_by_day": xp_by_day,
+        "top_xp_24h": top_xp_24h,
+        "top_events_24h": top_events_24h,
+    })
+
+
+
 # =============================================================================
 # ADMIN: remettre /admin (minimum)
 # =============================================================================
