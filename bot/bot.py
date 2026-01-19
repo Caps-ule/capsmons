@@ -121,10 +121,10 @@ class Bot(commands.Bot):
     # Verif si mod ou broadcaster
     # ------------------------------------------------------------------------
     def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
-    try:
-        return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
-    except Exception:
-        return False
+        try:
+            return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
+        except Exception:
+            return False
     # ------------------------------------------------------------------------
     # Commande !drop
     # ------------------------------------------------------------------------
