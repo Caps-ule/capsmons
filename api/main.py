@@ -1138,6 +1138,88 @@ def drop_poll_result(x_api_key: str | None = Header(default=None)):
         "ticket_qty": int(ticket_qty),
     }
 
+# ==========================
+# ADMIN (minimum vital)
+# ==========================
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_home(
+    request: Request,
+    q: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    q_clean = (q or "").strip().lower()
+    result = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT twitch_login, xp_total, stage
+                FROM creatures
+                ORDER BY xp_total DESC
+                LIMIT 50;
+            """)
+            top = [{"twitch_login": r[0], "xp_total": r[1], "stage": r[2]} for r in cur.fetchall()]
+
+            if q_clean:
+                cur.execute("""
+                    SELECT twitch_login, xp_total, stage
+                    FROM creatures
+                    WHERE twitch_login = %s;
+                """, (q_clean,))
+                row = cur.fetchone()
+                if row:
+                    result = {"twitch_login": row[0], "xp_total": row[1], "stage": row[2]}
+
+    return templates.TemplateResponse("admin.html", {
+        "request": request,
+        "top": top,
+        "q": q_clean,
+        "result": result,
+    })
+
+
+@app.get("/admin/user/{login}", response_class=HTMLResponse)
+def admin_user(
+    request: Request,
+    login: str,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT xp_total, stage, lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            row = cur.fetchone()
+
+    if not row:
+        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    else:
+        xp_total, stage, lineage_key, cm_key = row
+
+    nxt, label = next_threshold(int(xp_total))
+    xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+
+    return templates.TemplateResponse("user.html", {
+        "request": request,
+        "login": login,
+        "xp_total": int(xp_total),
+        "stage": int(stage),
+        "next_label": label,
+        "xp_to_next": int(xp_to_next),
+        "flash": flash,
+        "flash_kind": flash_kind,
+        "lineage_key": lineage_key,
+        "cm_key": cm_key,
+    })
+
+
 
 # =============================================================================
 # Admin RP (liste/édition)
