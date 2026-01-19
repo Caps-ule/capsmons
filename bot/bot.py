@@ -7,26 +7,36 @@ import requests
 import aiohttp
 from twitchio.ext import commands
 
+# ============================================================================
+# CONFIG / URLs (services Docker)
+# ============================================================================
 API_CHOOSE_URL = "http://api:8000/internal/choose_lineage"
 API_XP_URL = "http://api:8000/internal/xp"
 API_STATE_URL = "http://api:8000/internal/creature"
 API_LIVE_URL = "http://api:8000/internal/is_live"
 API_RP_URL = "http://api:8000/internal/rp_bundle"
 API_SHOW_URL = "http://api:8000/internal/trigger_show"
-API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
-API_DROP_RESOLVE_URL = "http://api:8000/internal/drop/resolve"
-_last_drop_announce = {"sig": None}
 
+# Drops (nouveau système: join + poll_result)
+API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
+API_DROP_POLL_URL = "http://api:8000/internal/drop/poll_result"
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
-_last_xp_at: dict[str, float] = {}       # chat xp cooldown
-_active_until: dict[str, float] = {}     # presence window
-_show_last = {"global": 0.0, "users": {}}  # show cooldowns
+# ============================================================================
+# STATE (mémoire RAM du bot)
+# ============================================================================
+_last_xp_at: dict[str, float] = {}          # cooldown XP chat par user
+_active_until: dict[str, float] = {}        # fenêtre présence (user actif jusqu'à timestamp)
+_show_last = {"global": 0.0, "users": {}}   # cooldown overlay show
 
-_rp_cache = {"ts": 0.0, "rp": {}}     # RP cache
+_rp_cache = {"ts": 0.0, "rp": {}}           # cache RP (bundle)
+_last_drop_announce = {"sig": None}         # anti double annonce drops
 
 
+# ============================================================================
+# HELPERS (texte / RP)
+# ============================================================================
 def stage_label(stage: int) -> str:
     return {
         0: "🥚 Œuf",
@@ -36,8 +46,21 @@ def stage_label(stage: int) -> str:
     }.get(stage, f"Stage {stage}")
 
 
+def rp_format(text: str, **kw) -> str:
+    """
+    Remplace des placeholders {viewer} {title} {xp} etc.
+    """
+    out = text
+    for k, v in kw.items():
+        out = out.replace("{" + k + "}", str(v))
+    return out
+
+
 async def rp_get(key: str) -> str | None:
-    """Return one random RP line for a given key, using a 60s cache."""
+    """
+    Renvoie une phrase RP aléatoire pour une clé.
+    Cache 60s: évite d'appeler l'API à chaque message.
+    """
     now = time.time()
 
     # refresh toutes les 60 secondes
@@ -54,7 +77,7 @@ async def rp_get(key: str) -> str | None:
                         _rp_cache["rp"] = data.get("rp", {}) or {}
                         _rp_cache["ts"] = now
         except Exception:
-            # conserve le cache précédent
+            # conserve le cache précédent si erreur
             pass
 
     lines = _rp_cache["rp"].get(key)
@@ -63,6 +86,9 @@ async def rp_get(key: str) -> str | None:
     return random.choice(lines)
 
 
+# ============================================================================
+# BOT
+# ============================================================================
 class Bot(commands.Bot):
     def __init__(self):
         super().__init__(
@@ -71,23 +97,32 @@ class Bot(commands.Bot):
             initial_channels=[os.environ["TWITCH_CHANNEL"]],
         )
 
+    # ------------------------------------------------------------------------
+    # Startup
+    # ------------------------------------------------------------------------
     async def event_ready(self):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
+
+        # Loop présence (XP périodique)
         self.loop.create_task(self.presence_loop())
-        self.loop.create_task(self.drop_resolve_loop())
 
+        # Loop drops (annonce résultat)
+        self.loop.create_task(self.drop_announce_loop())
 
+    # ------------------------------------------------------------------------
+    # Message handler (XP chat + commands)
+    # ------------------------------------------------------------------------
     async def event_message(self, message):
         if message.echo:
             return
 
         login = message.author.name.lower()
 
-        # Marquer actif (présence)
+        # 1) Marquer actif (présence)
         window = int(os.environ.get("PRESENCE_ACTIVE_WINDOW_SECONDS", "900"))
         _active_until[login] = time.time() + window
 
-        # Cooldown XP chat
+        # 2) Donner XP chat sous cooldown
         now = time.time()
         cooldown = int(os.environ.get("CHAT_XP_COOLDOWN_SECONDS", "20"))
         last = _last_xp_at.get(login, 0.0)
@@ -106,7 +141,6 @@ class Bot(commands.Bot):
 
                 if resp.status_code != 200:
                     print("[BOT] XP API status:", resp.status_code, (resp.text or "")[:200], flush=True)
-                    # ne bloque pas les commandes
                 else:
                     try:
                         data = resp.json()
@@ -118,7 +152,7 @@ class Bot(commands.Bot):
                         before = int(data.get("stage_before", 0))
                         after = int(data.get("stage_after", before))
 
-                        # Annonce uniquement si évolution
+                        # annonce uniquement si évolution
                         if after > before:
                             intro = await rp_get("evolve.announce") or "✨ Évolution !"
                             msg = f"{intro} @{message.author.name} {stage_label(before)} ➜ {stage_label(after)}"
@@ -136,9 +170,12 @@ class Bot(commands.Bot):
                     body = (resp.text or "")[:200]
                 print("[BOT] XP API error:", repr(e), body, flush=True)
 
-        # Toujours laisser passer les commandes
+        # 3) IMPORTANT: toujours laisser passer les commandes
         await self.handle_commands(message)
 
+    # ------------------------------------------------------------------------
+    # Presence loop (XP de présence)
+    # ------------------------------------------------------------------------
     async def presence_loop(self):
         tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
         amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
@@ -156,6 +193,8 @@ class Bot(commands.Bot):
                 continue
 
             now = time.time()
+
+            # Liste des actifs
             actives = [u for u, until in _active_until.items() if until > now]
 
             # nettoyage
@@ -166,6 +205,7 @@ class Bot(commands.Bot):
             if not actives:
                 continue
 
+            # XP présence à tous les actifs
             for ulogin in actives:
                 try:
                     requests.post(
@@ -176,15 +216,24 @@ class Bot(commands.Bot):
                     )
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
-    async def drop_resolve_loop(self):
+
+    # ------------------------------------------------------------------------
+    # Drops announce loop (poll_result)
+    # ------------------------------------------------------------------------
+    async def drop_announce_loop(self):
+        """
+        Toutes les 2s:
+        - appelle /internal/drop/poll_result
+        - si announce=true => envoie un message RP dans le chat
+        """
         await asyncio.sleep(2)
-    
+
         while True:
             await asyncio.sleep(2)
-    
+
             try:
-                r = requests.post(
-                    API_DROP_RESOLVE_URL,
+                r = requests.get(
+                    API_DROP_POLL_URL,
                     headers={"X-API-Key": API_KEY},
                     timeout=2,
                 )
@@ -193,34 +242,57 @@ class Bot(commands.Bot):
                 data = r.json()
             except Exception:
                 continue
-    
-            if not data.get("resolved"):
+
+            if not data.get("announce", False):
                 continue
-    
-            title = data.get("title", "un objet")
+
             mode = data.get("mode", "random")
-            winner = data.get("winner")  # peut être None
-            participants = data.get("participants") or []
-    
-            # signature anti double annonce
-            sig = f"{mode}|{title}|{winner}|{len(participants)}"
+            status = data.get("status", "expired")  # resolved|expired
+            title = data.get("title", "un objet")
+            winners = data.get("winners", []) or []
+            xp_bonus = int(data.get("xp_bonus", 0))
+            ticket_key = data.get("ticket_key", "ticket_basic")
+            ticket_qty = int(data.get("ticket_qty", 1))
+
+            # anti double annonce (au cas où)
+            sig = f"{mode}|{status}|{title}|{','.join(winners)}|{xp_bonus}|{ticket_key}|{ticket_qty}"
             if _last_drop_announce["sig"] == sig:
                 continue
             _last_drop_announce["sig"] = sig
-    
-            # Choix RP
-            if not participants:
-                line = await rp_get("drop.no_participants") or "🌫️ Personne n’a participé."
-                msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count="0")
-            elif not winner:
-                # cas très rare (ex: random sans participants)
-                line = await rp_get("drop.no_participants") or "🌫️ Drop terminé."
-                msg = rp_format(line, viewer="", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
+
+            # construire message RP
+            if status != "resolved":
+                rp_key = "drop.fail.coop" if mode == "coop" else "drop.fail.timeout"
+                line = await rp_get(rp_key) or "⌛ Trop tard…"
+                msg = rp_format(
+                    line,
+                    viewer="",
+                    title=title,
+                    xp=xp_bonus,
+                    ticket_key=ticket_key,
+                    ticket_qty=ticket_qty,
+                    count=len(winners),
+                )
             else:
-                key = "drop.win.first" if mode == "first" else "drop.win.random"
-                line = await rp_get(key) or "🏆 {viewer} gagne {title} !"
-                msg = rp_format(line, viewer=f"@{winner}", title=title, xp="", ticket_key="", ticket_qty="", count=str(len(participants)))
-    
+                if mode == "first":
+                    rp_key = "drop.win.first"
+                elif mode == "random":
+                    rp_key = "drop.win.random"
+                else:
+                    rp_key = "drop.win.coop"
+
+                line = await rp_get(rp_key) or "🏆 {viewer} gagne {title} !"
+                viewer = f"@{winners[0]}" if winners else ""
+                msg = rp_format(
+                    line,
+                    viewer=viewer,
+                    title=title,
+                    xp=xp_bonus,
+                    ticket_key=ticket_key,
+                    ticket_qty=ticket_qty,
+                    count=len(winners),
+                )
+
             # envoyer dans le channel
             try:
                 chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
@@ -229,7 +301,9 @@ class Bot(commands.Bot):
             except Exception:
                 pass
 
-
+    # ------------------------------------------------------------------------
+    # Commande: !creature
+    # ------------------------------------------------------------------------
     @commands.command(name="creature")
     async def creature(self, ctx: commands.Context):
         login = ctx.author.name.lower()
@@ -258,11 +332,9 @@ class Bot(commands.Bot):
         lineage = data.get("lineage_key")
         cm_key = data.get("cm_key")
 
-        # RP stage line
         flavor = await rp_get(f"creature.stage{stage}")
         flavor_txt = f" | {flavor}" if flavor else ""
 
-        # lineage/cm info
         if cm_key:
             extra = f" — CM: {cm_key} (lignée {str(lineage).upper() if lineage else '—'})"
         elif lineage:
@@ -272,14 +344,13 @@ class Bot(commands.Bot):
 
         header = f"👁️ CapsMons — @{ctx.author.name}"
         state = f"{stage_label(stage)} | {xp_total} XP"
-
-        if nxt == "Max":
-            prog = "🏁 Stade max"
-        else:
-            prog = f"⏳ {nxt} dans {xp_to_next} XP"
+        prog = "🏁 Stade max" if nxt == "Max" else f"⏳ {nxt} dans {xp_to_next} XP"
 
         await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt}")
 
+    # ------------------------------------------------------------------------
+    # Commande: !choose
+    # ------------------------------------------------------------------------
     @commands.command(name="choose")
     async def choose(self, ctx: commands.Context):
         login = ctx.author.name.lower()
@@ -309,12 +380,15 @@ class Bot(commands.Bot):
         ok_line = await rp_get("choose.ok") or "✅ Lignée enregistrée."
         await ctx.send(f"@{ctx.author.name} {ok_line} ({lineage})")
 
+    # ------------------------------------------------------------------------
+    # Commande: !show (overlay CM/oeuf + son)
+    # ------------------------------------------------------------------------
     @commands.command(name="show")
     async def show(self, ctx: commands.Context):
         now = time.time()
         login = ctx.author.name.lower()
 
-        # cooldowns
+        # cooldowns show
         if now - _show_last["global"] < 8:
             return
         if now - _show_last["users"].get(login, 0.0) < 30:
@@ -336,52 +410,15 @@ class Bot(commands.Bot):
 
         _show_last["global"] = now
         _show_last["users"][login] = now
-
-        # message court en chat
         await ctx.send(f"@{ctx.author.name} 👾 affichage du CapsMons !")
 
+    # ------------------------------------------------------------------------
+    # Commande: !grab (drops)
+    # ------------------------------------------------------------------------
     @commands.command(name="grab")
     async def grab(self, ctx: commands.Context):
         login = ctx.author.name.lower()
-        try:
-            r = requests.post(
-                API_DROP_JOIN_URL,
-                headers={"X-API-Key": API_KEY},
-                json={"twitch_login": login},
-                timeout=2,
-            )
-            data = r.json() if r.status_code == 200 else None
-        except Exception:
-            return
-    
-        if not data or not data.get("active"):
-            # RP possible: drop.fail.timeout
-            return
-    
-        mode = data.get("mode")
-        title = data.get("title")
-        joined = data.get("joined")
-        result = data.get("result")
-    
-        # messages RP simples (tu remplaceras par rp_get + placeholders ensuite)
-        if result and result.get("won"):
-            await ctx.send(f"@{ctx.author.name} 🏆 Tu as gagné **{title}** ! +{result['xp_bonus']} XP et {result['ticket_qty']} {result['ticket_key']}")
-            return
-    
-        if joined:
-            if mode == "random":
-                await ctx.send(f"@{ctx.author.name} 🎲 Participation enregistrée pour **{title}** !")
-            else:
-                await ctx.send(f"@{ctx.author.name} ⚡ Tentative enregistrée pour **{title}** !")
-    @commands.command(name="hit")
-    async def hit(self, ctx: commands.Context):
-    # MVP: on utilise le même endpoint join (1 participation max)
-        await self.grab(ctx)
 
-    @commands.command(name="grab")
-    async def grab(self, ctx: commands.Context):
-        login = ctx.author.name.lower()
-    
         try:
             r = requests.post(
                 API_DROP_JOIN_URL,
@@ -394,29 +431,51 @@ class Bot(commands.Bot):
             data = r.json()
         except Exception:
             return
-    
+
         if not data.get("active"):
-            # RP "trop tard" si tu veux
             late = await rp_get("drop.claim.late") or "⌛ Trop tard…"
             await ctx.send(f"@{ctx.author.name} {late}")
             return
-    
-        joined = data.get("joined", False)
+
+        # si déjà inscrit, on peut le dire
+        joined = bool(data.get("joined", False))
         title = data.get("title", "un objet")
-        mode = data.get("mode", "random")
-    
+
         if not joined:
-            # déjà participé
             ok = await rp_get("drop.claim.ok") or "📡 Déjà enregistré."
-            await ctx.send(f"@{ctx.author.name} {ok}")
+            await ctx.send(f"@{ctx.author.name} {ok} ({title})")
             return
-    
-        # Participation OK
+
+        # participation OK
         ok = await rp_get("drop.claim.ok") or "📡 Participation validée."
         await ctx.send(f"@{ctx.author.name} {ok} ({title})")
 
+        # cas spécial: mode first peut renvoyer result.won
+        result = data.get("result")
+        if result and result.get("won"):
+            # annonce immédiate (en plus de la loop)
+            line = await rp_get("drop.win.first") or "⚡ {viewer} gagne {title} !"
+            msg = rp_format(
+                line,
+                viewer=f"@{login}",
+                title=result.get("title", title),
+                xp=result.get("xp_bonus", 0),
+                ticket_key=result.get("ticket_key", "ticket_basic"),
+                ticket_qty=result.get("ticket_qty", 1),
+                count=1,
+            )
+            await ctx.send(msg)
+
+    # ------------------------------------------------------------------------
+    # Commande: !hit (coop) -> MVP: identique à !grab
+    # ------------------------------------------------------------------------
+    @commands.command(name="hit")
+    async def hit(self, ctx: commands.Context):
+        await self.grab(ctx)
 
 
-
+# ============================================================================
+# RUN
+# ============================================================================
 bot = Bot()
 bot.run()
