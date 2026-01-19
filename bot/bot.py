@@ -185,7 +185,7 @@ class Bot(commands.Bot):
         return False
 
     @commands.command(name="spawn")
-async def spawn(self, ctx: commands.Context):
+    async def spawn(self, ctx: commands.Context):
     # sécurité: mod / broadcaster seulement
     if not self._is_mod_or_broadcaster(ctx):
         return
