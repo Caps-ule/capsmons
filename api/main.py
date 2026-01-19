@@ -671,6 +671,40 @@ def admin_action(
 
     return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg}", status_code=303)
 
+@app.post("/eventsub", response_class=PlainTextResponse)
+async def eventsub_handler(request: Request):
+    body = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    if not verify_eventsub_signature(headers, body):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    msg_type = headers.get("twitch-eventsub-message-type", "")
+    payload = json.loads(body.decode("utf-8"))
+
+    # Challenge
+    if msg_type == "webhook_callback_verification":
+        return payload.get("challenge", "")
+
+    # Notification
+    if msg_type == "notification":
+        sub_type = payload.get("subscription", {}).get("type", "")
+        if sub_type in ("stream.online", "stream.offline"):
+            is_live = "true" if sub_type == "stream.online" else "false"
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO kv (key, value)
+                        VALUES ('is_live', %s)
+                        ON CONFLICT (key) DO UPDATE
+                        SET value = EXCLUDED.value, updated_at = now();
+                    """, (is_live,))
+                conn.commit()
+        return "ok"
+
+    return "ok"
+
+
 @app.get("/admin/user/{login}", response_class=HTMLResponse)
 def admin_user(
     request: Request,
