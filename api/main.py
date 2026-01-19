@@ -1037,7 +1037,7 @@ def overlay_show_page():
   /* Barre XP */
   .barWrap{
     width:420px;
-    height:14px;
+    height:32px;
     border-radius:999px;
     background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.12);
