@@ -186,92 +186,92 @@ class Bot(commands.Bot):
 
     @commands.command(name="spawn")
     async def spawn(self, ctx: commands.Context):
-    # sécurité: mod / broadcaster seulement
-    if not self._is_mod_or_broadcaster(ctx):
-        return
-
-    # Usage:
-    # !spawn first "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
-    # !spawn random "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
-    #
-    # (durée=10s, xp=50, ticket=ticket_basic x1)
-
-    parts = ctx.message.content.strip().split()
-    if len(parts) < 4:
-        await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
-        return
-
-    mode = parts[1].lower()
-    if mode not in ("first", "random", "coop"):
-        await ctx.send("Modes: first, random, coop")
-        return
-
-    # --- Parsing simple mais robuste :
-    # On accepte un titre entre guillemets ou sans guillemets.
-    raw = ctx.message.content.strip()
-
-    # essayer de récupérer le titre entre "..."
-    title = None
-    if '"' in raw:
-        try:
-            first = raw.index('"')
-            second = raw.index('"', first + 1)
-            title = raw[first + 1: second].strip()
-            rest = raw[second + 1:].strip().split()
-        except Exception:
-            title = None
-
-    if title is None:
-        # fallback: titre = 1 mot (moins bien)
-        title = parts[2]
-        rest = parts[3:]
-
-    if not rest:
-        await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
-        return
-
-    media_url = rest[0]
-    duration = int(rest[1]) if len(rest) >= 2 and rest[1].isdigit() else 10
-    xp_bonus = int(rest[2]) if len(rest) >= 3 and rest[2].isdigit() else 50
-    ticket_key = rest[3] if len(rest) >= 4 else "ticket_basic"
-    ticket_qty = int(rest[4]) if len(rest) >= 5 and rest[4].isdigit() else 1
-
-    payload = {
-        "mode": mode,
-        "title": title,
-        "media_url": media_url,
-        "duration_seconds": duration,
-        "xp_bonus": xp_bonus,
-        "ticket_key": ticket_key,
-        "ticket_qty": ticket_qty,
-    }
-
-    # coop : target_hits en option en dernier
-    if mode == "coop":
-        # exemple: ... ticket_basic 1 12
-        target = int(rest[5]) if len(rest) >= 6 and rest[5].isdigit() else 10
-        payload["target_hits"] = target
-
-    try:
-        r = requests.post(
-            "http://api:8000/internal/drop/spawn",
-            headers={"X-API-Key": API_KEY},
-            json=payload,
-            timeout=3,
-        )
-        if r.status_code != 200:
-            print("[BOT] spawn fail:", r.status_code, (r.text or "")[:200], flush=True)
-            await ctx.send(f"⛔ spawn fail ({r.status_code})")
+        # sécurité: mod / broadcaster seulement
+        if not self._is_mod_or_broadcaster(ctx):
             return
-    except Exception as e:
-        print("[BOT] spawn error:", e, flush=True)
-        await ctx.send("⛔ spawn error")
-        return
-
-    # RP spawn (différent selon mode)
-    rp_key = f"drop.spawn.{mode}"
-    line = await rp_get(rp_key) or "✨ Drop lancé !"
-    msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
+    
+        # Usage:
+        # !spawn first "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
+        # !spawn random "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
+        #
+        # (durée=10s, xp=50, ticket=ticket_basic x1)
+    
+        parts = ctx.message.content.strip().split()
+        if len(parts) < 4:
+            await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
+            return
+    
+        mode = parts[1].lower()
+        if mode not in ("first", "random", "coop"):
+            await ctx.send("Modes: first, random, coop")
+            return
+    
+        # --- Parsing simple mais robuste :
+        # On accepte un titre entre guillemets ou sans guillemets.
+        raw = ctx.message.content.strip()
+    
+        # essayer de récupérer le titre entre "..."
+        title = None
+        if '"' in raw:
+            try:
+                first = raw.index('"')
+                second = raw.index('"', first + 1)
+                title = raw[first + 1: second].strip()
+                rest = raw[second + 1:].strip().split()
+            except Exception:
+                title = None
+    
+        if title is None:
+            # fallback: titre = 1 mot (moins bien)
+            title = parts[2]
+            rest = parts[3:]
+    
+        if not rest:
+            await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
+            return
+    
+        media_url = rest[0]
+        duration = int(rest[1]) if len(rest) >= 2 and rest[1].isdigit() else 10
+        xp_bonus = int(rest[2]) if len(rest) >= 3 and rest[2].isdigit() else 50
+        ticket_key = rest[3] if len(rest) >= 4 else "ticket_basic"
+        ticket_qty = int(rest[4]) if len(rest) >= 5 and rest[4].isdigit() else 1
+    
+        payload = {
+            "mode": mode,
+            "title": title,
+            "media_url": media_url,
+            "duration_seconds": duration,
+            "xp_bonus": xp_bonus,
+            "ticket_key": ticket_key,
+            "ticket_qty": ticket_qty,
+        }
+    
+        # coop : target_hits en option en dernier
+        if mode == "coop":
+            # exemple: ... ticket_basic 1 12
+            target = int(rest[5]) if len(rest) >= 6 and rest[5].isdigit() else 10
+            payload["target_hits"] = target
+    
+        try:
+            r = requests.post(
+                "http://api:8000/internal/drop/spawn",
+                headers={"X-API-Key": API_KEY},
+                json=payload,
+                timeout=3,
+            )
+            if r.status_code != 200:
+                print("[BOT] spawn fail:", r.status_code, (r.text or "")[:200], flush=True)
+                await ctx.send(f"⛔ spawn fail ({r.status_code})")
+                return
+        except Exception as e:
+            print("[BOT] spawn error:", e, flush=True)
+            await ctx.send("⛔ spawn error")
+            return
+    
+        # RP spawn (différent selon mode)
+        rp_key = f"drop.spawn.{mode}"
+        line = await rp_get(rp_key) or "✨ Drop lancé !"
+        msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
     await ctx.send(msg)
 
 
