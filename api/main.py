@@ -1195,6 +1195,96 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
         "top_events_24h": top_events_24h,
     })
 
+# =============================================================================
+# ADMIN: Overlay Show
+# =============================================================================
+
+@app.get("/overlay/state")
+def overlay_state():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
+                       xp_total, stage, stage_start_xp, next_stage_xp
+                FROM overlay_events
+                WHERE expires_at > now()
+                ORDER BY id DESC
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+
+    if not row:
+        return {"show": False}
+
+    viewer_display, viewer_avatar, cm_name, cm_media_url, xp_total, stage, start_xp, next_xp = row
+    xp_total = int(xp_total)
+    start_xp = int(start_xp)
+    next_xp = int(next_xp) if next_xp is not None else None
+
+    pct = None
+    if next_xp is not None and next_xp > start_xp:
+        pct = int(((xp_total - start_xp) / (next_xp - start_xp)) * 100)
+        pct = max(0, min(pct, 100))
+
+    return {
+        "show": True,
+        "viewer": {"name": viewer_display, "avatar": viewer_avatar},
+        "cm": {"name": cm_name, "media": cm_media_url},
+        "xp": {
+            "total": xp_total,
+            "stage": int(stage),
+            "pct": pct,
+            "to_next": (next_xp - xp_total) if next_xp else None,
+        },
+    }
+
+
+# =============================================================================
+# ADMIN: Overlay Show
+# =============================================================================
+
+@app.get("/overlay/drop_state")
+def overlay_drop_state():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            d = get_active_drop(cur)
+            if not d:
+                return {"show": False}
+
+            drop_id, mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at, winner_login = d
+
+            # si expiré -> resolve et on cache
+            cur.execute("SELECT now() >= %s;", (expires_at,))
+            if bool(cur.fetchone()[0]):
+                conn.commit()
+                resolve_drop(int(drop_id))
+                return {"show": False}
+
+            # participants count
+            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
+            count = int(cur.fetchone()[0])
+
+            # remaining seconds
+            cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
+            remaining = max(0, int(cur.fetchone()[0]))
+
+    return {
+        "show": True,
+        "drop": {
+            "id": int(drop_id),
+            "mode": mode,
+            "title": title,
+            "media": media_url,
+            "remaining": remaining,
+            "count": count,
+            "target": int(target_hits) if target_hits is not None else None,
+            "xp_bonus": int(xp_bonus),
+            "ticket_key": ticket_key,
+            "ticket_qty": int(ticket_qty),
+        },
+    }
+
+
 
 
 # =============================================================================
