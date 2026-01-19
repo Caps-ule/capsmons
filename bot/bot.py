@@ -20,6 +20,8 @@ API_SHOW_URL = "http://api:8000/internal/trigger_show"
 # Drops (nouveau système: join + poll_result)
 API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
 API_DROP_POLL_URL = "http://api:8000/internal/drop/poll_result"
+API_DROP_SPAWN_URL = "http://api:8000/internal/drop/spawn"
+
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
@@ -108,6 +110,112 @@ class Bot(commands.Bot):
 
         # Loop drops (annonce résultat)
         self.loop.create_task(self.drop_announce_loop())
+
+    def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
+    try:
+        return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
+    except Exception:
+        return False
+
+    # ------------------------------------------------------------------------
+    # Verif si mod ou broadcaster
+    # ------------------------------------------------------------------------
+    def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
+    try:
+        return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
+    except Exception:
+        return False
+    # ------------------------------------------------------------------------
+    # Commande !drop
+    # ------------------------------------------------------------------------
+
+    @commands.command(name="drop")
+    async def drop_cmd(self, ctx: commands.Context):
+        # Mod / streamer only
+        if not self._is_mod_or_broadcaster(ctx):
+            return
+    
+        # Usage:
+        # !drop first "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
+        # !drop random "Titre" URL [durée] [xp] [ticket_key] [qty]
+        # !drop coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
+        raw = ctx.message.content.strip()
+    
+        parts = raw.split()
+        if len(parts) < 4:
+            await ctx.send('Usage: !drop first|random|coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target]')
+            return
+    
+        mode = parts[1].lower()
+        if mode not in ("first", "random", "coop"):
+            await ctx.send("Modes: first, random, coop")
+            return
+    
+        # Titre entre guillemets
+        title = None
+        rest = []
+        if '"' in raw:
+            try:
+                i1 = raw.index('"')
+                i2 = raw.index('"', i1 + 1)
+                title = raw[i1 + 1:i2].strip()
+                rest = raw[i2 + 1:].strip().split()
+            except Exception:
+                title = None
+    
+        if title is None:
+            # fallback: 1 mot de titre
+            title = parts[2]
+            rest = parts[3:]
+    
+        if not rest:
+            await ctx.send('Usage: !drop first|random|coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target]')
+            return
+    
+        media_url = rest[0]
+        duration = int(rest[1]) if len(rest) >= 2 and rest[1].isdigit() else 10
+        xp_bonus = int(rest[2]) if len(rest) >= 3 and rest[2].isdigit() else 50
+        ticket_key = rest[3] if len(rest) >= 4 else "ticket_basic"
+        ticket_qty = int(rest[4]) if len(rest) >= 5 and rest[4].isdigit() else 1
+    
+        payload = {
+            "mode": mode,
+            "title": title,
+            "media_url": media_url,
+            "duration_seconds": duration,
+            "xp_bonus": xp_bonus,
+            "ticket_key": ticket_key,
+            "ticket_qty": ticket_qty,
+        }
+    
+        if mode == "coop":
+            target = int(rest[5]) if len(rest) >= 6 and rest[5].isdigit() else 10
+            payload["target_hits"] = target
+    
+        try:
+            r = requests.post(
+                API_DROP_SPAWN_URL,
+                headers={"X-API-Key": API_KEY},
+                json=payload,
+                timeout=3,
+            )
+            if r.status_code != 200:
+                print("[BOT] drop spawn fail:", r.status_code, (r.text or "")[:200], flush=True)
+                await ctx.send(f"⛔ drop fail ({r.status_code})")
+                return
+        except Exception as e:
+            print("[BOT] drop spawn error:", e, flush=True)
+            await ctx.send("⛔ drop error")
+            return
+    
+        # RP spawn (si tu as les clés), sinon fallback
+        rp_key = f"drop.spawn.{mode}"
+        line = await rp_get(rp_key) or "✨ Drop lancé : {title}"
+        msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
+        await ctx.send(msg)
+
+
+
 
     # ------------------------------------------------------------------------
     # Message handler (XP chat + commands)

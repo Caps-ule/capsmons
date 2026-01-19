@@ -535,6 +535,36 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
 
     return {'ok': True, 'drop_id': drop_id}
 
+@app.post("/admin/rp/save")
+def admin_rp_save(
+    key: str = Form(...),
+    lines: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    key = key.strip()
+
+    phrases = []
+    if lines is not None:
+        for line in lines.splitlines():
+            s = line.strip()
+            if s:
+                phrases.append(s)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO rp_lines (key, lines)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (key)
+                DO UPDATE SET lines = EXCLUDED.lines, updated_at = now();
+            """, (key, json.dumps(phrases)))
+        conn.commit()
+
+    return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:%20{key}", status_code=303)
+
+
 
 @app.post('/internal/drop/join')
 def drop_join(payload: dict, x_api_key: str | None = Header(default=None)):
