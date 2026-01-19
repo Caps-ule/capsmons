@@ -1196,6 +1196,132 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
     })
 
 # =============================================================================
+# Overlay: Commande !show
+# =============================================================================
+
+@app.post("/internal/xp")
+def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    try:
+        amount = int(payload.get("amount", 1))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    if amount <= 0 or amount > 100:
+        raise HTTPException(status_code=400, detail="Amount out of range")
+
+    prev_stage = 0
+    new_xp_total = 0
+    new_stage = 0
+    cm_assigned = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
+
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            prev_stage = int(cur.fetchone()[0])
+
+            cur.execute("""
+                UPDATE creatures
+                SET xp_total = xp_total + %s, updated_at = now()
+                WHERE twitch_login = %s
+                RETURNING xp_total;
+            """, (amount, login))
+            new_xp_total = int(cur.fetchone()[0])
+            new_stage = stage_from_xp(new_xp_total)
+
+            cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
+
+            if prev_stage == 0 and new_stage >= 1:
+                cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+                lrow = cur.fetchone()
+                lineage_key = lrow[0] if lrow else None
+                current_cm = lrow[1] if lrow else None
+
+                if lineage_key and current_cm is None:
+                    cm_key = pick_cm_for_lineage(conn, lineage_key)
+                    if cm_key:
+                        cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
+                        cm_assigned = cm_key
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "xp_total": new_xp_total,
+        "stage_before": prev_stage,
+        "stage_after": new_stage,
+        "cm_assigned": cm_assigned,
+    }
+
+
+@app.post("/internal/trigger_show")
+def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "7"))
+    duration = max(2, min(duration, 15))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No creature")
+
+            xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
+
+            if stage == 0 or not cm_key:
+                cm_key = "egg"
+                cm_name = "Œuf"
+                media_url = os.environ.get("EGG_MEDIA_URL", "").strip()
+                if not media_url:
+                    raise HTTPException(status_code=400, detail="EGG_MEDIA_URL missing")
+            else:
+                cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
+                cmrow = cur.fetchone()
+                if not cmrow:
+                    raise HTTPException(status_code=400, detail="Unknown CM")
+                cm_name, media_url = cmrow[0], cmrow[1]
+                if not media_url:
+                    raise HTTPException(status_code=400, detail="CM missing media_url")
+
+    display, avatar = twitch_user_profile(login)
+    stage_start, next_xp = stage_bounds(stage)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO overlay_events
+                  (twitch_login, viewer_display, viewer_avatar, cm_key, cm_name, cm_media_url,
+                   xp_total, stage, stage_start_xp, next_stage_xp, expires_at)
+                VALUES
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' seconds')::interval);
+            """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp, duration))
+        conn.commit()
+
+    return {"ok": True}
+
+
+# =============================================================================
 # ADMIN: Overlay Show
 # =============================================================================
 
