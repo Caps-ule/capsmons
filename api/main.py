@@ -671,6 +671,45 @@ def admin_action(
 
     return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg}", status_code=303)
 
+@app.get("/admin/user/{login}", response_class=HTMLResponse)
+def admin_user(
+    request: Request,
+    login: str,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT xp_total, stage, lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            row = cur.fetchone()
+
+    if not row:
+        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    else:
+        xp_total, stage, lineage_key, cm_key = row
+
+    nxt, label = next_threshold(int(xp_total))
+    xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+
+    return templates.TemplateResponse("user.html", {
+        "request": request,
+        "login": login,
+        "xp_total": int(xp_total),
+        "stage": int(stage),
+        "next_label": label,
+        "xp_to_next": int(xp_to_next),
+        "flash": flash,
+        "flash_kind": flash_kind,
+        "lineage_key": lineage_key,
+        "cm_key": cm_key,
+    })
+
+
 
 @app.get("/internal/creature/{login}")
 def creature_state(login: str, x_api_key: str | None = Header(default=None)):
