@@ -564,6 +564,79 @@ def admin_rp_save(
 
     return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:%20{key}", status_code=303)
 
+@app.post("/internal/choose_lineage")
+def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    lineage_key = str(payload.get("lineage_key", "")).strip().lower()
+    if not login or not lineage_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or lineage_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT is_enabled FROM lineages WHERE key=%s;", (lineage_key,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="Unknown lineage")
+            if not bool(row[0]):
+                raise HTTPException(status_code=400, detail="Lineage disabled")
+
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
+            stage = int(cur.fetchone()[0])
+            if stage != 0:
+                raise HTTPException(status_code=400, detail="Choose only before hatching (egg stage)")
+
+            cur.execute("""
+                UPDATE creatures
+                SET lineage_key=%s, updated_at=now()
+                WHERE twitch_login=%s;
+            """, (lineage_key, login))
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "lineage_key": lineage_key}
+@app.get("/internal/creature/{login}")
+def creature_state(login: str, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = login.strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT twitch_login, xp_total, stage, lineage_key, cm_key
+                FROM creatures
+                WHERE twitch_login=%s;
+            """, (login,))
+            row = cur.fetchone()
+
+    if not row:
+        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    else:
+        _, xp_total, stage, lineage_key, cm_key = row
+
+    nxt, label = next_threshold(int(xp_total))
+    remaining = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+
+    return {
+        "twitch_login": login,
+        "xp_total": int(xp_total),
+        "stage": int(stage),
+        "lineage_key": lineage_key,
+        "cm_key": cm_key,
+        "next": label,
+        "xp_to_next": remaining,
+    }
+
+
 
 
 @app.post('/internal/drop/join')
