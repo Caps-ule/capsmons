@@ -601,6 +601,77 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
         conn.commit()
 
     return {"ok": True, "twitch_login": login, "lineage_key": lineage_key}
+
+
+@app.post("/admin/action")
+def admin_action(
+    login: str = Form(...),
+    action: str = Form(...),
+    amount: int | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+    action = action.strip().lower()
+
+    if action not in ("give", "set", "reset", "assign_cm"):
+        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Action%20invalide", status_code=303)
+
+    if action in ("give", "set") and amount is None:
+        return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Montant%20manquant", status_code=303)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # ensure creature exists
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage)
+                VALUES (%s, 0, 0)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            if action == "reset":
+                # reset complet (œuf + efface lignée + efface CM)
+                cur.execute("""
+                    UPDATE creatures
+                    SET xp_total = 0,
+                        stage = 0,
+                        lineage_key = NULL,
+                        cm_key = NULL,
+                        updated_at = now()
+                    WHERE twitch_login = %s;
+                """, (login,))
+                conn.commit()
+                return RedirectResponse(
+                    url=f"/admin/user/{login}?flash_kind=ok&flash=Reset%20complet",
+                    status_code=303,
+                )
+
+            if action == "set":
+                new_xp = max(0, int(amount))
+            else:  # give
+                cur.execute("SELECT xp_total FROM creatures WHERE twitch_login=%s;", (login,))
+                current = int(cur.fetchone()[0])
+                new_xp = current + max(0, int(amount))
+
+            new_stage = stage_from_xp(int(new_xp))
+            cur.execute("""
+                UPDATE creatures
+                SET xp_total=%s, stage=%s, updated_at=now()
+                WHERE twitch_login=%s;
+            """, (int(new_xp), int(new_stage), login))
+
+        conn.commit()
+
+    msg = "OK"
+    if action == "set":
+        msg = f"XP%20fix%C3%A9%20%C3%A0%20{new_xp}"
+    elif action == "give":
+        msg = f"+{amount}%20XP%20(total%20{new_xp})"
+
+    return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg}", status_code=303)
+
+
 @app.get("/internal/creature/{login}")
 def creature_state(login: str, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
