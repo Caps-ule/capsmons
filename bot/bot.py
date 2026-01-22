@@ -403,8 +403,6 @@ class Bot(commands.Bot):
                 print("[BOT] is_live check error:", e, flush=True)
                 continue
 
-            now = time.time()
-
             # Récupérer le channel TwitchIO
             chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
             if not chan:
@@ -442,14 +440,11 @@ class Bot(commands.Bot):
                         json={"twitch_login": ulogin, "amount": amount},
                         timeout=2,
                     )
-
-            except Exception as e:
+                except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
-                    
     except Exception as e:
-        print("[BOT] Presence API error:", e, flush=True)
+                    print("[BOT] Presence API error:", e, flush=True)
 
-                
 
     # ------------------------------------------------------------------------
     # Drops announce loop (poll_result)
