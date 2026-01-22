@@ -405,19 +405,36 @@ class Bot(commands.Bot):
 
             now = time.time()
 
-            # Liste des actifs
-            actives = [u for u, until in _active_until.items() if until > now]
-
-            # nettoyage
-            for u in list(_active_until.keys()):
-                if _active_until[u] <= now:
-                    _active_until.pop(u, None)
-
-            if not actives:
+            # Récupérer le channel TwitchIO
+            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+            if not chan:
                 continue
-
-            # XP présence à tous les actifs
-            for ulogin in actives:
+            
+            # Récupérer la liste des chatters (viewers présents)
+            # Selon TwitchIO, chatters est souvent un set/dict
+            try:
+                chatters = getattr(chan, "chatters", None)
+                if chatters is None:
+                    continue
+            
+                # chatters peut être: set[str] ou dict[str, ...]
+                if isinstance(chatters, dict):
+                    logins = [k.lower() for k in chatters.keys()]
+                else:
+                    logins = [str(x).lower() for x in chatters]
+            
+                # On évite de donner à soi-même si tu veux
+                # logins = [u for u in logins if u != os.environ.get("TWITCH_CHANNEL", "").lower()]
+            
+            except Exception as e:
+                print("[BOT] chatters read error:", e, flush=True)
+                continue
+            
+            if not logins:
+                continue
+            
+            # Donner XP à tous les présents
+            for ulogin in logins:
                 try:
                     requests.post(
                         API_XP_URL,
@@ -425,6 +442,9 @@ class Bot(commands.Bot):
                         json={"twitch_login": ulogin, "amount": amount},
                         timeout=2,
                     )
+    except Exception as e:
+        print("[BOT] Presence API error:", e, flush=True)
+
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
 
