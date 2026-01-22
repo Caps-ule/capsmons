@@ -442,11 +442,14 @@ class Bot(commands.Bot):
                         json={"twitch_login": ulogin, "amount": amount},
                         timeout=2,
                     )
+
+            except Exception as e:
+                    print("[BOT] Presence API error:", e, flush=True)
+                    
     except Exception as e:
         print("[BOT] Presence API error:", e, flush=True)
 
-                except Exception as e:
-                    print("[BOT] Presence API error:", e, flush=True)
+                
 
     # ------------------------------------------------------------------------
     # Drops announce loop (poll_result)
