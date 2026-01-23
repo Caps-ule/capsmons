@@ -106,7 +106,7 @@ class Bot(commands.Bot):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
 
         # Loop présence (XP périodique)
-        self.loop.create_task(self.presence_loop())
+        #self.loop.create_task(self.presence_loop())
 
         # Loop drops (annonce résultat)
         self.loop.create_task(self.drop_announce_loop())
