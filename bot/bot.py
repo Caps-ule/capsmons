@@ -427,6 +427,8 @@ class Bot(commands.Bot):
             bot_login = os.environ.get("TWITCH_BOT_LOGIN", "").strip().lower()
             if bot_login:
                 logins = [u for u in logins if u != bot_login]
+            print("[BOT] chatters=", 0 if not chatters else len(chatters), flush=True)
+
     
             # 3) Donner XP à tous les présents
             for ulogin in logins:
