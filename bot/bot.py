@@ -387,63 +387,63 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     # Presence loop (XP de présence)
     # ------------------------------------------------------------------------
-    async def presence_loop(self):
-        tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
-        amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
+async def presence_loop(self):
+    tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
+    amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
 
-        while True:
-            await asyncio.sleep(tick)
+    while True:
+        await asyncio.sleep(tick)
 
-            # Ne donner la présence XP que si stream LIVE
+        # 1) Ne donner la présence XP que si stream LIVE
+        try:
+            r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+            if r.status_code != 200 or not r.json().get("is_live", False):
+                continue
+        except Exception as e:
+            print("[BOT] is_live check error:", e, flush=True)
+            continue
+
+        # 2) Récupérer la liste des chatters (présents dans le chat)
+        chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+        if not chan:
+            continue
+
+        try:
+            chatters = getattr(chan, "chatters", None)
+            if not chatters:
+                # si twitchio ne fournit pas la liste
+                # (ça peut arriver selon les caps), on ne donne rien plutôt que de bug
+                continue
+
+            # chatters peut être un dict ou un set selon versions
+            if isinstance(chatters, dict):
+                logins = [k.lower() for k in chatters.keys()]
+            else:
+                logins = [str(x).lower() for x in chatters]
+
+        except Exception as e:
+            print("[BOT] chatters read error:", e, flush=True)
+            continue
+
+        if not logins:
+            continue
+
+        # (optionnel) éviter de donner à ton bot
+        bot_login = os.environ.get("TWITCH_BOT_LOGIN", "").strip().lower()
+        if bot_login:
+            logins = [u for u in logins if u != bot_login]
+
+        # 3) Donner XP à tous les présents
+        for ulogin in logins:
             try:
-                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
-                if r.status_code != 200 or not r.json().get("is_live", False):
-                    continue
+                requests.post(
+                    API_XP_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json={"twitch_login": ulogin, "amount": amount},
+                    timeout=2,
+                )
             except Exception as e:
-                print("[BOT] is_live check error:", e, flush=True)
-                continue
-
-            # Récupérer le channel TwitchIO
-            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-            if not chan:
-                continue
-            
-            # Récupérer la liste des chatters (viewers présents)
-            # Selon TwitchIO, chatters est souvent un set/dict
-            try:
-                chatters = getattr(chan, "chatters", None)
-                if chatters is None:
-                    continue
-            
-                # chatters peut être: set[str] ou dict[str, ...]
-                if isinstance(chatters, dict):
-                    logins = [k.lower() for k in chatters.keys()]
-                else:
-                    logins = [str(x).lower() for x in chatters]
-            
-                # On évite de donner à soi-même si tu veux
-                # logins = [u for u in logins if u != os.environ.get("TWITCH_CHANNEL", "").lower()]
-            
-            except Exception as e:
-                print("[BOT] chatters read error:", e, flush=True)
-                continue
-            
-            if not logins:
-                continue
-            
-            # Donner XP à tous les présents
-            for ulogin in logins:
-                try:
-                    requests.post(
-                        API_XP_URL,
-                        headers={"X-API-Key": API_KEY},
-                        json={"twitch_login": ulogin, "amount": amount},
-                        timeout=2,
-                    )
-                except Exception as e:
-                    print("[BOT] Presence API error:", e, flush=True)
-    except Exception as e:
-                    print("[BOT] Presence API error:", e, flush=True)
+                print("[BOT] Presence API error:", e, flush=True)
 
 
     # ------------------------------------------------------------------------
