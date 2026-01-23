@@ -104,18 +104,13 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     async def event_ready(self):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
-
-        # Loop présence (XP périodique)
-        #self.loop.create_task(self.presence_loop())
-
-        # Loop drops (annonce résultat)
+    
+        # XP passive (si tu veux la loop)
+        self.loop.create_task(self.presence_loop())
+    
+        # Drops: annonce résultats
         self.loop.create_task(self.drop_announce_loop())
-
-        def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
-            try:
-                return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
-            except Exception:
-                return False
+    
 
     # ------------------------------------------------------------------------
     # Verif si mod ou broadcaster
