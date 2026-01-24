@@ -114,6 +114,28 @@ def stage_bounds(stage: int):
         return evo1, evo2
     return evo2, None
 
+def verify_eventsub_signature(headers: dict, raw_body: bytes) -> bool:
+    """
+    Vérifie la signature EventSub Twitch.
+    Signature base string = message_id + message_timestamp + raw_body
+    """
+    secret = os.environ.get("EVENTSUB_SECRET", "")
+    if not secret:
+        return False
+
+    msg_id = headers.get("twitch-eventsub-message-id", "")
+    msg_ts = headers.get("twitch-eventsub-message-timestamp", "")
+    msg_sig = headers.get("twitch-eventsub-message-signature", "")
+
+    if not (msg_id and msg_ts and msg_sig):
+        return False
+
+    data = (msg_id + msg_ts).encode("utf-8") + raw_body
+    digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
+    expected = "sha256=" + digest
+    return hmac.compare_digest(expected, msg_sig)
+
+
 # =============================================================================
 # RP helpers
 # =============================================================================
@@ -471,6 +493,46 @@ def init_db():
             )
 
         conn.commit()
+
+@app.post("/eventsub", response_class=PlainTextResponse)
+async def eventsub_handler(request: Request):
+    body = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    if not verify_eventsub_signature(headers, body):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    msg_type = headers.get("twitch-eventsub-message-type", "")
+    payload = json.loads(body.decode("utf-8"))
+
+    # 1) Challenge (validation webhook)
+    if msg_type == "webhook_callback_verification":
+        return payload.get("challenge", "")
+
+    # 2) Notification
+    if msg_type == "notification":
+        sub_type = payload.get("subscription", {}).get("type", "")
+        if sub_type in ("stream.online", "stream.offline"):
+            is_live = "true" if sub_type == "stream.online" else "false"
+
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO kv (key, value)
+                        VALUES ('is_live', %s)
+                        ON CONFLICT (key) DO UPDATE
+                        SET value = EXCLUDED.value, updated_at = now();
+                    """, (is_live,))
+                conn.commit()
+
+        return "ok"
+
+    # 3) Revocation (Twitch désactive une sub)
+    if msg_type == "revocation":
+        return "ok"
+
+    return "ok"
+
 
 # =============================================================================
 # Endpoints essentiels (health + is_live)

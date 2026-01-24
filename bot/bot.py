@@ -429,16 +429,20 @@ class Bot(commands.Bot):
                 logins = [u for u in logins if u != bot_login]
             print("[BOT] chatters=", 0 if not chatters else len(chatters), flush=True)
 
-    
+            print(f"[BOT] Presence tick: live OK, chatters={len(logins)}, giving {amount} XP", flush=True)
+
             # 3) Donner XP à tous les présents
             for ulogin in logins:
                 try:
-                    requests.post(
+                    resp = requests.post(
                         API_XP_URL,
                         headers={"X-API-Key": API_KEY},
                         json={"twitch_login": ulogin, "amount": amount},
                         timeout=2,
                     )
+                    if resp.status_code != 200:
+                        print("[BOT] Presence XP failed:", resp.status_code, (resp.text or "")[:120], "login=", ulogin, flush=True)
+
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
 
