@@ -491,6 +491,22 @@ def init_db():
                   PRIMARY KEY (twitch_login, item_key)
                 );
 
+                CREATE TABLE IF NOT EXISTS overlay_evolutions (
+                  id SERIAL PRIMARY KEY,
+                  twitch_login TEXT NOT NULL,
+                  viewer_display TEXT,
+                  viewer_avatar TEXT,
+                
+                  cm_key TEXT,
+                  stage INT,
+                  name TEXT,
+                  image_url TEXT,
+                  sound_url TEXT,
+                
+                  expires_at TIMESTAMP NOT NULL
+                );
+
+
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
                 CREATE INDEX IF NOT EXISTS idx_drop_participants_drop ON drop_participants(drop_id);
                 """
@@ -754,6 +770,47 @@ def admin_action(
         msg = f"+{amount}%20XP%20(total%20{new_xp})"
 
     return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash={msg}", status_code=303)
+
+
+@app.post("/internal/trigger_evolution")
+def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = payload.get("twitch_login")
+    stage = int(payload.get("stage"))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # infos viewer
+            display, avatar = twitch_user_profile(login)
+
+            # récupérer la forme
+            cur.execute("""
+                SELECT f.name, f.image_url, f.sound_url, c.key
+                FROM creatures cr
+                JOIN cm_forms f ON f.cm_key = cr.cm_key AND f.stage = %s
+                JOIN cms c ON c.key = cr.cm_key
+                WHERE cr.twitch_login = %s;
+            """, (stage, login))
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(400, "No evolution form")
+
+            name, image_url, sound_url, cm_key = row
+
+            cur.execute("""
+                INSERT INTO overlay_evolutions
+                (twitch_login, viewer_display, viewer_avatar,
+                 cm_key, stage, name, image_url, sound_url, expires_at)
+                VALUES
+                (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '6 seconds');
+            """, (login, display, avatar, cm_key, stage, name, image_url, sound_url))
+
+        conn.commit()
+
+    return {"ok": True}
+
 
 @app.post("/internal/set_live")
 def internal_set_live(payload: dict, x_api_key: str | None = Header(default=None)):
@@ -1438,6 +1495,107 @@ tick();
 
 """)
 
+@app.get("/overlay/evolution", response_class=HTMLResponse)
+def overlay_evolution_page():
+    return HTMLResponse(r"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  body{margin:0;background:transparent;overflow:hidden;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .card{
+    display:none;flex-direction:column;align-items:center;gap:10px;
+    padding:18px 22px;border-radius:22px;
+    background:rgba(10,15,20,.78);border:1px solid rgba(255,255,255,.12);
+    backdrop-filter: blur(8px);
+    opacity:0;transform:scale(.92);
+    transition: opacity 450ms ease, transform 450ms ease;
+  }
+  .card.show{opacity:1;transform:scale(1)}
+  .img{width:520px;height:520px;object-fit:contain;border-radius:24px;
+       background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10)}
+  .name{font-size:28px;font-weight:900;color:#e6edf3;text-align:center}
+  .viewer{display:flex;align-items:center;gap:10px;color:#9aa4b2;font-size:13px}
+  .avatar{width:36px;height:36px;border-radius:10px;object-fit:cover;border:1px solid rgba(255,255,255,.15)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="card" class="card">
+    <div class="viewer">
+      <img id="avatar" class="avatar" src="" alt="">
+      <div id="viewerName"></div>
+    </div>
+    <img id="img" class="img" src="" alt="">
+    <div id="formName" class="name"></div>
+    <audio id="snd"></audio>
+  </div>
+</div>
+
+<script>
+let showing = false;
+let lastSig = "";
+let hideTimer = null;
+const SHOW_MS = 6000;
+
+function showCard(){
+  const card = document.getElementById('card');
+  if (!showing){
+    card.style.display='flex';
+    void card.offsetWidth;
+    card.classList.add('show');
+    showing = true;
+  }
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = setTimeout(hideCard, SHOW_MS);
+}
+function hideCard(){
+  const card = document.getElementById('card');
+  if (!showing) return;
+  card.classList.remove('show');
+  setTimeout(()=>{ card.style.display='none'; }, 460);
+  showing = false;
+  hideTimer = null;
+}
+
+async function tick(){
+  try{
+    const r = await fetch('/overlay/evolution_state', {cache:'no-store'});
+    const d = await r.json();
+    if(!d.active){
+      return;
+    }
+
+    const sig = `${d.viewer.name}|${d.form.name}|${d.form.image}`;
+    if (sig !== lastSig){
+      lastSig = sig;
+
+      document.getElementById('viewerName').textContent = d.viewer.name ? `@${d.viewer.name}` : '';
+      document.getElementById('avatar').src = d.viewer.avatar || '';
+      document.getElementById('img').src = d.form.image || '';
+      document.getElementById('formName').textContent = d.form.name || '';
+
+      const snd = document.getElementById('snd');
+      if (d.form.sound){
+        snd.src = d.form.sound;
+        try { snd.currentTime = 0; snd.play(); } catch(e) {}
+      }
+      showCard();
+    }
+  }catch(e){}
+}
+
+setInterval(tick, 500);
+tick();
+</script>
+</body>
+</html>
+""")
+
+
 @app.get("/admin/cms", response_class=HTMLResponse)
 def admin_cms(
     request: Request,
@@ -1684,9 +1842,6 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
         "top_events_24h": top_events_24h,
     })
 
-# =============================================================================
-# Overlay: Commande !show
-# =============================================================================
 
 @app.post("/internal/xp")
 def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
@@ -1733,6 +1888,8 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
             new_stage = stage_from_xp(new_xp_total)
 
             cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
+            stage_changed = (new_stage > prev_stage)
+
 
             if prev_stage == 0 and new_stage >= 1:
                 cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
@@ -1746,7 +1903,49 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                         cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
                         cm_assigned = cm_key
 
+    evo_payload = None
+    if stage_changed and new_stage >= 1:
+        # on récupère cm_key à jour
+        cur.execute("SELECT cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+        cm_row = cur.fetchone()
+        current_cm_key = cm_row[0] if cm_row else None
+    
+        if current_cm_key:
+            # forme par stage
+            cur.execute("""
+                SELECT name, image_url, sound_url
+                FROM cm_forms
+                WHERE cm_key=%s AND stage=%s;
+            """, (current_cm_key, new_stage))
+            f = cur.fetchone()
+    
+            if f:
+                form_name, image_url, sound_url = f
+                evo_payload = (current_cm_key, int(new_stage), form_name, image_url, sound_url)
+    
+
         conn.commit()
+
+    # Déclencher overlay évolution (sans spam chat)
+    if new_stage > prev_stage:
+        try:
+            display, avatar = twitch_user_profile(login)
+    
+            # on préfère la forme si trouvée, sinon on ne déclenche pas
+            if evo_payload:
+                cmk, st, fname, img_url, snd_url = evo_payload
+                with get_db() as conn2:
+                    with conn2.cursor() as cur2:
+                        cur2.execute("""
+                            INSERT INTO overlay_evolutions
+                              (twitch_login, viewer_display, viewer_avatar, cm_key, stage, name, image_url, sound_url, expires_at)
+                            VALUES
+                              (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '6 seconds');
+                        """, (login, display, avatar, cmk, st, fname, img_url, snd_url))
+                    conn2.commit()
+        except Exception as e:
+            print("[API] evolution overlay error:", repr(e))
+
 
     return {
         "ok": True,
@@ -1757,6 +1956,35 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "cm_assigned": cm_assigned,
     }
 
+    @app.get("/overlay/evolution_state")
+    def overlay_evolution_state():
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,'')
+                    FROM overlay_evolutions
+                    WHERE expires_at > now()
+                    ORDER BY id DESC
+                    LIMIT 1;
+                """)
+                row = cur.fetchone()
+    
+        if not row:
+            return {"active": False}
+    
+        viewer_display, viewer_avatar, name, image_url, sound_url = row
+        return {
+            "active": True,
+            "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
+            "form": {"name": name, "image": image_url, "sound": sound_url or ""},
+        }
+
+
+
+
+# =============================================================================
+# Overlay: Commande !show
+# =============================================================================
 
 @app.post("/internal/trigger_show")
 def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
