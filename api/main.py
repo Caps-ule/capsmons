@@ -1042,8 +1042,20 @@ def overlay_drop_page():
     </div>
   </div>
 </div>
+<audio id="dropSfx" preload="auto" src="/static/drop.mp3"></audio>
 
 <script>
+let lastDropId = null;
+const dropSfx = document.getElementById('dropSfx');
+
+function playDropSfx(){
+  try{
+    dropSfx.currentTime = 0;
+    const p = dropSfx.play();
+    if (p && p.catch) p.catch(()=>{});
+  }catch(e){}
+}
+
 let showing=false;
 function setShow(on){
   const c=document.getElementById('card');
@@ -1057,6 +1069,11 @@ async function tick(){
     if(!j.show){ setShow(false); return; }
 
     const d = j.drop;
+    if (d.id && d.id !== lastDropId) {
+  lastDropId = d.id;
+  playDropSfx();
+}
+
     document.getElementById('img').src = d.media || '';
     document.getElementById('title').textContent = d.title || 'Drop';
     document.getElementById('timer').textContent = `⏳ ${d.remaining}s`;
