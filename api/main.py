@@ -804,7 +804,7 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
                 (twitch_login, viewer_display, viewer_avatar,
                  cm_key, stage, name, image_url, sound_url, expires_at)
                 VALUES
-                (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '6 seconds');
+                (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '15 seconds');
             """, (login, display, avatar, cm_key, stage, name, image_url, sound_url))
 
         conn.commit()
