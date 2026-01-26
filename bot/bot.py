@@ -110,6 +110,10 @@ class Bot(commands.Bot):
     
         # Drops: annonce résultats
         self.loop.create_task(self.drop_announce_loop())
+
+        # Drops auto
+        self.loop.create_task(self.auto_drop_loop())
+
     
 
     # ------------------------------------------------------------------------
@@ -414,7 +418,82 @@ class Bot(commands.Bot):
         else:
             await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
 
+    # ------------------------------------------------------------------------
+    # DROP AUTO
+    # ------------------------------------------------------------------------
 
+
+    async def auto_drop_loop(self):
+        enabled = os.environ.get("AUTO_DROP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+        if not enabled:
+            return
+    
+        min_s = int(os.environ.get("AUTO_DROP_MIN_SECONDS", "900"))
+        max_s = int(os.environ.get("AUTO_DROP_MAX_SECONDS", "1500"))
+        min_s = max(60, min_s)
+        max_s = max(min_s, max_s)
+    
+        while True:
+            # attend un délai aléatoire
+            await asyncio.sleep(random.randint(min_s, max_s))
+    
+            # 1) seulement si live
+            try:
+                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                if r.status_code != 200 or not r.json().get("is_live", False):
+                    continue
+            except Exception:
+                continue
+    
+            # 2) ne pas spawn s'il y a déjà un drop actif (on utilise l'endpoint overlay)
+            try:
+                s = requests.get("http://api:8000/overlay/drop_state", timeout=2)
+                if s.status_code == 200 and s.json().get("show", False):
+                    continue
+            except Exception:
+                # si on ne peut pas vérifier, on ne spawn pas (safe)
+                continue
+    
+            # 3) spawn drop (capsule xp)
+            payload = {
+                "mode": os.environ.get("AUTO_DROP_MODE", "random").strip().lower(),
+                "title": os.environ.get("AUTO_DROP_TITLE", "Capsule XP").strip(),
+                "media_url": os.environ.get("AUTO_DROP_MEDIA_URL", "").strip(),
+                "duration_seconds": int(os.environ.get("AUTO_DROP_DURATION_SECONDS", "12")),
+                "xp_bonus": int(os.environ.get("AUTO_DROP_XP_BONUS", "30")),
+                "ticket_key": os.environ.get("AUTO_DROP_TICKET_KEY", "xp_capsule").strip(),
+                "ticket_qty": int(os.environ.get("AUTO_DROP_TICKET_QTY", "1")),
+            }
+    
+            if not payload["media_url"]:
+                print("[BOT] AUTO_DROP_MEDIA_URL missing, skip", flush=True)
+                continue
+    
+            try:
+                rr = requests.post(
+                    API_DROP_SPAWN_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json=payload,
+                    timeout=3,
+                )
+                if rr.status_code != 200:
+                    print("[BOT] auto drop spawn fail:", rr.status_code, (rr.text or "")[:200], flush=True)
+                    continue
+            except Exception as e:
+                print("[BOT] auto drop spawn error:", e, flush=True)
+                continue
+    
+            # 4) message RP (optionnel)
+            try:
+                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                if chan:
+                    rp_key = f"drop.spawn.{payload['mode']}"
+                    line = await rp_get(rp_key) or "✨ Drop automatique : {title}"
+                    msg = rp_format(line, title=payload["title"], xp=payload["xp_bonus"],
+                                    ticket_key=payload["ticket_key"], ticket_qty=payload["ticket_qty"])
+                    await chan.send(msg)
+            except Exception:
+                pass
 
 
     # ------------------------------------------------------------------------
