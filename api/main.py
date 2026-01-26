@@ -849,6 +849,48 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
     }
 
 
+@app.post("/internal/item/use")
+def use_item(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = payload.get("twitch_login", "").strip().lower()
+    item_key = payload.get("item_key", "").strip()
+
+    if not login or not item_key:
+        raise HTTPException(status_code=400, detail="Missing data")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Vérifier inventaire
+            cur.execute(
+                """
+                SELECT qty FROM inventory
+                WHERE twitch_login=%s AND item_key=%s;
+                """,
+                (login, item_key),
+            )
+            row = cur.fetchone()
+            if not row or row[0] <= 0:
+                raise HTTPException(status_code=400, detail="No item")
+
+            # Consommer l'objet
+            cur.execute(
+                """
+                UPDATE inventory
+                SET qty = qty - 1, updated_at = now()
+                WHERE twitch_login=%s AND item_key=%s;
+                """,
+                (login, item_key),
+            )
+
+        conn.commit()
+
+    # Effets (MVP)
+    if item_key == "xp_capsule":
+        grant_xp(login, 30)
+        return {"ok": True, "effect": "xp", "amount": 30}
+
+    return {"ok": True, "effect": "none"}
 
 
 @app.post('/internal/drop/join')

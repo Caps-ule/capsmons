@@ -377,6 +377,44 @@ class Bot(commands.Bot):
         msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
         await ctx.send(msg)
 
+    # ------------------------------------------------------------------------
+    # Commande USE
+    # ------------------------------------------------------------------------
+
+
+    @commands.command(name="use")
+    async def use_item(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+        parts = ctx.message.content.strip().split()
+    
+        if len(parts) < 2:
+            await ctx.send(f"@{ctx.author.name} usage: !use nom_objet")
+            return
+    
+        item_key = parts[1]
+    
+        try:
+            r = requests.post(
+                "http://api:8000/internal/item/use",
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login, "item_key": item_key},
+                timeout=2,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} ⛔ Objet indisponible.")
+                return
+    
+            data = r.json()
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
+            return
+    
+        if data.get("effect") == "xp":
+            await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{data['amount']} XP ⚡")
+        else:
+            await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+
+
 
 
     # ------------------------------------------------------------------------
