@@ -582,7 +582,7 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
     mode = str(payload.get('mode', '')).strip().lower()
     title = str(payload.get('title', '')).strip()
     media_url = str(payload.get('media_url', '')).strip()
-    duration = int(payload.get('duration_seconds', 10))
+    duration = int(payload.get('duration_seconds', 25))
     xp_bonus = int(payload.get('xp_bonus', 50))
     ticket_key = str(payload.get('ticket_key', 'ticket_basic')).strip()
     ticket_qty = int(payload.get('ticket_qty', 1))
