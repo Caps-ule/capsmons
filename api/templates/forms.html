@@ -1,1 +1,82 @@
-form.html
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CapsMons - Forms</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:20px}
+    a{color:#7aa2ff}
+    .flash{margin:10px 0;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.12)}
+    .ok{background:rgba(60,180,120,.12)}
+    .err{background:rgba(220,80,80,.12)}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{border-bottom:1px solid rgba(255,255,255,.10);padding:10px;vertical-align:top}
+    th{color:#9aa4b2;text-align:left;font-size:12px}
+    .cm{font-weight:800}
+    input{width:100%;box-sizing:border-box;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+          border-radius:10px;color:#e6edf3;padding:8px}
+    .row{display:flex;gap:8px}
+    button{background:#7aa2ff;border:none;color:#0b0f14;font-weight:800;border-radius:10px;padding:8px 10px;cursor:pointer}
+    .muted{color:#9aa4b2;font-size:12px}
+  </style>
+</head>
+<body>
+
+<h1>🧬 Forms (Évolutions)</h1>
+<div class="muted">Chaque CM doit avoir 3 formes: stage 1/2/3 (éclosion, evo1, evo2).</div>
+
+{% if flash %}
+  <div class="flash {{ flash_kind or 'ok' }}">{{ flash }}</div>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>CM</th>
+      <th>Stage 1</th>
+      <th>Stage 2</th>
+      <th>Stage 3</th>
+    </tr>
+  </thead>
+
+  <tbody>
+  {% for it in items %}
+    <tr>
+      <td>
+        <div class="cm">{{ it.cm_name }}</div>
+        <div class="muted">key: {{ it.key }} — lignée: {{ it.lineage_key }}</div>
+      </td>
+
+      {% for st in it.stages %}
+      <td>
+        <form method="post" action="/admin/forms/save">
+          <input type="hidden" name="cm_key" value="{{ it.key }}">
+          <input type="hidden" name="stage" value="{{ st.stage }}">
+
+          <div class="muted">stage {{ st.stage }}</div>
+          <div style="margin-top:6px">
+            <input name="name" placeholder="Nom" value="{{ st.name }}">
+          </div>
+          <div style="margin-top:6px">
+            <input name="image_url" placeholder="Image URL" value="{{ st.image_url }}">
+          </div>
+          <div style="margin-top:6px">
+            <input name="sound_url" placeholder="Sound URL (optionnel)" value="{{ st.sound_url }}">
+          </div>
+
+          <div style="margin-top:8px" class="row">
+            <button type="submit">Save</button>
+            {% if st.image_url %}
+              <a href="{{ st.image_url }}" target="_blank" class="muted">preview</a>
+            {% endif %}
+          </div>
+        </form>
+      </td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+</body>
+</html>

@@ -811,6 +811,102 @@ def admin_user(
         "cm_key": cm_key,
     })
 
+@app.get("/admin/forms", response_class=HTMLResponse)
+def admin_forms(
+    request: Request,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Liste des CM (pour afficher chaque cm_key)
+            cur.execute("""
+                SELECT key, name, lineage_key
+                FROM cms
+                ORDER BY lineage_key, key;
+            """)
+            cms = [{"key": r[0], "cm_name": r[1], "lineage_key": r[2]} for r in cur.fetchall()]
+
+            # Toutes les forms existantes
+            cur.execute("""
+                SELECT cm_key, stage, name, image_url, COALESCE(sound_url,'')
+                FROM cm_forms
+                ORDER BY cm_key, stage;
+            """)
+            rows = cur.fetchall()
+
+    forms_map: dict[tuple[str, int], dict] = {}
+    for cm_key, stage, name, image_url, sound_url in rows:
+        forms_map[(cm_key, int(stage))] = {
+            "name": name,
+            "image_url": image_url,
+            "sound_url": sound_url,
+        }
+
+    # Pour le template : on prépare 3 entrées (stage 1/2/3) par CM
+    items = []
+    for cm in cms:
+        cm_key = cm["key"]
+        stages = []
+        for st in (1, 2, 3):
+            f = forms_map.get((cm_key, st), {"name": "", "image_url": "", "sound_url": ""})
+            stages.append({"stage": st, **f})
+        items.append({**cm, "stages": stages})
+
+    return templates.TemplateResponse("forms.html", {
+        "request": request,
+        "items": items,
+        "flash": flash,
+        "flash_kind": flash_kind,
+    })
+
+@app.post("/admin/forms/save")
+def admin_forms_save(
+    cm_key: str = Form(...),
+    stage: int = Form(...),
+    name: str = Form(...),
+    image_url: str = Form(...),
+    sound_url: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    cm_key = cm_key.strip().lower()
+    stage = int(stage)
+    name = (name or "").strip()
+    image_url = (image_url or "").strip()
+    sound_url = (sound_url or "").strip() if sound_url else ""
+
+    if stage not in (1, 2, 3):
+        return RedirectResponse("/admin/forms?flash_kind=err&flash=Stage%20invalide", status_code=303)
+
+    if not cm_key or not name or not image_url:
+        return RedirectResponse("/admin/forms?flash_kind=err&flash=Champs%20manquants", status_code=303)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Vérifier cm existe
+            cur.execute("SELECT 1 FROM cms WHERE key=%s;", (cm_key,))
+            if not cur.fetchone():
+                return RedirectResponse("/admin/forms?flash_kind=err&flash=CM%20inconnu", status_code=303)
+
+            cur.execute("""
+                INSERT INTO cm_forms (cm_key, stage, name, image_url, sound_url)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (cm_key, stage) DO UPDATE
+                SET name = EXCLUDED.name,
+                    image_url = EXCLUDED.image_url,
+                    sound_url = EXCLUDED.sound_url;
+            """, (cm_key, stage, name, image_url, sound_url if sound_url else None))
+        conn.commit()
+
+    return RedirectResponse(
+        url=f"/admin/forms?flash_kind=ok&flash=Forme%20enregistr%C3%A9e%20({cm_key}%20stage%20{stage})",
+        status_code=303,
+    )
 
 
 @app.get("/internal/creature/{login}")
