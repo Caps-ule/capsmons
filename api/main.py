@@ -1888,8 +1888,12 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     new_stage = 0
     cm_assigned = None
 
+    # On prépare ceci dans la transaction, puis on l'utilise après commit
+    evo_payload = None  # (cm_key, stage, name, image_url, sound_url)
+
     with get_db() as conn:
         with conn.cursor() as cur:
+            # user + creature
             cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
             cur.execute("""
                 INSERT INTO creatures (twitch_login, xp_total, stage)
@@ -1897,11 +1901,14 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 ON CONFLICT (twitch_login) DO NOTHING;
             """, (login,))
 
+            # log XP
             cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, amount))
 
+            # stage before
             cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
             prev_stage = int(cur.fetchone()[0])
 
+            # increment xp
             cur.execute("""
                 UPDATE creatures
                 SET xp_total = xp_total + %s, updated_at = now()
@@ -1909,12 +1916,14 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 RETURNING xp_total;
             """, (amount, login))
             new_xp_total = int(cur.fetchone()[0])
-            new_stage = stage_from_xp(new_xp_total)
 
+            # stage after
+            new_stage = stage_from_xp(new_xp_total)
             cur.execute("UPDATE creatures SET stage=%s, updated_at=now() WHERE twitch_login=%s;", (new_stage, login))
+
             stage_changed = (new_stage > prev_stage)
 
-
+            # Hatch: assign CM if needed
             if prev_stage == 0 and new_stage >= 1:
                 cur.execute("SELECT lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
                 lrow = cur.fetchone()
@@ -1924,52 +1933,49 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 if lineage_key and current_cm is None:
                     cm_key = pick_cm_for_lineage(conn, lineage_key)
                     if cm_key:
-                        cur.execute("UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;", (cm_key, login))
+                        cur.execute(
+                            "UPDATE creatures SET cm_key=%s, updated_at=now() WHERE twitch_login=%s;",
+                            (cm_key, login),
+                        )
                         cm_assigned = cm_key
 
-    evo_payload = None
-    if stage_changed and new_stage >= 1:
-        # on récupère cm_key à jour
-        cur.execute("SELECT cm_key FROM creatures WHERE twitch_login=%s;", (login,))
-        cm_row = cur.fetchone()
-        current_cm_key = cm_row[0] if cm_row else None
-    
-        if current_cm_key:
-            # forme par stage
-            cur.execute("""
-                SELECT name, image_url, sound_url
-                FROM cm_forms
-                WHERE cm_key=%s AND stage=%s;
-            """, (current_cm_key, new_stage))
-            f = cur.fetchone()
-    
-            if f:
-                form_name, image_url, sound_url = f
-                evo_payload = (current_cm_key, int(new_stage), form_name, image_url, sound_url)
-    
+            # Si évolution -> préparer payload overlay (si form existe)
+            if stage_changed and new_stage >= 1:
+                cur.execute("SELECT cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+                cm_row = cur.fetchone()
+                current_cm_key = cm_row[0] if cm_row else None
+
+                if current_cm_key:
+                    cur.execute("""
+                        SELECT name, image_url, sound_url
+                        FROM cm_forms
+                        WHERE cm_key=%s AND stage=%s;
+                    """, (current_cm_key, new_stage))
+                    f = cur.fetchone()
+                    if f:
+                        form_name, image_url, sound_url = f
+                        evo_payload = (current_cm_key, int(new_stage), form_name, image_url, sound_url)
 
         conn.commit()
 
-    # Déclencher overlay évolution (sans spam chat)
-    if new_stage > prev_stage:
+    # Après commit: déclencher overlay évolution (sans spam chat)
+    if evo_payload:
         try:
             display, avatar = twitch_user_profile(login)
-    
-            # on préfère la forme si trouvée, sinon on ne déclenche pas
-            if evo_payload:
-                cmk, st, fname, img_url, snd_url = evo_payload
-                with get_db() as conn2:
-                    with conn2.cursor() as cur2:
-                        cur2.execute("""
-                            INSERT INTO overlay_evolutions
-                              (twitch_login, viewer_display, viewer_avatar, cm_key, stage, name, image_url, sound_url, expires_at)
-                            VALUES
-                              (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '6 seconds');
-                        """, (login, display, avatar, cmk, st, fname, img_url, snd_url))
-                    conn2.commit()
-        except Exception as e:
-            print("[API] evolution overlay error:", repr(e))
+            cmk, st, fname, img_url, snd_url = evo_payload
 
+            with get_db() as conn2:
+                with conn2.cursor() as cur2:
+                    cur2.execute("""
+                        INSERT INTO overlay_evolutions
+                          (twitch_login, viewer_display, viewer_avatar, cm_key, stage, name, image_url, sound_url, expires_at)
+                        VALUES
+                          (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '6 seconds');
+                    """, (login, display, avatar, cmk, st, fname, img_url, snd_url))
+                conn2.commit()
+
+        except Exception as e:
+            print("[API] evolution overlay error:", repr(e), flush=True)
 
     return {
         "ok": True,
@@ -1979,7 +1985,6 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "stage_after": new_stage,
         "cm_assigned": cm_assigned,
     }
-
 
 
 
