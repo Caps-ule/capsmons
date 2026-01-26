@@ -76,8 +76,10 @@
       <button type="submit">Rechercher</button>
     </form>
     <p><a href="/admin/stats">📊 Stats</a></p>
-    <a href="/admin/cms">🧬 CM & Pool</a>
-    <a href="/admin/rp">📝 RP</a>
+    <p><a href="/admin/cms">🧬 CM & Pool</a></p>
+    <p><a href="/admin/rp">📝 RP</a></p>
+    <p><a href="/admin/forms">🧬 Forms</a></p>
+
 
     {% if q and result %}
       <p>Résultat : <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a> — {{ result.xp_total }} XP — stage {{ result.stage }}</p>

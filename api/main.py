@@ -821,32 +821,51 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
     if not login:
         raise HTTPException(status_code=400, detail="Missing login")
 
+    xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+    form_name, form_image_url, form_sound_url = None, None, None
+
     with get_db() as conn:
         with conn.cursor() as cur:
+            # 1) état de base
             cur.execute("""
-                SELECT twitch_login, xp_total, stage, lineage_key, cm_key
+                SELECT xp_total, stage, lineage_key, cm_key
                 FROM creatures
                 WHERE twitch_login=%s;
             """, (login,))
             row = cur.fetchone()
+            if row:
+                xp_total, stage, lineage_key, cm_key = row
 
-    if not row:
-        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
-    else:
-        _, xp_total, stage, lineage_key, cm_key = row
+            stage = int(stage or 0)
+            xp_total = int(xp_total or 0)
 
-    nxt, label = next_threshold(int(xp_total))
-    remaining = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+            # 2) forme (uniquement si stage >= 1 et cm_key défini)
+            if stage >= 1 and cm_key:
+                cur.execute("""
+                    SELECT name, image_url, sound_url
+                    FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
+                """, (cm_key, stage))
+                f = cur.fetchone()
+                if f:
+                    form_name, form_image_url, form_sound_url = f
+
+    nxt, label = next_threshold(xp_total)
+    remaining = 0 if nxt is None else max(0, int(nxt) - xp_total)
 
     return {
         "twitch_login": login,
-        "xp_total": int(xp_total),
-        "stage": int(stage),
+        "xp_total": xp_total,
+        "stage": stage,
         "lineage_key": lineage_key,
         "cm_key": cm_key,
+        "form_name": form_name,
+        "form_image_url": form_image_url,
+        "form_sound_url": form_sound_url,
         "next": label,
         "xp_to_next": remaining,
     }
+
 
 
 @app.post("/internal/item/use")
@@ -1654,8 +1673,16 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     duration = int(os.environ.get("SHOW_DURATION_SECONDS", "7"))
     duration = max(2, min(duration, 15))
 
+    # Données overlay
+    xp_total = 0
+    stage = 0
+    cm_key = None
+    cm_name = None
+    media_url = None
+
     with get_db() as conn:
         with conn.cursor() as cur:
+            # 1) état creature
             cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
             row = cur.fetchone()
             if not row:
@@ -1663,20 +1690,36 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
 
             xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
 
+            # 2) oeuf
             if stage == 0 or not cm_key:
                 cm_key = "egg"
                 cm_name = "Œuf"
                 media_url = os.environ.get("EGG_MEDIA_URL", "").strip()
                 if not media_url:
                     raise HTTPException(status_code=400, detail="EGG_MEDIA_URL missing")
+
             else:
-                cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
-                cmrow = cur.fetchone()
-                if not cmrow:
-                    raise HTTPException(status_code=400, detail="Unknown CM")
-                cm_name, media_url = cmrow[0], cmrow[1]
-                if not media_url:
-                    raise HTTPException(status_code=400, detail="CM missing media_url")
+                # 3) forme par stage (prioritaire)
+                cur.execute("""
+                    SELECT name, image_url, sound_url
+                    FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
+                """, (cm_key, stage))
+                f = cur.fetchone()
+
+                if f and f[0] and f[1]:
+                    cm_name = f[0]
+                    media_url = f[1]
+                    # sound_url = f[2]  # (optionnel plus tard dans overlay_events)
+                else:
+                    # 4) fallback: cms table
+                    cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
+                    cmrow = cur.fetchone()
+                    if not cmrow:
+                        raise HTTPException(status_code=400, detail="Unknown CM")
+                    cm_name, media_url = cmrow[0], cmrow[1]
+                    if not media_url:
+                        raise HTTPException(status_code=400, detail="CM missing media_url")
 
     display, avatar = twitch_user_profile(login)
     stage_start, next_xp = stage_bounds(stage)
