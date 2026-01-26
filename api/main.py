@@ -1843,6 +1843,30 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
     })
 
 
+
+@app.get("/overlay/evolution_state")
+def overlay_evolution_state():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,'')
+                FROM overlay_evolutions
+                WHERE expires_at > now()
+                ORDER BY id DESC
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+
+    if not row:
+        return {"active": False}
+
+    viewer_display, viewer_avatar, name, image_url, sound_url = row
+    return {
+        "active": True,
+        "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
+        "form": {"name": name, "image": image_url, "sound": sound_url or ""},
+    }
+
 @app.post("/internal/xp")
 def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -1956,28 +1980,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "cm_assigned": cm_assigned,
     }
 
-    @app.get("/overlay/evolution_state")
-    def overlay_evolution_state():
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,'')
-                    FROM overlay_evolutions
-                    WHERE expires_at > now()
-                    ORDER BY id DESC
-                    LIMIT 1;
-                """)
-                row = cur.fetchone()
-    
-        if not row:
-            return {"active": False}
-    
-        viewer_display, viewer_avatar, name, image_url, sound_url = row
-        return {
-            "active": True,
-            "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
-            "form": {"name": name, "image": image_url, "sound": sound_url or ""},
-        }
+
 
 
 
