@@ -1435,6 +1435,11 @@ def overlay_show_page():
 
       <img id="cmimg" class="cmimg" src="" alt="">
       <div class="barWrap"><div id="fill" class="fill"></div></div>
+      <div class="barWrap" style="height:12px;">
+      <div id="hfill" class="fill" style="width:0%"></div>
+      </div>
+      <div id="htext" class="xptext" style="margin-top:-2px;">❤️ Bonheur : 0%</div>
+
       <div id="cmname" class="cmname">CapsMons</div>
       <div id="xptext" class="xptext"></div>
     </div>
@@ -1513,6 +1518,11 @@ async function tick(){
     // XP
     const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
     document.getElementById('fill').style.width = pct + '%';
+
+    const hpct = (j.happiness && j.happiness.pct !== undefined) ? j.happiness.pct : 0;
+    document.getElementById('hfill').style.width = hpct + '%';
+    document.getElementById('htext').textContent = `❤️ Bonheur : ${hpct}%`;
+
 
     const toNext = j.xp.to_next;
     document.getElementById('xptext').textContent =
@@ -2629,12 +2639,12 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     with get_db() as conn:
         with conn.cursor() as cur:
             # 1) état creature
-            cur.execute("SELECT xp_total, stage, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            cur.execute("SELECT xp_total, stage, cm_key, happiness FROM creatures WHERE twitch_login=%s;", (login,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=400, detail="No creature")
 
-            xp_total, stage, cm_key = int(row[0]), int(row[1]), row[2]
+            xp_total, stage, cm_key, happiness = int(row[0]), int(row[1]), row[2],int(row[3] or 0)
 
             # 2) oeuf
             if stage == 0 or not cm_key:
@@ -2675,10 +2685,10 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
             cur.execute("""
                 INSERT INTO overlay_events
                   (twitch_login, viewer_display, viewer_avatar, cm_key, cm_name, cm_media_url,
-                   xp_total, stage, stage_start_xp, next_stage_xp, expires_at)
+                   xp_total, stage, stage_start_xp, next_stage_xp, happiness, expires_at)
                 VALUES
                   (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' seconds')::interval);
-            """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp, duration))
+            """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp, happiness, duration))
         conn.commit()
 
     return {"ok": True}
@@ -2694,7 +2704,7 @@ def overlay_state():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
-                       xp_total, stage, stage_start_xp, next_stage_xp
+                       xp_total, stage, stage_start_xp, next_stage_xp, happiness
                 FROM overlay_events
                 WHERE expires_at > now()
                 ORDER BY id DESC
@@ -2725,6 +2735,10 @@ def overlay_state():
             "pct": pct,
             "to_next": (next_xp - xp_total) if next_xp else None,
         },
+        "happiness": {
+          "value": int(happy),
+          "pct": max(0, min(100, int(happy))),
+        }
     }
 @app.post("/internal/item/use")
 def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):

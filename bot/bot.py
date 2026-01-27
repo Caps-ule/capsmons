@@ -44,7 +44,7 @@ _last_drop_announce = {"sig": None}         # anti double annonce drops
 def stage_label(stage: int) -> str:
     return {
         0: "🥚 Œuf",
-        1: "🐣 Éclosion",
+        1: "🐣 Forme 1",
         2: "🦴 Évolution 1",
         3: "👑 Évolution 2",
     }.get(stage, f"Stage {stage}")
@@ -238,7 +238,7 @@ class Bot(commands.Bot):
     
         # RP spawn (si tu as les clés), sinon fallback
         rp_key = f"drop.spawn.{mode}"
-        line = await rp_get(rp_key) or "✨ Drop lancé : {title}"
+        line = await rp_get(rp_key) or "✨ Drop lancé : {title}. \"!grab\" pour participer"
         msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
         await ctx.send(msg)
 
@@ -711,6 +711,9 @@ class Bot(commands.Bot):
         xp_total = int(data.get("xp_total", 0))
         nxt = data.get("next", "Max")
         xp_to_next = int(data.get("xp_to_next", 0))
+        happy = int(data.get("happiness", 0))
+        happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
+
 
         lineage = data.get("lineage_key")
         cm_key = data.get("cm_key")
@@ -725,11 +728,12 @@ class Bot(commands.Bot):
         else:
             extra = " — lignée: non choisie (utilise !choose)"
 
-        header = f"👁️ CapsMons — @{ctx.author.name}"
+        header = f"👁️ @{ctx.author.name}"
         state = f"{stage_label(stage)} | {xp_total} XP"
         prog = "🏁 Stade max" if nxt == "Max" else f"⏳ {nxt} dans {xp_to_next} XP"
 
-        await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt}")
+        await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}]")
+
 
     # ------------------------------------------------------------------------
     # Commande: !choose
