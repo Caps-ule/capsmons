@@ -2715,7 +2715,7 @@ def overlay_state():
     if not row:
         return {"show": False}
 
-    viewer_display, viewer_avatar, cm_name, cm_media_url, xp_total, stage, start_xp, next_xp = row
+    viewer_display, viewer_avatar, cm_name, cm_media_url, xp_total, stage, start_xp, next_xp, happiness = row
     xp_total = int(xp_total)
     start_xp = int(start_xp)
     next_xp = int(next_xp) if next_xp is not None else None
