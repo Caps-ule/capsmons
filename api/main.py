@@ -1598,7 +1598,14 @@ def overlay_evolution_page():
     width:40px;height:40px;border-radius:12px;
     object-fit:cover;border:1px solid rgba(255,255,255,.15);
   }
-  .viewerName{ color:var(--text); font-weight:900; font-size:14px; line-height:1.1; }
+  .viewerName{
+  color: var(--text);
+  font-weight: 900;
+  font-size: 16px;        /* avant: 14px */
+  line-height: 1.1;
+  text-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+
   .viewerSub{ color:var(--muted); font-size:12px; margin-top:2px; }
 
   /* --- Main layout --- */
@@ -1661,29 +1668,33 @@ def overlay_evolution_page():
   }
 
   /* text block */
-  .title{
-    font-size:34px;
-    font-weight:1000;
-    color:var(--text);
-    letter-spacing:.2px;
-    line-height:1.05;
-  }
-  .subtitle{
-    margin-top:10px;
-    color:var(--muted);
-    font-size:14px;
-    line-height:1.4;
-  }
+.title{
+  font-size: 42px;        /* avant: 34px */
+  font-weight: 1000;
+  color: var(--text);
+  letter-spacing: .4px;
+  line-height: 1.08;
+  text-shadow:
+    0 2px 10px rgba(0,0,0,.55),
+    0 0 18px rgba(122,162,255,.35);
+}
+
+.subtitle{
+  margin-top: 12px;
+  color: #cfd6e3;         /* plus clair */
+  font-size: 17px;        /* avant: 14px */
+  line-height: 1.5;
+  text-shadow: 0 1px 6px rgba(0,0,0,.45);
+}
+
   .pillRow{ margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
-  .pill{
-    display:inline-flex; align-items:center; gap:8px;
-    padding:6px 10px;
-    border-radius:999px;
-    border:1px solid rgba(255,255,255,.14);
-    background: rgba(0,0,0,.15);
-    color: var(--muted);
-    font-size:12px;
-  }
+.pill{
+  padding: 7px 12px;      /* un peu plus haut */
+  font-size: 13px;        /* avant: 12px */
+  color: #e1e7f0;
+  background: rgba(0,0,0,.22);
+}
+
   .dot{
     width:8px;height:8px;border-radius:999px;
     background: var(--accent);
