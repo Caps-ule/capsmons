@@ -848,9 +848,9 @@ def admin_user(
             row = cur.fetchone()
 
     if not row:
-        xp_total, stage, lineage_key, cm_key = 0, 0, None, None
+        xp_total, stage, lineage_key, cm_key,happiness = 0, 0, None, None, 50
     else:
-        xp_total, stage, lineage_key, cm_key = row
+        xp_total, stage, lineage_key, cm_key, happiness = row
 
     nxt, label = next_threshold(int(xp_total))
     xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
