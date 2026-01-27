@@ -48,6 +48,27 @@
   .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
   .toggle{display:flex; gap:8px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel)}
   .toggle input{transform:scale(1.1)}
+    .btn{
+    border:none;
+    border-radius:10px;
+    padding:8px 12px;
+    font-weight:800;
+    cursor:pointer;
+  }
+  .btnLive{ background:#2bd576; color:#07130c; }
+  .btnOff{ background:#4a5568; color:#0b0f14; }
+  .btnDisabled{
+    opacity:.45;
+    cursor:not-allowed;
+  }
+  .badge{
+    padding:4px 10px;
+    border-radius:999px;
+    font-size:12px;
+    border:1px solid rgba(255,255,255,.15);
+    background:rgba(255,255,255,.06);
+    color:#e6edf3;
+  }
 </style>
 
 </head>
@@ -64,6 +85,39 @@
       <input type="checkbox" id="themeToggle" checked>
       <label for="themeToggle">Dark mode</label>
     </div>
+    <div style="display:flex;gap:10px;align-items:center;margin:12px 0;">
+
+  <!-- LIVE -->
+  <form method="post" action="/admin/live" style="margin:0;">
+    <input type="hidden" name="value" value="true">
+    <button
+      type="submit"
+      class="btn btnLive {% if is_live %}btnDisabled{% endif %}"
+      {% if is_live %}disabled{% endif %}
+      title="{% if is_live %}Déjà en LIVE{% else %}Forcer LIVE{% endif %}"
+    >
+      🟢 Live
+    </button>
+  </form>
+
+  <!-- OFFLINE -->
+  <form method="post" action="/admin/live" style="margin:0;">
+    <input type="hidden" name="value" value="false">
+    <button
+      type="submit"
+      class="btn btnOff {% if not is_live %}btnDisabled{% endif %}"
+      {% if not is_live %}disabled{% endif %}
+      title="{% if not is_live %}Déjà OFFLINE{% else %}Forcer OFFLINE{% endif %}"
+    >
+      ⚫ Plus en live
+    </button>
+  </form>
+
+  <span class="badge">
+    État: <b>{% if is_live %}LIVE{% else %}OFFLINE{% endif %}</b>
+  </span>
+
+</div>
   </div>
 </div>
 
@@ -79,24 +133,6 @@
     <a href="/admin/cms">🧬 CM & Pool</a>
     <a href="/admin/rp">📝 RP</a>
     <a href="/admin/forms">🧬 Forms</a></p>
-
-    <div style="display:flex;gap:10px;align-items:center;margin:12px 0;">
-  <form method="post" action="/admin/live">
-    <input type="hidden" name="value" value="true">
-    <button type="submit">🟢 Live</button>
-  </form>
-
-  <form method="post" action="/admin/live">
-    <input type="hidden" name="value" value="false">
-    <button type="submit">⚫ Plus en live</button>
-  </form>
-
-  {% if is_live is defined %}
-    <span style="margin-left:10px;opacity:.8;">
-      État: <b>{{ "LIVE" if is_live else "OFFLINE" }}</b>
-    </span>
-  {% endif %}
-</div>
 
 
 
