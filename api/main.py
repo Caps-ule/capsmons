@@ -2704,7 +2704,7 @@ def overlay_state():
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
-                       xp_total, stage, stage_start_xp, next_stage_xp, happiness
+                       xp_total, stage, stage_start_xp, next_stage_xp, COALESCE(happiness,0)
                 FROM overlay_events
                 WHERE expires_at > now()
                 ORDER BY id DESC
