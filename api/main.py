@@ -2687,7 +2687,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                   (twitch_login, viewer_display, viewer_avatar, cm_key, cm_name, cm_media_url,
                    xp_total, stage, stage_start_xp, next_stage_xp, happiness, expires_at)
                 VALUES
-                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' seconds')::interval);
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + (%s || ' seconds')::interval);
             """, (login, display, avatar, cm_key, cm_name, media_url, xp_total, stage, stage_start, next_xp, happiness, duration))
         conn.commit()
 
