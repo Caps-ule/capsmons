@@ -1083,6 +1083,27 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
         "happiness_after": new_h,
     }
 
+@app.get("/internal/inventory/{login}")
+def internal_inventory(login: str, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = login.strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT item_key, qty
+                FROM inventory
+                WHERE twitch_login=%s AND qty > 0
+                ORDER BY item_key ASC;
+            """, (login,))
+            rows = cur.fetchall()
+
+    items = [{"item_key": r[0], "qty": int(r[1])} for r in rows]
+    return {"ok": True, "twitch_login": login, "items": items}
+
 
 
 @app.post('/internal/drop/join')

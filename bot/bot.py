@@ -21,6 +21,8 @@ API_SHOW_URL = "http://api:8000/internal/trigger_show"
 API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
 API_DROP_POLL_URL = "http://api:8000/internal/drop/poll_result"
 API_DROP_SPAWN_URL = "http://api:8000/internal/drop/spawn"
+API_INV_URL = "http://api:8000/internal/inventory"
+
 
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
@@ -98,6 +100,33 @@ class Bot(commands.Bot):
             prefix="!",
             initial_channels=[os.environ["TWITCH_CHANNEL"]],
         )
+    @commands.command(name="inv")
+    async def inv(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+    
+        try:
+            r = requests.get(
+                f"{API_INV_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=2,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} ⚠️ Inventaire indisponible.")
+                return
+            data = r.json()
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} ⚠️ Inventaire indisponible.")
+            return
+    
+        items = data.get("items", []) or []
+        if not items:
+            await ctx.send(f"@{ctx.author.name} 🎒 Inventaire vide.")
+            return
+    
+        # format compact : item xqty
+        txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
+        await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
+
 
     # ------------------------------------------------------------------------
     # Startup
