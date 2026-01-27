@@ -1314,8 +1314,7 @@ tick();
 
 @app.get("/overlay/show", response_class=HTMLResponse)
 def overlay_show_page():
-    # HTML simple (pas de template obligatoire)
-    return HTMLResponse("""
+    return HTMLResponse(r"""
 <!doctype html>
 <html>
 <head>
@@ -1344,7 +1343,6 @@ def overlay_show_page():
     min-width:480px;
     max-width:480px;
 
-    /* état animé */
     opacity:0;
     transform: translateY(10px) scale(0.98);
     transition: opacity 500ms ease, transform 500ms ease;
@@ -1390,10 +1388,29 @@ def overlay_show_page():
     border:1px solid rgba(255,255,255,.10);
   }
 
-  /* Barre XP */
+  /* Labels au-dessus des barres */
+  .labelRow{
+    width:420px;
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-top:6px;
+  }
+  .label{
+    font-size:13px;
+    font-weight:900;
+    color:#e6edf3;
+    letter-spacing:.2px;
+  }
+  .labelRight{
+    font-size:12px;
+    color:#9aa4b2;
+  }
+
+  /* Barres */
   .barWrap{
     width:420px;
-    height:32px;
+    height:14px;
     border-radius:999px;
     background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.12);
@@ -1405,6 +1422,10 @@ def overlay_show_page():
     background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45));
     transition: width 280ms ease;
   }
+  /* Bonheur en rose */
+  .happinessFill{
+    background:linear-gradient(90deg,#ff4fb3,rgba(255,79,179,.35));
+  }
 
   .cmname{
     font-size:28px;
@@ -1412,12 +1433,6 @@ def overlay_show_page():
     color:#e6edf3;
     text-align:center;
     line-height:1.1;
-  }
-  .xptext{
-    font-size:13px;
-    color:#9aa4b2;
-    text-align:center;
-    margin-top:-6px;
   }
 </style>
 </head>
@@ -1434,16 +1449,25 @@ def overlay_show_page():
       </div>
 
       <img id="cmimg" class="cmimg" src="" alt="">
-      <div class="barWrap"><div id="fill" class="fill"></div></div>
-      <div class="barWrap" style="height:12px;">
-      <div id="hfill" class="fill" style="width:0%"></div>
+
+      <!-- XP -->
+      <div class="labelRow">
+        <div class="label">⚡ XP</div>
+        <div id="xpLabel" class="labelRight"></div>
       </div>
-      <div id="htext" class="xptext" style="margin-top:-2px;">❤️ Bonheur : 0%</div>
+      <div class="barWrap"><div id="fill" class="fill"></div></div>
+
+      <!-- Bonheur -->
+      <div class="labelRow" style="margin-top:10px;">
+        <div class="label">💗 Bonheur</div>
+        <div id="hLabel" class="labelRight"></div>
+      </div>
+      <div class="barWrap"><div id="hfill" class="fill happinessFill"></div></div>
 
       <div id="cmname" class="cmname">CapsMons</div>
-      <div id="xptext" class="xptext"></div>
     </div>
   </div>
+
   <audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
 
 <script>
@@ -1452,6 +1476,7 @@ let hideTimer = null;
 const DISPLAY_MS = 7000;
 let lastSig = "";
 const sfx = document.getElementById('sfx');
+
 function playSfx(){
   try{
     sfx.currentTime = 0;
@@ -1460,17 +1485,14 @@ function playSfx(){
   }catch(e){}
 }
 
-
 function showCard(){
   const card = document.getElementById('card');
   if (!showing) {
     card.style.display = 'flex';
-    void card.offsetWidth; // force reflow
+    void card.offsetWidth;
     card.classList.add('showing');
     showing = true;
   }
-
-  // reset timer
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(hideCard, DISPLAY_MS);
 }
@@ -1480,10 +1502,7 @@ function hideCard(){
   if (!showing) return;
 
   card.classList.remove('showing');
-  setTimeout(() => {
-    card.style.display = 'none';
-  }, 230);
-
+  setTimeout(() => { card.style.display = 'none'; }, 230);
   showing = false;
   hideTimer = null;
 }
@@ -1494,18 +1513,14 @@ async function tick(){
     const j = await r.json();
 
     if(!j.show){
-      // on NE cache PLUS ici → timer only
       return;
     }
 
-    const sig = `${j.viewer.name}|${j.cm.name}|${j.xp.total}`;
-
+    const sig = `${j.viewer.name}|${j.cm.name}|${j.xp.total}|${(j.happiness && j.happiness.pct) || 0}`;
     if (sig !== lastSig) {
       lastSig = sig;
-      playSfx();      // 🔊 SON SYNCHRONISÉ
+      playSfx();
     }
-
-
 
     // Viewer
     document.getElementById('viewer').textContent = `@${j.viewer.name}`;
@@ -1519,16 +1534,14 @@ async function tick(){
     const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
     document.getElementById('fill').style.width = pct + '%';
 
+    const toNext = j.xp.to_next;
+    document.getElementById('xpLabel').textContent =
+      (toNext ? `${j.xp.total} XP • prochain: ${toNext} XP` : `${j.xp.total} XP • max`);
+
+    // Bonheur
     const hpct = (j.happiness && j.happiness.pct !== undefined) ? j.happiness.pct : 0;
     document.getElementById('hfill').style.width = hpct + '%';
-    document.getElementById('htext').textContent = `❤️ Bonheur : ${hpct}%`;
-
-
-    const toNext = j.xp.to_next;
-    document.getElementById('xptext').textContent =
-      toNext
-        ? `${j.xp.total} XP • prochain palier dans ${toNext} XP`
-        : `${j.xp.total} XP • stade max`;
+    document.getElementById('hLabel').textContent = `${hpct}%`;
 
     showCard();
 
@@ -1543,8 +1556,8 @@ tick();
 
 </body>
 </html>
-
 """)
+
 
 @app.get("/overlay/evolution", response_class=HTMLResponse)
 def overlay_evolution_page():
