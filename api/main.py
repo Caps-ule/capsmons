@@ -1679,6 +1679,30 @@ def overlay_evolution_page():
     0 0 18px rgba(122,162,255,.35);
 }
 
+/* Typewriter cursor */
+.titleTyping::after{
+  content:"";
+  display:inline-block;
+  width:10px;
+  height:1.15em;
+  margin-left:8px;
+  background: rgba(255,255,255,.65);
+  border-radius:2px;
+  animation: caretBlink 900ms steps(2, end) infinite;
+  vertical-align: -0.15em;
+}
+
+@keyframes caretBlink{
+  0%, 49% { opacity:1; }
+  50%, 100% { opacity:0; }
+}
+
+/* Pulse (appliqué en JS via transform + text-shadow) */
+.titlePulse{
+  will-change: transform, text-shadow, filter;
+}
+
+
 .subtitle{
   margin-top: 12px;
   color: #cfd6e3;         /* plus clair */
@@ -1974,7 +1998,103 @@ function hideCard(){
 
   showing = false;
   hideTimer = null;
+  stopPulse();
+formName.style.transform = '';
+formName.style.textShadow = '';
+
 }
+
+// ---------------------
+// Typewriter
+// ---------------------
+let typingTimer = null;
+
+function typewriter(el, fullText, speedMs=28){
+  // reset
+  if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+  el.textContent = "";
+  el.classList.add("titleTyping");
+
+  let i = 0;
+  typingTimer = setInterval(() => {
+    el.textContent += fullText[i] || "";
+    i++;
+    if (i >= fullText.length){
+      clearInterval(typingTimer);
+      typingTimer = null;
+
+      // retire le curseur après une petite pause
+      setTimeout(()=>{ el.classList.remove("titleTyping"); }, 700);
+    }
+  }, speedMs);
+}
+
+// ---------------------
+// Audio pulse (WebAudio)
+// ---------------------
+let audioCtx = null;
+let analyser = null;
+let dataArray = null;
+let rafPulse = null;
+
+function stopPulse(){
+  if (rafPulse) cancelAnimationFrame(rafPulse);
+  rafPulse = null;
+  if (analyser) analyser.disconnect();
+  analyser = null;
+  dataArray = null;
+}
+
+function startPulse(audioEl, targetEl){
+  stopPulse();
+
+  // WebAudio context (créé à la demande)
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+
+  const src = audioCtx.createMediaElementSource(audioEl);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+
+  src.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  targetEl.classList.add("titlePulse");
+
+  const baseScale = 1.0;
+
+  const loop = () => {
+    if (!analyser) return;
+
+    analyser.getByteFrequencyData(dataArray);
+
+    // énergie moyenne (0..255)
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+    const avg = sum / dataArray.length;
+
+    // normalise (0..1 environ)
+    const n = Math.min(1, avg / 140);
+
+    // pulse
+    const scale = baseScale + n * 0.06;
+    targetEl.style.transform = `scale(${scale})`;
+
+    // glow lié au son
+    const glow = 10 + n * 26;
+    targetEl.style.textShadow = `
+      0 2px 10px rgba(0,0,0,.55),
+      0 0 ${glow}px rgba(122,162,255,.55),
+      0 0 ${glow * 0.6}px rgba(255,214,102,.25)
+    `;
+
+    rafPulse = requestAnimationFrame(loop);
+  };
+
+  rafPulse = requestAnimationFrame(loop);
+}
+
 
 async function tick(){
   try{
@@ -1986,20 +2106,37 @@ async function tick(){
     if (sig !== lastSig){
       lastSig = sig;
 
-      viewerName.textContent = d.viewer.name ? `@${d.viewer.name}` : '';
-      avatar.src = d.viewer.avatar || '';
-      formName.textContent = d.form.name || 'Évolution';
-      img.src = d.form.image || '';
+// texte lettre par lettre
+typewriter(formName, d.form.name || "Évolution", 28);
 
-      if (d.form.sound){
-        snd.src = d.form.sound;
-        try { snd.currentTime = 0; snd.play(); } catch(e) {}
-      }
+// image
+img.src = d.form.image || '';
 
-      showCard();
+// son + pulse sync
+if (d.form.sound){
+  snd.src = d.form.sound;
+  try {
+    snd.currentTime = 0;
+
+    // IMPORTANT: certains navigateurs nécessitent resume()
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(()=>{});
+    }
+
+    snd.play().catch(()=>{});
+    startPulse(snd, formName);
+  } catch(e) {}
+} else {
+  stopPulse();
+}
+
+showCard();
+
     }
   }catch(e){}
 }
+
+
 
 setInterval(tick, 500);
 tick();
