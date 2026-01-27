@@ -2393,6 +2393,28 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
         "top_events_24h": top_events_24h,
     })
 
+@app.post("/admin/live")
+def admin_set_live(
+    value: str = Form(...),  # "true" ou "false"
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    v = value.strip().lower()
+    v = "true" if v in ("true", "1", "yes", "on") else "false"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO kv (key, value)
+                VALUES ('is_live', %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = now();
+            """, (v,))
+        conn.commit()
+
+    msg = "Live forcé ✅" if v == "true" else "Hors live forcé ✅"
+    return RedirectResponse(url=f"/admin?flash_kind=ok&flash={msg.replace(' ', '%20')}", status_code=303)
 
 
 @app.get("/overlay/evolution_state")
@@ -2732,6 +2754,7 @@ def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCre
                 LIMIT 50;
             ''')
             top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
+            
 
             if q_clean:
                 cur.execute('''
