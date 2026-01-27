@@ -1024,47 +1024,65 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
 
 
 @app.post("/internal/item/use")
-def use_item(payload: dict, x_api_key: str | None = Header(default=None)):
+def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
 
-    login = payload.get("twitch_login", "").strip().lower()
-    item_key = payload.get("item_key", "").strip()
-
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    item_key = str(payload.get("item_key", "")).strip().lower()
     if not login or not item_key:
-        raise HTTPException(status_code=400, detail="Missing data")
+        raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Vérifier inventaire
-            cur.execute(
-                """
-                SELECT qty FROM inventory
-                WHERE twitch_login=%s AND item_key=%s;
-                """,
-                (login, item_key),
-            )
-            row = cur.fetchone()
-            if not row or row[0] <= 0:
-                raise HTTPException(status_code=400, detail="No item")
+            # item existe ?
+            cur.execute("SELECT happiness_gain, name FROM items WHERE key=%s;", (item_key,))
+            it = cur.fetchone()
+            if not it:
+                raise HTTPException(status_code=400, detail="Unknown item")
+            happiness_gain, item_name = int(it[0]), it[1]
 
-            # Consommer l'objet
-            cur.execute(
-                """
+            # stock inventaire ?
+            cur.execute("SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;", (login, item_key))
+            row = cur.fetchone()
+            if not row or int(row[0]) <= 0:
+                raise HTTPException(status_code=400, detail="No item in inventory")
+
+            # consommer 1
+            cur.execute("""
                 UPDATE inventory
                 SET qty = qty - 1, updated_at = now()
                 WHERE twitch_login=%s AND item_key=%s;
-                """,
-                (login, item_key),
-            )
+            """, (login, item_key))
+
+            # s'assurer creature existe
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
+                VALUES (%s, 0, 0, 50)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            # augmenter bonheur (cap 100)
+            cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
+            current = int(cur.fetchone()[0] or 0)
+            new_h = min(100, max(0, current + happiness_gain))
+
+            cur.execute("""
+                UPDATE creatures
+                SET happiness=%s, updated_at=now()
+                WHERE twitch_login=%s;
+            """, (new_h, login))
 
         conn.commit()
 
-    # Effets (MVP)
-    if item_key == "xp_capsule":
-        grant_xp(login, 30)
-        return {"ok": True, "effect": "xp", "amount": 30}
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "item_key": item_key,
+        "item_name": item_name,
+        "happiness_gain": happiness_gain,
+        "happiness_after": new_h,
+    }
 
-    return {"ok": True, "effect": "none"}
 
 
 @app.post('/internal/drop/join')
