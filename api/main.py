@@ -2719,6 +2719,7 @@ def overlay_state():
     xp_total = int(xp_total)
     start_xp = int(start_xp)
     next_xp = int(next_xp) if next_xp is not None else None
+    happy = int(happiness or 0)
 
     pct = None
     if next_xp is not None and next_xp > start_xp:
