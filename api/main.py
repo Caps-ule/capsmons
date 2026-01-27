@@ -2753,9 +2753,11 @@ def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCre
                 ORDER BY xp_total DESC
                 LIMIT 50;
             ''')
-            top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
-
-
+            top = [
+                {'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]}
+                for r in cur.fetchall()
+            ]
+    
             if q_clean:
                 cur.execute('''
                     SELECT twitch_login, xp_total, stage
@@ -2764,14 +2766,17 @@ def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCre
                 ''', (q_clean,))
                 row = cur.fetchone()
                 if row:
-                    result = {'twitch_login': row[0], 'xp_total': row[1], 'stage': row[2]}
-                cur.execute(
-                    "SELECT value FROM kv WHERE key = 'is_live';"
-                )
-                row = cur.fetchone()
-                
-                # Conversion propre en bool
-                is_live = bool(row and row[0] == "true")
+                    result = {
+                        'twitch_login': row[0],
+                        'xp_total': row[1],
+                        'stage': row[2]
+                    }
+    
+            # 👇👇👇 AJOUT ICI
+            cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
+            row = cur.fetchone()
+            is_live = bool(row and row[0] == "true")
+
 
     return templates.TemplateResponse('admin.html', {'request': request, 'top': top, 'q': q_clean, 'result': result,'is_live': is_live,})
 
