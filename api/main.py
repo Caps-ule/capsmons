@@ -848,7 +848,7 @@ def admin_user(
             row = cur.fetchone()
 
     if not row:
-        xp_total, stage, lineage_key, cm_key,happiness = 0, 0, None, None, 50
+        xp_total, stage, lineage_key, cm_key, happiness = 0, 0, None, None, 50
     else:
         xp_total, stage, lineage_key, cm_key, happiness = row
 
@@ -988,7 +988,7 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
             """, (login,))
             row = cur.fetchone()
             if row:
-                xp_total, stage, lineage_key, cm_key = row
+                xp_total, stage, lineage_key, cm_key, happiness = row
 
             stage = int(stage or 0)
             xp_total = int(xp_total or 0)
