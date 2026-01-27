@@ -844,7 +844,7 @@ def admin_user(
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT xp_total, stage, lineage_key, cm_key FROM creatures WHERE twitch_login=%s;", (login,))
+            cur.execute("SELECT xp_total, stage, lineage_key, cm_key, happiness FROM creatures WHERE twitch_login=%s;", (login,))
             row = cur.fetchone()
 
     if not row:
@@ -866,6 +866,7 @@ def admin_user(
         "flash_kind": flash_kind,
         "lineage_key": lineage_key,
         "cm_key": cm_key,
+        "happiness": int(happiness or 0),
     })
 
 @app.get("/admin/forms", response_class=HTMLResponse)
@@ -981,7 +982,7 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         with conn.cursor() as cur:
             # 1) état de base
             cur.execute("""
-                SELECT xp_total, stage, lineage_key, cm_key
+                SELECT xp_total, stage, lineage_key, cm_key, happiness
                 FROM creatures
                 WHERE twitch_login=%s;
             """, (login,))
@@ -1017,6 +1018,7 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         "form_sound_url": form_sound_url,
         "next": label,
         "xp_to_next": remaining,
+        "happiness": int(happiness or 0),
     }
 
 
@@ -2684,6 +2686,65 @@ def overlay_state():
             "pct": pct,
             "to_next": (next_xp - xp_total) if next_xp else None,
         },
+    }
+@app.post("/internal/item/use")
+def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    item_key = str(payload.get("item_key", "")).strip().lower()
+    if not login or not item_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # 1) item existe ?
+            cur.execute("SELECT happiness_gain, name FROM items WHERE key=%s;", (item_key,))
+            it = cur.fetchone()
+            if not it:
+                raise HTTPException(status_code=400, detail="Unknown item")
+            happiness_gain, item_name = int(it[0]), it[1]
+
+            # 2) stock inventaire ?
+            cur.execute("SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;", (login, item_key))
+            row = cur.fetchone()
+            if not row or int(row[0]) <= 0:
+                raise HTTPException(status_code=400, detail="No item in inventory")
+
+            # 3) consommer 1
+            cur.execute("""
+                UPDATE inventory
+                SET qty = qty - 1, updated_at = now()
+                WHERE twitch_login=%s AND item_key=%s;
+            """, (login, item_key))
+
+            # 4) s'assurer creature existe
+            cur.execute("""
+                INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
+                VALUES (%s, 0, 0, 50)
+                ON CONFLICT (twitch_login) DO NOTHING;
+            """, (login,))
+
+            # 5) augmenter bonheur (cap 100)
+            cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
+            current = int(cur.fetchone()[0] or 0)
+            new_h = min(100, max(0, current + happiness_gain))
+
+            cur.execute("""
+                UPDATE creatures
+                SET happiness=%s, updated_at=now()
+                WHERE twitch_login=%s;
+            """, (new_h, login))
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "item_key": item_key,
+        "item_name": item_name,
+        "happiness_gain": happiness_gain,
+        "happiness_after": new_h,
     }
 
 
