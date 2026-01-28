@@ -550,26 +550,125 @@ async def eventsub_handler(request: Request):
     # 2) Notification
     if msg_type == "notification":
         sub_type = payload.get("subscription", {}).get("type", "")
-        if sub_type in ("stream.online", "stream.offline"):
-            is_live = "true" if sub_type == "stream.online" else "false"
 
+        if sub_type == "stream.online":
             with get_db() as conn:
                 with conn.cursor() as cur:
+                    # a) is_live = true
                     cur.execute("""
                         INSERT INTO kv (key, value)
-                        VALUES ('is_live', %s)
+                        VALUES ('is_live', 'true')
                         ON CONFLICT (key) DO UPDATE
-                        SET value = EXCLUDED.value, updated_at = now();
-                    """, (is_live,))
+                        SET value='true', updated_at=now();
+                    """)
+
+                    # b) créer une session
+                    cur.execute("INSERT INTO stream_sessions DEFAULT VALUES RETURNING id;")
+                    sid = int(cur.fetchone()[0])
+
+                    # c) stocker current_session_id
+                    cur.execute("""
+                        INSERT INTO kv (key, value)
+                        VALUES ('current_session_id', %s)
+                        ON CONFLICT (key) DO UPDATE
+                        SET value=EXCLUDED.value, updated_at=now();
+                    """, (str(sid),))
+
                 conn.commit()
+
+            return "ok"
+
+        if sub_type == "stream.offline":
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    # a) is_live = false
+                    cur.execute("""
+                        INSERT INTO kv (key, value)
+                        VALUES ('is_live', 'false')
+                        ON CONFLICT (key) DO UPDATE
+                        SET value='false', updated_at=now();
+                    """)
+
+                    # b) récupérer session courante
+                    cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
+                    row = cur.fetchone()
+                    if not row or not row[0]:
+                        conn.commit()
+                        return "ok"
+
+                    sid = int(row[0])
+
+                    # c) fermer session
+                    cur.execute("UPDATE stream_sessions SET ended_at=now() WHERE id=%s AND ended_at IS NULL;", (sid,))
+
+                    # d) participants de cette session
+                    cur.execute("SELECT twitch_login FROM stream_participants WHERE session_id=%s;", (sid,))
+                    participants = [r[0] for r in cur.fetchall()]
+
+                    for login in participants:
+                        # lire streak existant
+                        cur.execute("SELECT streak_count, last_session_id FROM streaks WHERE twitch_login=%s;", (login,))
+                        srow = cur.fetchone()
+                        prev_count = int(srow[0]) if srow else 0
+                        prev_sid = int(srow[1]) if (srow and srow[1] is not None) else None
+
+                        # consécutif si dernière session == sid-1
+                        new_count = (prev_count + 1) if (prev_sid == sid - 1) else 1
+
+                        # bonus bonheur par paliers (bonheur uniquement)
+                        bonus = 0
+                        if new_count == 1:
+                            bonus = 2
+                        elif new_count == 3:
+                            bonus = 5
+                        elif new_count == 5:
+                            bonus = 10
+                        elif new_count == 10:
+                            bonus = 20
+
+                        # upsert streak
+                        cur.execute("""
+                            INSERT INTO streaks (twitch_login, streak_count, last_session_id)
+                            VALUES (%s,%s,%s)
+                            ON CONFLICT (twitch_login) DO UPDATE
+                            SET streak_count=EXCLUDED.streak_count,
+                                last_session_id=EXCLUDED.last_session_id,
+                                updated_at=now();
+                        """, (login, new_count, sid))
+
+                        # appliquer bonus bonheur (cap 100)
+                        if bonus > 0:
+                            cur.execute("""
+                                INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
+                                VALUES (%s, 0, 0, 50)
+                                ON CONFLICT (twitch_login) DO NOTHING;
+                            """, (login,))
+
+                            cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
+                            hcur = int(cur.fetchone()[0] or 0)
+                            hnew = min(100, hcur + bonus)
+                            cur.execute("UPDATE creatures SET happiness=%s, updated_at=now() WHERE twitch_login=%s;", (hnew, login))
+
+                    # e) vider current_session_id
+                    cur.execute("""
+                        INSERT INTO kv (key, value)
+                        VALUES ('current_session_id', '')
+                        ON CONFLICT (key) DO UPDATE
+                        SET value='', updated_at=now();
+                    """)
+
+                conn.commit()
+
+            return "ok"
 
         return "ok"
 
-    # 3) Revocation (Twitch désactive une sub)
+    # 3) Revocation
     if msg_type == "revocation":
         return "ok"
 
     return "ok"
+
 # =============================================================================
 # BONHEUR
 # =============================================================================
@@ -700,7 +799,7 @@ def happiness_decay(x_api_key: str | None = Header(default=None)):
         conn.commit()
 
     return {"ok": True, "skipped": False, "date": today}
-#===================================================================
+# ===================================================================
 # Endpoints essentiels (health + is_live)
 # =============================================================================
 @app.get('/health')
@@ -1131,9 +1230,12 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
                 f = cur.fetchone()
                 if f:
                     form_name, form_image_url, form_sound_url = f
-
-    nxt, label = next_threshold(xp_total)
-    remaining = 0 if nxt is None else max(0, int(nxt) - xp_total)
+            cur.execute("SELECT streak_count FROM streaks WHERE twitch_login=%s;", (login,))
+            srow = cur.fetchone()
+            if srow:
+                streak_count = int(srow[0] or 0)
+                nxt, label = next_threshold(xp_total)
+                remaining = 0 if nxt is None else max(0, int(nxt) - xp_total)
 
     return {
         "twitch_login": login,
@@ -1147,6 +1249,7 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         "next": label,
         "xp_to_next": remaining,
         "happiness": int(happiness or 0),
+        "streak_count": int(streak_count),
     }
 
 
@@ -3067,4 +3170,57 @@ def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCre
 
 
     return templates.TemplateResponse('admin.html', {'request': request, 'top': top, 'q': q_clean, 'result': result,'is_live': is_live,})
+
+
+# =============================================================================
+# PRESENCES
+# =============================================================================
+
+def get_current_session_id(conn) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
+        row = cur.fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        return int(row[0])
+    except Exception:
+        return None
+
+@app.post("/internal/stream/present_batch")
+def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    logins = payload.get("logins", [])
+    if not isinstance(logins, list) or len(logins) > 800:
+        raise HTTPException(status_code=400, detail="Invalid logins")
+
+    clean = [str(x).strip().lower() for x in logins if str(x).strip()]
+    if not clean:
+        return {"ok": True, "inserted": 0}
+
+    with get_db() as conn:
+        session_id = get_current_session_id(conn)
+        if not session_id:
+            return {"ok": True, "inserted": 0}
+
+        with conn.cursor() as cur:
+            # insert ignore duplicate (PK session_id,twitch_login)
+            inserted = 0
+            for u in clean:
+                try:
+                    cur.execute("""
+                        INSERT INTO stream_participants (session_id, twitch_login)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING;
+                    """, (session_id, u))
+                    # psycopg: rowcount=1 si insert
+                    if cur.rowcount == 1:
+                        inserted += 1
+                except Exception:
+                    pass
+        conn.commit()
+
+    return {"ok": True, "inserted": inserted, "session_id": session_id}
+
 

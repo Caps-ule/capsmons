@@ -24,6 +24,7 @@ API_DROP_SPAWN_URL = "http://api:8000/internal/drop/spawn"
 API_INV_URL = "http://api:8000/internal/inventory"
 API_HAPPINESS_BATCH_URL = "http://api:8000/internal/happiness/batch"
 API_HAPPINESS_DECAY_URL = "http://api:8000/internal/happiness/decay"
+API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
@@ -601,125 +602,127 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     # Presence loop (XP de présence)
     # ------------------------------------------------------------------------
-    async def presence_loop(self):
-        tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
-        base_amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
-    
-        # optionnel: bots à ignorer (en plus de TWITCH_BOT_LOGIN)
-        ignore_bots = set(
-            x.strip().lower()
-            for x in os.environ.get("PRESENCE_IGNORE_BOTS", "").split(",")
-            if x.strip()
-        )
-    
-        while True:
-            await asyncio.sleep(tick)
-    
-            # 1) Ne donner la présence XP que si stream LIVE
-            try:
-                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
-                if r.status_code != 200 or not r.json().get("is_live", False):
-                    continue
-            except Exception as e:
-                print("[BOT] is_live check error:", e, flush=True)
-                continue
-    
-            # 2) Récupérer la liste des chatters (présents dans le chat)
-            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-            if not chan:
-                continue
-    
-            try:
-                chatters = getattr(chan, "chatters", None)
-                if not chatters:
-                    continue
-    
-                logins: list[str] = []
-    
-                # chatters peut être dict[str, Chatter] OU set/list[Chatter]
-                if isinstance(chatters, dict):
-                    logins = [str(k).strip().lower() for k in chatters.keys() if str(k).strip()]
-                else:
-                    for c in chatters:
-                        name = None
-    
-                        if hasattr(c, "name") and c.name:
-                            name = c.name
-                        elif hasattr(c, "username") and c.username:
-                            name = c.username
-                        elif hasattr(c, "display_name") and c.display_name:
-                            name = c.display_name
-    
-                        if name:
-                            logins.append(str(name).strip().lower())
-    
-                # Dédup + nettoyage
-                logins = list({u for u in logins if u})
-    
-            except Exception as e:
-                print("[BOT] chatters read error:", e, flush=True)
-                continue
-    
-            if not logins:
-                continue
-    
-            # 3) Ignorer le bot (et autres bots optionnels)
-            bot_login = os.environ.get("TWITCH_BOT_LOGIN", "").strip().lower()
-            if bot_login:
-                logins = [u for u in logins if u != bot_login]
-            if ignore_bots:
-                logins = [u for u in logins if u not in ignore_bots]
-    
-            if not logins:
-                continue
-    
-            print("[BOT] chatters=", 0 if not chatters else len(chatters), flush=True)
-            print(f"[BOT] Presence tick: live OK, chatters={len(logins)}, base={base_amount} XP (bonheur scaling)", flush=True)
-            print("[BOT] sample logins:", logins[:5], flush=True)
-    
-            # 4) Récupérer le bonheur de tout le monde en 1 appel (batch)
-            try:
-                rr = requests.post(
-                    API_HAPPINESS_BATCH_URL,
-                    headers={"X-API-Key": API_KEY},
-                    json={"logins": logins},
-                    timeout=3,
-                )
-                if rr.status_code == 200:
-                    data = rr.json()
-                    happ_map = data.get("happiness", {}) if isinstance(data, dict) else {}
-                else:
-                    print("[BOT] happiness batch failed:", rr.status_code, (rr.text or "")[:120], flush=True)
-                    happ_map = {}
-            except Exception as e:
-                print("[BOT] happiness batch error:", e, flush=True)
-                happ_map = {}
-    
-            # 5) Donner XP à tous les présents, modulé par bonheur
-            for ulogin in logins:
-                try:
-                    h = int(happ_map.get(ulogin, 50))  # défaut 50
-                    mult = happiness_multiplier(h)
-                    give = max(1, int(round(base_amount * mult)))
-    
-                    resp = requests.post(
-                        API_XP_URL,
-                        headers={"X-API-Key": API_KEY},
-                        json={"twitch_login": ulogin, "amount": give},
-                        timeout=2,
-                    )
-                    if resp.status_code != 200:
-                        print(
-                            "[BOT] Presence XP failed:",
-                            resp.status_code,
-                            (resp.text or "")[:120],
-                            "login=",
-                            ulogin,
-                            flush=True,
-                        )
-                except Exception as e:
-                    print("[BOT] Presence API error:", e, flush=True)
+   async def presence_loop(self):
+    tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
+    base_amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
 
+    ignore_bots = set(
+        x.strip().lower()
+        for x in os.environ.get("PRESENCE_IGNORE_BOTS", "").split(",")
+        if x.strip()
+    )
+
+    while True:
+        await asyncio.sleep(tick)
+
+        # 1) Ne donner la présence XP que si stream LIVE
+        try:
+            r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+            if r.status_code != 200 or not r.json().get("is_live", False):
+                continue
+        except Exception as e:
+            print("[BOT] is_live check error:", e, flush=True)
+            continue
+
+        # 2) Récupérer la liste des chatters (présents dans le chat)
+        chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+        if not chan:
+            continue
+
+        try:
+            chatters = getattr(chan, "chatters", None)
+            if not chatters:
+                continue
+
+            logins: list[str] = []
+
+            if isinstance(chatters, dict):
+                logins = [str(k).strip().lower() for k in chatters.keys() if str(k).strip()]
+            else:
+                for c in chatters:
+                    name = None
+                    if hasattr(c, "name") and c.name:
+                        name = c.name
+                    elif hasattr(c, "username") and c.username:
+                        name = c.username
+                    elif hasattr(c, "display_name") and c.display_name:
+                        name = c.display_name
+                    if name:
+                        logins.append(str(name).strip().lower())
+
+            logins = list({u for u in logins if u})
+
+        except Exception as e:
+            print("[BOT] chatters read error:", e, flush=True)
+            continue
+
+        if not logins:
+            continue
+
+        # 3) Ignorer le bot (et autres bots optionnels)
+        bot_login = os.environ.get("TWITCH_BOT_LOGIN", "").strip().lower()
+        if bot_login:
+            logins = [u for u in logins if u != bot_login]
+        if ignore_bots:
+            logins = [u for u in logins if u not in ignore_bots]
+
+        if not logins:
+            continue
+
+        print("[BOT] chatters=", 0 if not chatters else len(chatters), flush=True)
+        print(f"[BOT] Presence tick: live OK, chatters={len(logins)}, base={base_amount} XP (bonheur scaling)", flush=True)
+        print("[BOT] sample logins:", logins[:5], flush=True)
+
+        # 3.5) 🔥 NOUVEAU : enregistrer les présents pour la session de stream (streak)
+        # (silencieux, pas de spam)
+        try:
+            pb = requests.post(
+                API_STREAM_PRESENT_BATCH_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"logins": logins},
+                timeout=3,
+            )
+            if pb.status_code != 200:
+                print("[BOT] present_batch failed:", pb.status_code, (pb.text or "")[:120], flush=True)
+        except Exception as e:
+            print("[BOT] present_batch error:", e, flush=True)
+
+        # 4) Récupérer le bonheur de tout le monde en 1 appel (batch)
+        try:
+            rr = requests.post(
+                API_HAPPINESS_BATCH_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"logins": logins},
+                timeout=3,
+            )
+            if rr.status_code == 200:
+                data = rr.json()
+                happ_map = data.get("happiness", {}) if isinstance(data, dict) else {}
+            else:
+                print("[BOT] happiness batch failed:", rr.status_code, (rr.text or "")[:120], flush=True)
+                happ_map = {}
+        except Exception as e:
+            print("[BOT] happiness batch error:", e, flush=True)
+            happ_map = {}
+
+        # 5) Donner XP à tous les présents, modulé par bonheur
+        for ulogin in logins:
+            try:
+                h = int(happ_map.get(ulogin, 50))
+                mult = happiness_multiplier(h)
+                give = max(1, int(round(base_amount * mult)))
+
+                resp = requests.post(
+                    API_XP_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json={"twitch_login": ulogin, "amount": give},
+                    timeout=2,
+                )
+                if resp.status_code != 200:
+                    print("[BOT] Presence XP failed:", resp.status_code, (resp.text or "")[:120], "login=", ulogin, flush=True)
+
+            except Exception as e:
+                print("[BOT] Presence API error:", e, flush=True)
 
     # ------------------------------------------------------------------------
     # Drops announce loop (poll_result)
@@ -811,6 +814,7 @@ class Bot(commands.Bot):
         xp_to_next = int(data.get("xp_to_next", 0))
         happy = int(data.get("happiness", 0))
         happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
+        streak = int(data.get("streak_count", 0))
 
 
         lineage = data.get("lineage_key")
@@ -829,8 +833,10 @@ class Bot(commands.Bot):
         header = f"👁️ @{ctx.author.name}"
         state = f"{stage_label(stage)} | {xp_total} XP"
         prog = "🏁 Stade max" if nxt == "Max" else f"⏳ {nxt} dans {xp_to_next} XP"
+        streak_txt = f" 🔥 Fidélité ManaCorp : {streak}" if streak > 0 else " streams !"
 
-        await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}]")
+
+        await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}] | {streak_txt}")
 
 
     # ------------------------------------------------------------------------
