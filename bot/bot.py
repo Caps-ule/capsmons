@@ -727,63 +727,62 @@ class Bot(commands.Bot):
         # ------------------------------------------------------------------------
         # Drops announce loop (poll_result)
         # ------------------------------------------------------------------------
-        async def drop_announce_loop(self):
+    async def drop_announce_loop(self):
+        await asyncio.sleep(2)
+    
+        while True:
             await asyncio.sleep(2)
-        
-            while True:
-                await asyncio.sleep(2)
-        
-                try:
-                    r = requests.get(
-                        API_DROP_POLL_URL,
-                        headers={"X-API-Key": API_KEY},
-                        timeout=2,
-                    )
-                    if r.status_code != 200:
-                        continue
-                    data = r.json()
-                except Exception:
+    
+            try:
+                r = requests.get(
+                    API_DROP_POLL_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=2,
+                )
+                if r.status_code != 200:
                     continue
-        
-                if not data.get("announce", False):
-                    continue
-        
-                mode = data.get("mode", "random")
-                status = data.get("status", "expired")
-                title = data.get("title", "un objet")
-                winners = data.get("winners", []) or []
-                xp_bonus = int(data.get("xp_bonus", 0))
-                ticket_key = data.get("ticket_key", "ticket_basic")
-                ticket_qty = int(data.get("ticket_qty", 1))
-        
-                sig = f"{mode}|{status}|{title}|{','.join(winners)}|{xp_bonus}|{ticket_key}|{ticket_qty}"
-                if _last_drop_announce["sig"] == sig:
-                    continue
-                _last_drop_announce["sig"] = sig
-        
-                if status != "resolved":
-                    rp_key = "drop.fail.coop" if mode == "coop" else "drop.fail.timeout"
-                    line = await rp_get(rp_key) or "⌛ Trop tard…"
-                    msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners), viewer="")
+                data = r.json()
+            except Exception:
+                continue
+    
+            if not data.get("announce", False):
+                continue
+    
+            mode = data.get("mode", "random")
+            status = data.get("status", "expired")
+            title = data.get("title", "un objet")
+            winners = data.get("winners", []) or []
+            xp_bonus = int(data.get("xp_bonus", 0))
+            ticket_key = data.get("ticket_key", "ticket_basic")
+            ticket_qty = int(data.get("ticket_qty", 1))
+    
+            sig = f"{mode}|{status}|{title}|{','.join(winners)}|{xp_bonus}|{ticket_key}|{ticket_qty}"
+            if _last_drop_announce["sig"] == sig:
+                continue
+            _last_drop_announce["sig"] = sig
+    
+            if status != "resolved":
+                rp_key = "drop.fail.coop" if mode == "coop" else "drop.fail.timeout"
+                line = await rp_get(rp_key) or "⌛ Trop tard…"
+                msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners), viewer="")
+            else:
+                if mode == "first":
+                    rp_key = "drop.win.first"
+                elif mode == "random":
+                    rp_key = "drop.win.random"
                 else:
-                    if mode == "first":
-                        rp_key = "drop.win.first"
-                    elif mode == "random":
-                        rp_key = "drop.win.random"
-                    else:
-                        rp_key = "drop.win.coop"
-        
-                    line = await rp_get(rp_key) or "🏆 {viewer} gagne {title} !"
-                    viewer = f"@{winners[0]}" if winners else ""
-                    msg = rp_format(line, viewer=viewer, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners))
-        
-                try:
-                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                    if chan:
-                        await chan.send(msg)
-                except Exception:
-                    pass
-
+                    rp_key = "drop.win.coop"
+    
+                line = await rp_get(rp_key) or "🏆 {viewer} gagne {title} !"
+                viewer = f"@{winners[0]}" if winners else ""
+                msg = rp_format(line, viewer=viewer, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners))
+    
+            try:
+                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                if chan:
+                    await chan.send(msg)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------------
     # Commande: !creature
