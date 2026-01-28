@@ -570,6 +570,37 @@ async def eventsub_handler(request: Request):
         return "ok"
 
     return "ok"
+# =============================================================================
+# BONHEUR
+# =============================================================================
+
+@app.post("/internal/happiness/batch")
+def happiness_batch(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    logins = payload.get("logins", [])
+    if not isinstance(logins, list) or len(logins) > 500:
+        raise HTTPException(status_code=400, detail="Invalid logins")
+
+    clean = [str(x).strip().lower() for x in logins if str(x).strip()]
+    if not clean:
+        return {"ok": True, "happiness": {}}
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT twitch_login, COALESCE(happiness, 50)
+                FROM creatures
+                WHERE twitch_login = ANY(%s);
+            """, (clean,))
+            rows = cur.fetchall()
+
+    # défaut 50 si pas de creature
+    out = {u: 50 for u in clean}
+    for login, h in rows:
+        out[str(login).lower()] = int(h or 50)
+
+    return {"ok": True, "happiness": out}
 
 
 # =============================================================================
