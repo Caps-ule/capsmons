@@ -427,37 +427,67 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
 
 
-    @commands.command(name="use")
-    async def use_item(self, ctx: commands.Context):
-        login = ctx.author.name.lower()
-        parts = ctx.message.content.strip().split()
-    
-        if len(parts) < 2:
-            await ctx.send(f"@{ctx.author.name} usage: !use nom_objet")
+@commands.command(name="use")
+async def use_item(self, ctx: commands.Context):
+    login = ctx.author.name.lower()
+    parts = ctx.message.content.strip().split()
+
+    if len(parts) < 2:
+        await ctx.send(f"@{ctx.author.name} usage: !use <item_key>")
+        return
+
+    item_key = parts[1].strip().lower()
+
+    try:
+        r = requests.post(
+            "http://api:8000/internal/item/use",
+            headers={"X-API-Key": API_KEY},
+            json={"twitch_login": login, "item_key": item_key},
+            timeout=2,
+        )
+
+        # Erreurs API avec détail exploitable
+        if r.status_code != 200:
+            msg = "⛔ Objet indisponible."
+            try:
+                d = r.json()
+                detail = str(d.get("detail", "")).lower()
+                if "unknown item" in detail:
+                    msg = "⛔ Objet inconnu."
+                elif "no item" in detail:
+                    msg = "⛔ Tu n’en as pas dans ton inventaire."
+            except Exception:
+                pass
+
+            await ctx.send(f"@{ctx.author.name} {msg}")
             return
-    
-        item_key = parts[1]
-    
-        try:
-            r = requests.post(
-                "http://api:8000/internal/item/use",
-                headers={"X-API-Key": API_KEY},
-                json={"twitch_login": login, "item_key": item_key},
-                timeout=2,
-            )
-            if r.status_code != 200:
-                await ctx.send(f"@{ctx.author.name} ⛔ Objet indisponible.")
-                return
-    
-            data = r.json()
-        except Exception:
-            await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
-            return
-    
-        if data.get("effect") == "xp":
-            await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{data['amount']} XP ⚡")
-        else:
-            await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+
+        data = r.json()
+
+    except Exception as e:
+        print("[BOT] use error:", e, flush=True)
+        await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
+        return
+
+    effect = data.get("effect")
+
+    # XP capsule
+    if effect == "xp":
+        gained = int(data.get("xp_gain", 0))
+        await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{gained} XP ⚡")
+        return
+
+    # Bonheur
+    if effect == "happiness":
+        gain_h = int(data.get("happiness_gain", 0))
+        after_h = int(data.get("happiness_after", 0))
+        name = data.get("item_name", item_key)
+        await ctx.send(f"@{ctx.author.name} 🥰 {name} utilisé ! +{gain_h} bonheur (❤️ {after_h}%).")
+        return
+
+    # Fallback
+    await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+
 
     # ------------------------------------------------------------------------
     # DROP AUTO
