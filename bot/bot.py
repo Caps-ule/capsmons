@@ -87,6 +87,20 @@ async def rp_get(key: str) -> str | None:
         return None
     return random.choice(lines)
 
+    
+def happiness_multiplier(h: int) -> float:
+    # 0–24  : un peu moins
+    if h < 25:
+        return 0.8
+    # 25–74 : normal
+    if h < 75:
+        return 1.0
+    # 75–89 : bonus
+    if h < 90:
+        return 1.3
+    # 90–100 : gros bonus
+    return 1.6
+
 
 # ============================================================================
 # BOT
