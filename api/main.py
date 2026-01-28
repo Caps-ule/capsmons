@@ -1202,8 +1202,18 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
     if not login:
         raise HTTPException(status_code=400, detail="Missing login")
 
-    xp_total, stage, lineage_key, cm_key = 0, 0, None, None
-    form_name, form_image_url, form_sound_url = None, None, None
+    # Valeurs par défaut sûres
+    xp_total = 0
+    stage = 0
+    lineage_key = None
+    cm_key = None
+    happiness = 50
+
+    form_name = None
+    form_image_url = None
+    form_sound_url = None
+
+    streak_count = 0
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -1214,13 +1224,21 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
                 WHERE twitch_login=%s;
             """, (login,))
             row = cur.fetchone()
+
             if row:
-                xp_total, stage, lineage_key, cm_key, happiness = row
+                xp_total = int(row[0] or 0)
+                stage = int(row[1] or 0)
+                lineage_key = row[2]
+                cm_key = row[3]
+                happiness = int(row[4] or 0)
 
-            stage = int(stage or 0)
-            xp_total = int(xp_total or 0)
+            # 2) streak (si existe)
+            cur.execute("SELECT streak_count FROM streaks WHERE twitch_login=%s;", (login,))
+            srow = cur.fetchone()
+            if srow:
+                streak_count = int(srow[0] or 0)
 
-            # 2) forme (uniquement si stage >= 1 et cm_key défini)
+            # 3) forme (uniquement si stage >= 1 et cm_key défini)
             if stage >= 1 and cm_key:
                 cur.execute("""
                     SELECT name, image_url, sound_url
@@ -1229,13 +1247,12 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
                 """, (cm_key, stage))
                 f = cur.fetchone()
                 if f:
-                    form_name, form_image_url, form_sound_url = f
-            cur.execute("SELECT streak_count FROM streaks WHERE twitch_login=%s;", (login,))
-            srow = cur.fetchone()
-            if srow:
-                streak_count = int(srow[0] or 0)
-                nxt, label = next_threshold(xp_total)
-                remaining = 0 if nxt is None else max(0, int(nxt) - xp_total)
+                    form_name = f[0]
+                    form_image_url = f[1]
+                    form_sound_url = f[2]
+
+    nxt, label = next_threshold(xp_total)
+    remaining = 0 if nxt is None else max(0, int(nxt) - xp_total)
 
     return {
         "twitch_login": login,
@@ -1243,14 +1260,18 @@ def creature_state(login: str, x_api_key: str | None = Header(default=None)):
         "stage": stage,
         "lineage_key": lineage_key,
         "cm_key": cm_key,
+
         "form_name": form_name,
         "form_image_url": form_image_url,
         "form_sound_url": form_sound_url,
+
         "next": label,
         "xp_to_next": remaining,
-        "happiness": int(happiness or 0),
-        "streak_count": int(streak_count),
+
+        "happiness": happiness,
+        "streak_count": streak_count,
     }
+
 
 
 
@@ -3186,7 +3207,7 @@ def get_current_session_id(conn) -> int | None:
         return int(row[0])
     except Exception:
         return None
-
+        
 @app.post("/internal/stream/present_batch")
 def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
