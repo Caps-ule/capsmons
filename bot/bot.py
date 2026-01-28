@@ -832,10 +832,20 @@ class Bot(commands.Bot):
         header = f"👁️ @{ctx.author.name}"
         state = f"{stage_label(stage)} | {xp_total} XP"
         prog = "🏁 Stade max" if nxt == "Max" else f"⏳ {nxt} dans {xp_to_next} XP"
-        streak_txt = f" 🔥 Fidélité ManaCorp : {streak}" if streak > 0 else " streams !"
+        
+        # bonheur
+        happy = int(data.get("happiness", 0))
+        happy = max(0, min(100, happy))
+        happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
+        
+        # streak
+        streak = int(data.get("streak_count", 0))
+        streak_txt = f"🔥 Fidélité ManaCorp : {streak} stream(s)" if streak > 0 else "🔥 Fidélité ManaCorp : 0 stream"
+        
+        await ctx.send(
+            f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}] | {streak_txt}"
+        )
 
-
-        await ctx.send(f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}] | {streak_txt}")
 
 
     # ------------------------------------------------------------------------
