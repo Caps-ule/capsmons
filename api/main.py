@@ -700,7 +700,7 @@ def happiness_decay(x_api_key: str | None = Header(default=None)):
         conn.commit()
 
     return {"ok": True, "skipped": False, "date": today}
-===================================================================
+#===================================================================
 # Endpoints essentiels (health + is_live)
 # =============================================================================
 @app.get('/health')
