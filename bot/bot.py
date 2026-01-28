@@ -87,7 +87,7 @@ async def rp_get(key: str) -> str | None:
         return None
     return random.choice(lines)
 
-    
+
 def happiness_multiplier(h: int) -> float:
     # 0–24  : un peu moins
     if h < 25:
@@ -529,7 +529,7 @@ class Bot(commands.Bot):
                 chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
                 if chan:
                     rp_key = f"drop.spawn.{payload['mode']}"
-                    line = await rp_get(rp_key) or "✨ Drop automatique : {title}"
+                    line = await rp_get(rp_key) or "✨ Drop automatique : {title}. Attrape le avec !grab."
                     msg = rp_format(line, title=payload["title"], xp=payload["xp_bonus"],
                                     ticket_key=payload["ticket_key"], ticket_qty=payload["ticket_qty"])
                     await chan.send(msg)
