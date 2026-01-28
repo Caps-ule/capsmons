@@ -603,7 +603,104 @@ def happiness_batch(payload: dict, x_api_key: str | None = Header(default=None))
     return {"ok": True, "happiness": out}
 
 
-# =============================================================================
+@app.post("/internal/happiness/decay")
+def happiness_decay(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Date du jour (Paris) pour éviter un double run dans la même journée
+            cur.execute("SELECT to_char(now() AT TIME ZONE 'Europe/Paris', 'YYYY-MM-DD');")
+            today = cur.fetchone()[0]
+
+            cur.execute("SELECT value FROM kv WHERE key='happiness_decay_last';")
+            row = cur.fetchone()
+            last = row[0] if row else None
+
+            if last == today:
+                return {"ok": True, "skipped": True, "reason": "already_run_today", "date": today}
+
+            # 1) baisse de base : -1 pour tous (min 0)
+            cur.execute("""
+                UPDATE creatures
+                SET happiness = GREATEST(0, COALESCE(happiness, 50) - 1),
+                    updated_at = now();
+            """)
+
+            # 2) baisse supplémentaire pour inactifs 7 jours : -2 en plus (total -3)
+            cur.execute("""
+                UPDATE creatures c
+                SET happiness = GREATEST(0, COALESCE(c.happiness, 50) - 2),
+                    updated_at = now()
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM xp_events e
+                    WHERE e.twitch_login = c.twitch_login
+                      AND e.created_at >= now() - interval '7 days'
+                );
+            """)
+
+            # enregistrer le run du jour
+            cur.execute("""
+                INSERT INTO kv (key, value)
+                VALUES ('happiness_decay_last', %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = now();
+            """, (today,))
+
+        conn.commit()
+
+    return {"ok": True, "skipped": False, "date": today}
+
+# =========@app.post("/internal/happiness/decay")
+def happiness_decay(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Date du jour (Paris) pour éviter un double run dans la même journée
+            cur.execute("SELECT to_char(now() AT TIME ZONE 'Europe/Paris', 'YYYY-MM-DD');")
+            today = cur.fetchone()[0]
+
+            cur.execute("SELECT value FROM kv WHERE key='happiness_decay_last';")
+            row = cur.fetchone()
+            last = row[0] if row else None
+
+            if last == today:
+                return {"ok": True, "skipped": True, "reason": "already_run_today", "date": today}
+
+            # 1) baisse de base : -1 pour tous (min 0)
+            cur.execute("""
+                UPDATE creatures
+                SET happiness = GREATEST(0, COALESCE(happiness, 50) - 1),
+                    updated_at = now();
+            """)
+
+            # 2) baisse supplémentaire pour inactifs 7 jours : -2 en plus (total -3)
+            cur.execute("""
+                UPDATE creatures c
+                SET happiness = GREATEST(0, COALESCE(c.happiness, 50) - 2),
+                    updated_at = now()
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM xp_events e
+                    WHERE e.twitch_login = c.twitch_login
+                      AND e.created_at >= now() - interval '7 days'
+                );
+            """)
+
+            # enregistrer le run du jour
+            cur.execute("""
+                INSERT INTO kv (key, value)
+                VALUES ('happiness_decay_last', %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = now();
+            """, (today,))
+
+        conn.commit()
+
+    return {"ok": True, "skipped": False, "date": today}
+===================================================================
 # Endpoints essentiels (health + is_live)
 # =============================================================================
 @app.get('/health')

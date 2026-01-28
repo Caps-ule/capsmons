@@ -23,6 +23,8 @@ API_DROP_POLL_URL = "http://api:8000/internal/drop/poll_result"
 API_DROP_SPAWN_URL = "http://api:8000/internal/drop/spawn"
 API_INV_URL = "http://api:8000/internal/inventory"
 API_HAPPINESS_BATCH_URL = "http://api:8000/internal/happiness/batch"
+API_HAPPINESS_DECAY_URL = "http://api:8000/internal/happiness/decay"
+
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
 # ============================================================================
@@ -154,6 +156,10 @@ class Bot(commands.Bot):
 
         # Drops auto
         self.loop.create_task(self.auto_drop_loop())
+
+        # Decay Happiness auto
+        self.loop.create_task(self.happiness_decay_loop())
+
 
     
 
@@ -487,6 +493,31 @@ class Bot(commands.Bot):
     
         # Fallback
         await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+
+    async def happiness_decay_loop(self):
+        # laisse le temps au bot/containers de démarrer
+        await asyncio.sleep(60)
+    
+        while True:
+            # on tente 1 fois / heure (l'API skip si déjà fait aujourd'hui)
+            await asyncio.sleep(3600)
+    
+            try:
+                r = requests.post(
+                    API_HAPPINESS_DECAY_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=5,
+                )
+                if r.status_code != 200:
+                    print("[BOT] happiness decay fail:", r.status_code, (r.text or "")[:160], flush=True)
+                    continue
+    
+                data = r.json()
+                if not data.get("skipped", False):
+                    print("[BOT] happiness decay ran:", data.get("date"), flush=True)
+    
+            except Exception as e:
+                print("[BOT] happiness decay error:", e, flush=True)
 
 
     # ------------------------------------------------------------------------
