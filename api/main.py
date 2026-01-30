@@ -2947,121 +2947,122 @@ def overlay_state():
           "value": int(happy),
           "pct": max(0, min(100, int(happy))),
         }
-    }@app.post("/internal/item/use")
-def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
-
-    login = str(payload.get("twitch_login", "")).strip().lower()
-    item_key = str(payload.get("item_key", "")).strip().lower()
-
-    if not login or not item_key:
-        raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
-
-    # valeurs de retour
-    item_name = item_key
-    happiness_gain = 0
-    new_happiness = None
-    xp_gain = 0
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # 1️⃣ Vérifier que l’item existe
-            cur.execute(
-                "SELECT name, happiness_gain FROM items WHERE key=%s;",
-                (item_key,)
-            )
-            item = cur.fetchone()
-            if not item:
-                raise HTTPException(status_code=400, detail="Unknown item")
-
-            item_name, happiness_gain = item
-            happiness_gain = int(happiness_gain or 0)
-
-            # 2️⃣ Vérifier l’inventaire
-            cur.execute(
-                "SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;",
-                (login, item_key)
-            )
-            row = cur.fetchone()
-            if not row or int(row[0]) <= 0:
-                raise HTTPException(status_code=400, detail="No item in inventory")
-
-            # 3️⃣ Consommer 1 objet
-            cur.execute(
-                """
-                UPDATE inventory
-                SET qty = qty - 1, updated_at = now()
-                WHERE twitch_login=%s AND item_key=%s;
-                """,
-                (login, item_key)
-            )
-
-            # 4️⃣ S’assurer que la créature existe
-            cur.execute(
-                """
-                INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
-                VALUES (%s, 0, 0, 50)
-                ON CONFLICT (twitch_login) DO NOTHING;
-                """,
-                (login,)
-            )
-
-            # 5️⃣ Appliquer l’effet de l’objet
-            if item_key == "xp_capsule":
-                # 💊 Capsule XP
-                xp_gain = 30
-                grant_xp(login, xp_gain)
-
-                # bonheur inchangé
+    }
+    @app.post("/internal/item/use")
+    def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
+        require_internal_key(x_api_key)
+    
+        login = str(payload.get("twitch_login", "")).strip().lower()
+        item_key = str(payload.get("item_key", "")).strip().lower()
+    
+        if not login or not item_key:
+            raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
+    
+        # valeurs de retour
+        item_name = item_key
+        happiness_gain = 0
+        new_happiness = None
+        xp_gain = 0
+    
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                # 1️⃣ Vérifier que l’item existe
                 cur.execute(
-                    "SELECT happiness FROM creatures WHERE twitch_login=%s;",
-                    (login,)
+                    "SELECT name, happiness_gain FROM items WHERE key=%s;",
+                    (item_key,)
                 )
-                new_happiness = int(cur.fetchone()[0] or 0)
-
-            else:
-                # 🥰 Objet de bonheur
+                item = cur.fetchone()
+                if not item:
+                    raise HTTPException(status_code=400, detail="Unknown item")
+    
+                item_name, happiness_gain = item
+                happiness_gain = int(happiness_gain or 0)
+    
+                # 2️⃣ Vérifier l’inventaire
                 cur.execute(
-                    "SELECT happiness FROM creatures WHERE twitch_login=%s;",
-                    (login,)
+                    "SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;",
+                    (login, item_key)
                 )
-                current = int(cur.fetchone()[0] or 0)
-
-                new_happiness = max(0, min(100, current + happiness_gain))
-
+                row = cur.fetchone()
+                if not row or int(row[0]) <= 0:
+                    raise HTTPException(status_code=400, detail="No item in inventory")
+    
+                # 3️⃣ Consommer 1 objet
                 cur.execute(
                     """
-                    UPDATE creatures
-                    SET happiness=%s, updated_at=now()
-                    WHERE twitch_login=%s;
+                    UPDATE inventory
+                    SET qty = qty - 1, updated_at = now()
+                    WHERE twitch_login=%s AND item_key=%s;
                     """,
-                    (new_happiness, login)
+                    (login, item_key)
                 )
-
-        conn.commit()
-
-    # 6️⃣ Réponse API claire pour le bot
-    if item_key == "xp_capsule":
+    
+                # 4️⃣ S’assurer que la créature existe
+                cur.execute(
+                    """
+                    INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
+                    VALUES (%s, 0, 0, 50)
+                    ON CONFLICT (twitch_login) DO NOTHING;
+                    """,
+                    (login,)
+                )
+    
+                # 5️⃣ Appliquer l’effet de l’objet
+                if item_key == "xp_capsule":
+                    # 💊 Capsule XP
+                    xp_gain = 30
+                    grant_xp(login, xp_gain)
+    
+                    # bonheur inchangé
+                    cur.execute(
+                        "SELECT happiness FROM creatures WHERE twitch_login=%s;",
+                        (login,)
+                    )
+                    new_happiness = int(cur.fetchone()[0] or 0)
+    
+                else:
+                    # 🥰 Objet de bonheur
+                    cur.execute(
+                        "SELECT happiness FROM creatures WHERE twitch_login=%s;",
+                        (login,)
+                    )
+                    current = int(cur.fetchone()[0] or 0)
+    
+                    new_happiness = max(0, min(100, current + happiness_gain))
+    
+                    cur.execute(
+                        """
+                        UPDATE creatures
+                        SET happiness=%s, updated_at=now()
+                        WHERE twitch_login=%s;
+                        """,
+                        (new_happiness, login)
+                    )
+    
+            conn.commit()
+    
+        # 6️⃣ Réponse API claire pour le bot
+        if item_key == "xp_capsule":
+            return {
+                "ok": True,
+                "twitch_login": login,
+                "item_key": item_key,
+                "item_name": item_name,
+                "effect": "xp",
+                "xp_gain": xp_gain,
+                "happiness_after": new_happiness,
+            }
+    
         return {
             "ok": True,
             "twitch_login": login,
             "item_key": item_key,
             "item_name": item_name,
-            "effect": "xp",
-            "xp_gain": xp_gain,
+            "effect": "happiness",
+            "happiness_gain": happiness_gain,
             "happiness_after": new_happiness,
         }
-
-    return {
-        "ok": True,
-        "twitch_login": login,
-        "item_key": item_key,
-        "item_name": item_name,
-        "effect": "happiness",
-        "happiness_gain": happiness_gain,
-        "happiness_after": new_happiness,
-    }
-
+    
 
 # =============================================================================
 # ADMIN: Overlay Show
