@@ -562,7 +562,7 @@ class Bot(commands.Bot):
                 "mode": os.environ.get("AUTO_DROP_MODE", "random").strip().lower(),
                 "title": os.environ.get("AUTO_DROP_TITLE", "Capsule XP").strip(),
                 "media_url": os.environ.get("AUTO_DROP_MEDIA_URL", "").strip(),
-                "duration_seconds": int(os.environ.get("AUTO_DROP_DURATION_SECONDS", "25")),
+                "duration_seconds": int(os.environ.get("AUTO_DROP_DURATION_SECONDS", "40")),
                 "xp_bonus": int(os.environ.get("AUTO_DROP_XP_BONUS", "30")),
                 "ticket_key": os.environ.get("AUTO_DROP_TICKET_KEY", "xp_capsule").strip(),
                 "ticket_qty": int(os.environ.get("AUTO_DROP_TICKET_QTY", "1")),
