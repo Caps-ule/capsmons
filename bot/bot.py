@@ -200,7 +200,25 @@ class Bot(commands.Bot):
     
         await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
 
-    @commands.command(name="collection")
+    def _lineage_label(lk: str) -> str:
+        lk = (lk or "").strip().lower()
+        return {
+            "biolab": "Biolab",
+            "securite": "Sécurité",
+            "extraction": "Extraction",
+            "limited": "Limited",
+            "egg": "Tech",   # si tu gardes une lignée "egg" pour debug
+        }.get(lk, lk or "—")
+    
+    
+    def _short_stage(s: int) -> str:
+        try:
+            s = int(s)
+        except Exception:
+            s = 0
+        return f"S{s}"
+    
+    
     async def collection(self, ctx: commands.Context):
         login = ctx.author.name.lower()
     
@@ -214,36 +232,56 @@ class Bot(commands.Bot):
                 await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
                 return
             data = r.json()
-        except Exception as e:
-            print("[BOT] collection error:", e, flush=True)
+        except Exception:
             await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
             return
     
-        active = (data.get("active_cm_key") or "").strip().lower()
         items = data.get("items", []) or []
-    
         if not items:
-            await ctx.send(f"@{ctx.author.name} 📦 Collection vide. (Tu auras des œufs très rares via drops)")
+            await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
             return
     
-        # format compact : cm_key(stage,xp) + marquer l’actif
-        # On limite à 10 pour éviter les pavés
-        shown = []
-        for it in items[:10]:
-            cm_key = str(it.get("cm_key", "")).lower()
-            stage = int(it.get("stage", 0) or 0)
-            xp = int(it.get("xp_total", 0) or 0)
-            mark = "⭐" if cm_key and cm_key == active else ""
-            shown.append(f"{mark}{cm_key}(S{stage}, {xp}xp)")
+        # Trouver l'actif
+        active = None
+        for it in items:
+            if bool(it.get("is_active")):
+                active = it
+                break
     
-        more = ""
-        if len(items) > 10:
-            more = f" … +{len(items) - 10}"
+        # Construire une liste user-friendly
+        parts = []
+        for it in items[:12]:
+            cid = it.get("id")
+            cm_key = (it.get("cm_key") or "").strip().lower()
+            cm_name = (it.get("cm_name") or cm_key).strip()
+            lk = _lineage_label(it.get("lineage_key"))
+            stage = _short_stage(it.get("stage", 0))
+            xp = int(it.get("xp_total", 0) or 0)
+    
+            star = "★" if bool(it.get("is_active")) else "·"
+    
+            if cm_key == "egg":
+                label = f"🥚 Œuf {lk}"
+            else:
+                label = f"👾 {cm_name}"
+    
+            # ex: ★[350] 🥚 Œuf Biolab S0 137xp
+            parts.append(f"{star}[{cid}] {label} {stage} {xp}xp")
     
         if active:
-            await ctx.send(f"@{ctx.author.name} 📦 Actif: {active} | {', '.join(shown)}{more}")
+            a_id = active.get("id")
+            a_key = (active.get("cm_key") or "").strip().lower()
+            a_name = (active.get("cm_name") or a_key).strip()
+            a_lk = _lineage_label(active.get("lineage_key"))
+    
+            active_label = f"🥚 Œuf {a_lk}" if a_key == "egg" else f"👾 {a_name}"
+            await ctx.send(
+                f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  |  Collection: " + " | ".join(parts)
+            )
         else:
-            await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif | {', '.join(shown)}{more}")
+            await ctx.send(
+                f"@{ctx.author.name} 📦 Aucun compagnon actif  |  Collection: " + " | ".join(parts)
+            )
 
     @commands.command(name="companion")
     async def companion(self, ctx: commands.Context):
