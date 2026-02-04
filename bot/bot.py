@@ -200,9 +200,6 @@ class Bot(commands.Bot):
     
         await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
 
-    
-        await ctx.send(f"@{ctx.author.name} 👾 Tes CM: " + " | ".join(parts))
-
     @commands.command(name="collection")
     async def collection(self, ctx: commands.Context):
         login = ctx.author.name.lower()
