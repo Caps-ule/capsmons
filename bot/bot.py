@@ -111,6 +111,16 @@ def happiness_multiplier(h: int) -> float:
     # 90–100 : gros bonus
     return 1.6
 
+def lineage_label(lk: str | None) -> str:
+    if not lk:
+        return "Inconnue"
+    return {
+        "biolab": "Biolab",
+        "securite": "Sécurité",
+        "extraction": "Extraction",
+        "limited": "Limited",
+    }.get(lk, lk)
+
 
 # ============================================================================
 # BOT
@@ -148,6 +158,8 @@ class Bot(commands.Bot):
         # format compact : item xqty
         txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
         await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
+
+
     @commands.command(name="cmlist")
     async def cmlist(self, ctx: commands.Context):
         login = ctx.author.name.lower()
@@ -171,11 +183,23 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
             return
     
-        # format compact: [★] key (Sx, XP)
         parts = []
         for it in cms[:12]:
             star = "★" if it.get("is_active") else "·"
-            parts.append(f"{star} {it.get('cm_key')} (S{int(it.get('stage',0))}, {int(it.get('xp_total',0))}xp)")
+            cid = int(it.get("id", 0))
+            cm_key = str(it.get("cm_key", ""))
+            cm_name = str(it.get("cm_name", cm_key))
+            lk = it.get("lineage_key", None)
+    
+            if cm_key == "egg":
+                label = f"🥚 Œuf {lineage_label(lk)}"
+            else:
+                label = cm_name
+    
+            parts.append(f"{star} [{cid}] {label} — S{int(it.get('stage',0))} • {int(it.get('xp_total',0))}xp")
+    
+        await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
+
     
         await ctx.send(f"@{ctx.author.name} 👾 Tes CM: " + " | ".join(parts))
 
@@ -224,53 +248,94 @@ class Bot(commands.Bot):
         else:
             await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif | {', '.join(shown)}{more}")
 
-    @commands.command(name="companion")
-    async def companion(self, ctx: commands.Context):
-        login = ctx.author.name.lower()
-        parts = (ctx.message.content or "").strip().split()
-    
-        # Sans argument => on affiche la collection (pratique)
-        if len(parts) < 2:
-            await self.collection(ctx)
-            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <cm_key>")
-            return
-    
-        cm_key = parts[1].strip().lower()
-        if not cm_key:
-            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <cm_key>")
-            return
-    
-        try:
+@commands.command(name="companion")
+async def companion(self, ctx: commands.Context):
+    login = ctx.author.name.lower()
+    parts = (ctx.message.content or "").strip().split()
+
+    # Sans argument => on affiche la collection (pratique)
+    if len(parts) < 2:
+        await self.collection(ctx)
+        await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou !companion <cm_key> si tu n'as qu'un seul exemplaire)")
+        return
+
+    target = parts[1].strip().lower()
+    if not target:
+        await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou <cm_key>)")
+        return
+
+    # ✅ Nouveau : si l'argument est un nombre => on active par ID (recommandé)
+    creature_id = None
+    try:
+        creature_id = int(target)
+    except Exception:
+        creature_id = None
+
+    try:
+        if creature_id is not None:
+            # ---- set par ID ----
             r = requests.post(
-                API_COMPANION_SET_URL,
+                API_COMPANION_SET_BY_ID_URL,  # ex: http://api:8000/internal/companions/set_active
                 headers={"X-API-Key": API_KEY},
-                json={"twitch_login": login, "cm_key": cm_key},
+                json={"twitch_login": login, "creature_id": creature_id},
                 timeout=3,
             )
-    
-            if r.status_code != 200:
-                # essayer de remonter un message utile
-                msg = "⛔ Impossible."
-                try:
-                    d = r.json()
-                    detail = str(d.get("detail", "")).strip()
-                    if detail:
-                        msg = f"⛔ {detail}"
-                except Exception:
-                    pass
-    
-                await ctx.send(f"@{ctx.author.name} {msg}")
-                return
-    
-            data = r.json()
-    
-        except Exception as e:
-            print("[BOT] companion set error:", e, flush=True)
-            await ctx.send(f"@{ctx.author.name} ⚠️ Impossible de changer de compagnon.")
+        else:
+            # ---- fallback legacy: set par cm_key ----
+            r = requests.post(
+                API_COMPANION_SET_URL,  # ton endpoint existant (cm_key)
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login, "cm_key": target},
+                timeout=3,
+            )
+
+        if r.status_code != 200:
+            msg = "⛔ Impossible."
+            try:
+                d = r.json()
+                detail = str(d.get("detail", "")).strip()
+                if detail:
+                    msg = f"⛔ {detail}"
+            except Exception:
+                pass
+
+            # aide : si cm_key ambigu (plusieurs oeufs), on invite à utiliser l'id
+            await ctx.send(
+                f"@{ctx.author.name} {msg} "
+                f"(Astuce: utilise l'ID affiché dans !collection, ex: !companion 12)"
+            )
             return
-    
-        active = (data.get("active_cm_key") or cm_key).strip().lower()
-        await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {active} (c’est lui qui gagne l’XP)")
+
+        data = r.json()
+
+    except Exception as e:
+        print("[BOT] companion set error:", e, flush=True)
+        await ctx.send(f"@{ctx.author.name} ⚠️ Impossible de changer de compagnon.")
+        return
+
+    # Réponse plus friendly
+    active_id = data.get("active_id") or data.get("creature_id") or creature_id
+    active_cm_key = (data.get("active_cm_key") or data.get("cm_key") or target).strip().lower()
+    cm_name = (data.get("active_cm_name") or data.get("cm_name") or active_cm_key).strip()
+    lineage_key = (data.get("lineage_key") or data.get("active_lineage_key") or "").strip().lower()
+
+    # si c'est un oeuf, on affiche la lignée
+    if active_cm_key == "egg":
+        lk_label = {
+            "biolab": "Biolab",
+            "securite": "Sécurité",
+            "extraction": "Extraction",
+            "limited": "Limited",
+        }.get(lineage_key, lineage_key or "Inconnue")
+        label = f"🥚 Œuf {lk_label}"
+    else:
+        label = f"👾 {cm_name}"
+
+    if active_id is not None:
+        await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {label} [id {active_id}] (c’est lui qui gagne l’XP)")
+    else:
+        await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {label} (c’est lui qui gagne l’XP)")
+
 
 
     # ------------------------------------------------------------------------

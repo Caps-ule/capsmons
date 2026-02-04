@@ -2884,8 +2884,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
 @app.get("/internal/companions/{login}")
 def internal_companions(login: str, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
-
-    login = (login or "").strip().lower()
+    login = login.strip().lower()
     if not login:
         raise HTTPException(status_code=400, detail="Missing login")
 
@@ -2893,76 +2892,80 @@ def internal_companions(login: str, x_api_key: str | None = Header(default=None)
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                  c.cm_key,
-                  c.stage,
-                  c.xp_total,
-                  c.happiness,
-                  c.is_active,
-                  COALESCE(cf.name, cms.name) AS display_name
+                    c.id,
+                    c.cm_key,
+                    c.lineage_key,
+                    c.stage,
+                    c.xp_total,
+                    c.is_active,
+                    COALESCE(m.name, c.cm_key) AS cm_name
                 FROM creatures_v2 c
-                JOIN cms ON cms.key = c.cm_key
-                LEFT JOIN cm_forms cf
-                  ON cf.cm_key = c.cm_key AND cf.stage = c.stage
+                LEFT JOIN cms m ON m.key = c.cm_key
                 WHERE c.twitch_login = %s
-                ORDER BY c.is_active DESC, c.lineage_key NULLS LAST, c.cm_key;
+                ORDER BY c.is_active DESC, c.stage DESC, c.xp_total DESC, c.acquired_at DESC, c.id DESC;
             """, (login,))
             rows = cur.fetchall()
 
-    items = []
-    for cm_key, stage, xp_total, happiness, is_active, display_name in rows:
-        items.append({
-            "cm_key": cm_key,
-            "name": display_name or cm_key,
-            "stage": int(stage or 0),
-            "xp_total": int(xp_total or 0),
-            "happiness": int(happiness or 0),
-            "is_active": bool(is_active),
+    companions = []
+    for r in rows:
+        companions.append({
+            "id": int(r[0]),
+            "cm_key": r[1],
+            "lineage_key": r[2],
+            "stage": int(r[3] or 0),
+            "xp_total": int(r[4] or 0),
+            "is_active": bool(r[5]),
+            "cm_name": r[6] or r[1],
         })
 
-    return {"ok": True, "twitch_login": login, "companions": items}
+    return {"ok": True, "twitch_login": login, "companions": companions}
+
 
 
 @app.post("/internal/companions/set_active")
-def internal_set_active_companion(payload: dict, x_api_key: str | None = Header(default=None)):
+def companions_set_active(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
 
-    login = str(payload.get("twitch_login", "")).strip().lower()
-    cm_key = str(payload.get("cm_key", "")).strip().lower()
+    login = str(payload.get("twitch_login","")).strip().lower()
+    creature_id = payload.get("creature_id", None)
 
-    if not login or not cm_key:
-        raise HTTPException(status_code=400, detail="Missing twitch_login or cm_key")
+    if not login or creature_id is None:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or creature_id")
+
+    try:
+        creature_id = int(creature_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid creature_id")
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # user existe (safe)
-            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
-
-            # vérifier possession
+            # vérifier que l'id appartient bien au user
             cur.execute("""
-                SELECT 1
+                SELECT id
                 FROM creatures_v2
-                WHERE twitch_login=%s AND cm_key=%s;
-            """, (login, cm_key))
+                WHERE id=%s AND twitch_login=%s;
+            """, (creature_id, login))
             if not cur.fetchone():
-                raise HTTPException(status_code=400, detail="CM not owned")
+                raise HTTPException(status_code=404, detail="Companion not found")
 
-            # désactiver tous
+            # désactiver tout
             cur.execute("""
                 UPDATE creatures_v2
-                SET is_active = FALSE
-                WHERE twitch_login=%s AND is_active = TRUE;
+                SET is_active=false, updated_at=now()
+                WHERE twitch_login=%s AND is_active=true;
             """, (login,))
 
-            # activer demandé
+            # activer celui choisi
             cur.execute("""
                 UPDATE creatures_v2
-                SET is_active = TRUE, updated_at = now()
-                WHERE twitch_login=%s AND cm_key=%s;
-            """, (login, cm_key))
+                SET is_active=true, updated_at=now()
+                WHERE id=%s AND twitch_login=%s;
+            """, (creature_id, login))
 
         conn.commit()
 
-    return {"ok": True, "twitch_login": login, "active_cm_key": cm_key}
+    return {"ok": True, "twitch_login": login, "active_id": creature_id}
+
 
 
 
@@ -3054,12 +3057,12 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             active_xp = int(active_xp or 0)
             active_h = int(active_h or 0)
 
-            # 4) consommer 1 item
-            cur.execute("""
-                UPDATE inventory
-                SET qty = qty - 1, updated_at = now()
-                WHERE twitch_login=%s AND item_key=%s;
-            """, (login, item_key))
+#            # 4) consommer 1 item
+#            cur.execute("""
+#                UPDATE inventory
+#                SET qty = qty - 1, updated_at = now()
+#                WHERE twitch_login=%s AND item_key=%s;
+#            """, (login, item_key))
 
             # 5) appliquer effet
 
