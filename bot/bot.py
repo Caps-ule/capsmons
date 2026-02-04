@@ -633,6 +633,15 @@ class Bot(commands.Bot):
             name = data.get("item_name", item_key)
             await ctx.send(f"@{ctx.author.name} 🥰 {name} utilisé ! +{gain_h} bonheur (❤️ {after_h}%).")
             return
+        # Oeuf
+        if effect == "egg":
+            lk = data.get("lineage_key", "?")
+            activated = bool(data.get("activated", False))
+            if activated:
+                await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Il devient ton compagnon actif ✅")
+            else:
+                await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Ajouté à ta collection ✅")
+            return
 
     
         # Fallback

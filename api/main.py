@@ -2963,7 +2963,7 @@ def internal_set_active_companion(payload: dict, x_api_key: str | None = Header(
         conn.commit()
 
     return {"ok": True, "twitch_login": login, "active_cm_key": cm_key}
-    
+
 
 
 # =============================================================================
@@ -2988,6 +2988,17 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
     new_xp_total = None
     stage_before = None
     stage_after = None
+    def _parse_egg_lineage(k: str) -> str | None:
+        # egg_biolab / egg_securite / egg_extraction / egg_limited
+        if not k.startswith("egg_"):
+            return None
+        lk = k.split("egg_", 1)[1].strip().lower()
+        return lk if lk else None
+    
+    def _ensure_lineage_exists(cur, lineage_key: str) -> bool:
+        cur.execute("SELECT 1 FROM lineages WHERE key=%s AND is_enabled=true;", (lineage_key,))
+        return bool(cur.fetchone())
+
 
     def _parse_xp_capsule_gain(k: str) -> int:
         # accepte xp_capsule_10 / xp_capsule_20 / xp_capsule_30
@@ -3045,7 +3056,44 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             """, (login, item_key))
 
             # 5) appliquer effet
+            egg_lineage = _parse_egg_lineage(item_key)
             xp_gain = _parse_xp_capsule_gain(item_key)
+
+            if egg_lineage:
+                # 1) vérifier lignée valide
+                if not _ensure_lineage_exists(cur, egg_lineage):
+                    raise HTTPException(status_code=400, detail="Unknown lineage for egg")
+            
+                # 2) créer un nouveau CM stage 0 (cm_key NULL jusqu'à l'éclosion)
+                #    is_active = TRUE si le user n’a aucun actif
+                cur.execute("""
+                    SELECT 1
+                    FROM creatures_v2
+                    WHERE twitch_login=%s AND is_active=true
+                    LIMIT 1;
+                """, (login,))
+                has_active = bool(cur.fetchone())
+            
+                # IMPORTANT: on ne force pas à désactiver l’actif actuel
+                # On crée juste un nouveau “slot” œuf.
+                cur.execute("""
+                    INSERT INTO creatures_v2
+                      (twitch_login, cm_key, lineage_key, stage, xp_total, happiness,
+                       is_active, is_limited, acquired_from)
+                    VALUES
+                      (%s, NULL, %s, 0, 0, 50, %s, %s, 'egg');
+                """, (login, egg_lineage, (not has_active), (egg_lineage == "limited")))
+            
+                # 3) réponse bot
+                return {
+                    "ok": True,
+                    "twitch_login": login,
+                    "item_key": item_key,
+                    "item_name": item_name,
+                    "effect": "egg",
+                    "lineage_key": egg_lineage,
+                    "activated": (not has_active),
+                }
 
             if xp_gain > 0:
                 # --- XP capsule : +XP sur le CM actif ---
