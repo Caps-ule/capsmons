@@ -250,10 +250,12 @@ class Bot(commands.Bot):
         login = ctx.author.name.lower()
         parts = (ctx.message.content or "").strip().split()
     
-        # Sans argument => on affiche la collection (pratique)
+        # Sans argument => affiche la collection + rappel usage
         if len(parts) < 2:
-            await self.collection(ctx)
-            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou !companion <cm_key> si tu n'as qu'un seul exemplaire)")
+            await self.collection(ctx)  # ta fonction existante
+            await ctx.send(
+                f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou !companion <cm_key> si tu n'as qu'un seul exemplaire)"
+            )
             return
     
         target = parts[1].strip().lower()
@@ -261,26 +263,25 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou <cm_key>)")
             return
     
-        # ✅ Nouveau : si l'argument est un nombre => on active par ID (recommandé)
+        # Parse ID si numérique
         creature_id = None
         try:
             creature_id = int(target)
         except Exception:
             creature_id = None
     
+        # 1) Appel API set_active (par id) ou fallback legacy (par cm_key)
         try:
             if creature_id is not None:
-                # ---- set par ID ----
                 r = requests.post(
-                    API_COMPANION_SET_BY_ID_URL,  # ex: http://api:8000/internal/companions/set_active
+                    API_COMPANION_SET_BY_ID_URL,
                     headers={"X-API-Key": API_KEY},
                     json={"twitch_login": login, "creature_id": creature_id},
                     timeout=3,
                 )
             else:
-                # ---- fallback legacy: set par cm_key ----
                 r = requests.post(
-                    API_COMPANION_SET_URL,  # ton endpoint existant (cm_key)
+                    API_COMPANION_SET_URL,
                     headers={"X-API-Key": API_KEY},
                     json={"twitch_login": login, "cm_key": target},
                     timeout=3,
@@ -296,10 +297,8 @@ class Bot(commands.Bot):
                 except Exception:
                     pass
     
-                # aide : si cm_key ambigu (plusieurs oeufs), on invite à utiliser l'id
                 await ctx.send(
-                    f"@{ctx.author.name} {msg} "
-                    f"(Astuce: utilise l'ID affiché dans !collection, ex: !companion 12)"
+                    f"@{ctx.author.name} {msg} (Astuce: utilise l'ID affiché dans ta collection, ex: !companion 355)"
                 )
                 return
     
@@ -310,30 +309,66 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} ⚠️ Impossible de changer de compagnon.")
             return
     
-        # Réponse plus friendly
-        active_id = data.get("active_id") or data.get("creature_id") or creature_id
-        active_cm_key = (data.get("active_cm_key") or data.get("cm_key") or target).strip().lower()
-        cm_name = (data.get("active_cm_name") or data.get("cm_name") or active_cm_key).strip()
-        lineage_key = (data.get("lineage_key") or data.get("active_lineage_key") or "").strip().lower()
+        # 2) IMPORTANT : relire la collection pour afficher un résultat fiable
+        active_id = data.get("active_id", None)
+        try:
+            rr = requests.get(
+                f"{API_COLLECTION_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=3,
+            )
+            if rr.status_code != 200:
+                # on affiche au moins l'id activé
+                await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅ (id {active_id})")
+                return
     
-        # si c'est un oeuf, on affiche la lignée
-        if active_cm_key == "egg":
-            lk_label = {
-                "biolab": "Biolab",
-                "securite": "Sécurité",
-                "extraction": "Extraction",
-                "limited": "Limited",
-            }.get(lineage_key, lineage_key or "Inconnue")
-            label = f"🥚 Œuf {lk_label}"
-        else:
-            label = f"👾 {cm_name}"
+            col = rr.json() or {}
+            items = col.get("items", []) or []
     
-        if active_id is not None:
-            await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {label} [id {active_id}] (c’est lui qui gagne l’XP)")
-        else:
-            await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {label} (c’est lui qui gagne l’XP)")
+            # Cherche l'actif
+            active_item = None
+            for it in items:
+                if it.get("is_active"):
+                    active_item = it
+                    break
     
+            if not active_item:
+                # fallback : si on a un active_id, cherche par id (si l’API renvoie id)
+                if active_id is not None:
+                    for it in items:
+                        if str(it.get("id", "")).isdigit() and int(it.get("id")) == int(active_id):
+                            active_item = it
+                            break
     
+            if not active_item:
+                await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅")
+                return
+    
+            cm_key = (active_item.get("cm_key") or "").strip().lower()
+            cm_name = (active_item.get("cm_name") or cm_key).strip()
+            lineage_key = (active_item.get("lineage_key") or "").strip().lower()
+            shown_id = active_item.get("id", active_id)
+    
+            # Label user friendly
+            if cm_key == "egg":
+                lk_label = {
+                    "biolab": "Biolab",
+                    "securite": "Sécurité",
+                    "extraction": "Extraction",
+                    "limited": "Limited",
+                }.get(lineage_key, lineage_key or "Inconnue")
+                label = f"🥚 Œuf {lk_label}"
+            else:
+                label = f"👾 {cm_name}"
+    
+            await ctx.send(
+                f"@{ctx.author.name} ⭐ Compagnon actif : {label} [id {shown_id}] (c’est lui qui gagne l’XP)"
+            )
+    
+        except Exception as e:
+            print("[BOT] companion refresh collection error:", e, flush=True)
+            await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅")
+
     
     # ------------------------------------------------------------------------
     # Startup
