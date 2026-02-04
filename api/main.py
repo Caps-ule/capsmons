@@ -3102,7 +3102,7 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                       (twitch_login, cm_key, lineage_key, stage, xp_total, happiness,
                        is_active, is_limited, acquired_from)
                     VALUES
-                      (%s, NULL, %s, 0, 0, 50, %s, %s, 'egg');
+                      (%s, 'egg', %s, 0, 0, 50, %s, %s, 'egg');
                 """, (
                     login,
                     egg_lineage,
