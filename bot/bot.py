@@ -31,6 +31,7 @@ API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
 API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
 API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
+API_COMPANION_SET_BY_ID_URL = "http://api:8000/internal/companions/set_active"
 
 
 
