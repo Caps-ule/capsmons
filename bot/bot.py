@@ -16,8 +16,6 @@ API_STATE_URL = "http://api:8000/internal/creature"
 API_LIVE_URL = "http://api:8000/internal/is_live"
 API_RP_URL = "http://api:8000/internal/rp_bundle"
 API_SHOW_URL = "http://api:8000/internal/trigger_show"
-
-# Drops (nouveau système: join + poll_result)
 API_DROP_JOIN_URL = "http://api:8000/internal/drop/join"
 API_DROP_POLL_URL = "http://api:8000/internal/drop/poll_result"
 API_DROP_SPAWN_URL = "http://api:8000/internal/drop/spawn"

@@ -2962,9 +2962,32 @@ def companions_set_active(payload: dict, x_api_key: str | None = Header(default=
                 WHERE id=%s AND twitch_login=%s;
             """, (creature_id, login))
 
+            # renvoyer les infos utiles au bot
+            cur.execute("""
+                SELECT id, cm_key, lineage_key, stage, xp_total, happiness
+                FROM creatures_v2
+                WHERE id=%s AND twitch_login=%s;
+            """, (creature_id, login))
+            row = cur.fetchone()
+
         conn.commit()
 
-    return {"ok": True, "twitch_login": login, "active_id": creature_id}
+    if not row:
+        raise HTTPException(status_code=500, detail="Active companion not found after update")
+
+    (cid, cm_key, lineage_key, stage, xp_total, happiness) = row
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "active_id": int(cid),
+        "active_cm_key": str(cm_key),
+        "active_lineage_key": lineage_key,
+        "active_stage": int(stage or 0),
+        "active_xp_total": int(xp_total or 0),
+        "active_happiness": int(happiness or 0),
+    }
+
 
 
 
@@ -3469,6 +3492,7 @@ def internal_collection(login: str, x_api_key: str | None = Header(default=None)
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
+                    c.id,
                     c.cm_key,
                     COALESCE(cm.name,'') AS cm_name,
                     c.lineage_key,
@@ -3482,26 +3506,28 @@ def internal_collection(login: str, x_api_key: str | None = Header(default=None)
                 FROM creatures_v2 c
                 JOIN cms cm ON cm.key = c.cm_key
                 WHERE c.twitch_login = %s
-                ORDER BY c.is_active DESC, c.acquired_at ASC, c.cm_key ASC;
+                ORDER BY c.is_active DESC, c.acquired_at DESC, c.id DESC;
             """, (login,))
             rows = cur.fetchall()
 
     items = []
     for r in rows:
         items.append({
-            "cm_key": r[0],
-            "cm_name": r[1],
-            "lineage_key": r[2],
-            "stage": int(r[3] or 0),
-            "xp_total": int(r[4] or 0),
-            "happiness": int(r[5] or 0),
-            "is_active": bool(r[6]),
-            "is_limited": bool(r[7]),
-            "acquired_from": r[8],
-            "acquired_at": r[9].isoformat() if r[9] else None,
+            "id": int(r[0]),
+            "cm_key": r[1],
+            "cm_name": r[2],
+            "lineage_key": r[3],
+            "stage": int(r[4] or 0),
+            "xp_total": int(r[5] or 0),
+            "happiness": int(r[6] or 0),
+            "is_active": bool(r[7]),
+            "is_limited": bool(r[8]),
+            "acquired_from": r[9],
+            "acquired_at": r[10].isoformat() if r[10] else None,
         })
 
     return {"ok": True, "twitch_login": login, "items": items}
+
 
 
 @app.post("/internal/companion/set")
