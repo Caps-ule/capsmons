@@ -2958,49 +2958,6 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
 # ADMIN: Overlay Show
 # =============================================================================
 
-@app.get("/overlay/state")
-def overlay_state():
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT viewer_display, viewer_avatar, cm_name, cm_media_url,
-                       xp_total, stage, stage_start_xp, next_stage_xp, COALESCE(happiness,0)
-                FROM overlay_events
-                WHERE expires_at > now()
-                ORDER BY id DESC
-                LIMIT 1;
-            """)
-            row = cur.fetchone()
-
-    if not row:
-        return {"show": False}
-
-    viewer_display, viewer_avatar, cm_name, cm_media_url, xp_total, stage, start_xp, next_xp, happiness = row
-    xp_total = int(xp_total)
-    start_xp = int(start_xp)
-    next_xp = int(next_xp) if next_xp is not None else None
-    happy = int(happiness or 0)
-
-    pct = None
-    if next_xp is not None and next_xp > start_xp:
-        pct = int(((xp_total - start_xp) / (next_xp - start_xp)) * 100)
-        pct = max(0, min(pct, 100))
-
-    return {
-        "show": True,
-        "viewer": {"name": viewer_display, "avatar": viewer_avatar},
-        "cm": {"name": cm_name, "media": cm_media_url},
-        "xp": {
-            "total": xp_total,
-            "stage": int(stage),
-            "pct": pct,
-            "to_next": (next_xp - xp_total) if next_xp else None,
-        },
-        "happiness": {
-          "value": int(happy),
-          "pct": max(0, min(100, int(happy))),
-        }
-    }
 @app.post("/internal/item/use")
 def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -3017,13 +2974,22 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
     new_happiness = None
     xp_gain = 0
 
+    def _parse_xp_capsule_gain(k: str) -> int:
+        # accepte xp_capsule_10 / xp_capsule_20 / xp_capsule_30
+        if not k.startswith("xp_capsule_"):
+            return 0
+        try:
+            v = int(k.split("_")[-1])
+        except Exception:
+            return 0
+        if v not in (10, 20, 30):
+            return 0
+        return v
+
     with get_db() as conn:
         with conn.cursor() as cur:
             # 1️⃣ Vérifier que l’item existe
-            cur.execute(
-                "SELECT name, happiness_gain FROM items WHERE key=%s;",
-                (item_key,)
-            )
+            cur.execute("SELECT name, happiness_gain FROM items WHERE key=%s;", (item_key,))
             item = cur.fetchone()
             if not item:
                 raise HTTPException(status_code=400, detail="Unknown item")
@@ -3032,78 +2998,62 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             happiness_gain = int(happiness_gain or 0)
 
             # 2️⃣ Vérifier l’inventaire
-            cur.execute(
-                "SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;",
-                (login, item_key)
-            )
+            cur.execute("SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;", (login, item_key))
             row = cur.fetchone()
             if not row or int(row[0]) <= 0:
                 raise HTTPException(status_code=400, detail="No item in inventory")
 
             # 3️⃣ Consommer 1 objet
-            cur.execute(
-                """
+            cur.execute("""
                 UPDATE inventory
                 SET qty = qty - 1, updated_at = now()
                 WHERE twitch_login=%s AND item_key=%s;
-                """,
-                (login, item_key)
-            )
+            """, (login, item_key))
 
             # 4️⃣ S’assurer que la créature existe
-            cur.execute(
-                """
+            cur.execute("""
                 INSERT INTO creatures (twitch_login, xp_total, stage, happiness)
                 VALUES (%s, 0, 0, 50)
                 ON CONFLICT (twitch_login) DO NOTHING;
-                """,
-                (login,)
-            )
+            """, (login,))
 
-            # 5️⃣ Appliquer l’effet de l’objet
-            if item_key == "xp_capsule":
-                # 💊 Capsule XP
-                xp_gain = 30
+            # 5️⃣ Appliquer l’effet
+            # XP capsules (10/20/30)
+            xp_gain = _parse_xp_capsule_gain(item_key)
+
+            if xp_gain > 0:
+                # 💊 Capsule XP (donner XP via ta logique centrale)
                 grant_xp(login, xp_gain)
 
                 # bonheur inchangé
-                cur.execute(
-                    "SELECT happiness FROM creatures WHERE twitch_login=%s;",
-                    (login,)
-                )
+                cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
                 new_happiness = int(cur.fetchone()[0] or 0)
 
             else:
-                # 🥰 Objet de bonheur
-                cur.execute(
-                    "SELECT happiness FROM creatures WHERE twitch_login=%s;",
-                    (login,)
-                )
+                # 🥰 Objet bonheur (ex: candy_1/2/3 => happiness_gain en DB)
+                cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
                 current = int(cur.fetchone()[0] or 0)
 
                 new_happiness = max(0, min(100, current + happiness_gain))
 
-                cur.execute(
-                    """
+                cur.execute("""
                     UPDATE creatures
                     SET happiness=%s, updated_at=now()
                     WHERE twitch_login=%s;
-                    """,
-                    (new_happiness, login)
-                )
+                """, (new_happiness, login))
 
         conn.commit()
 
     # 6️⃣ Réponse API claire pour le bot
-    if item_key == "xp_capsule":
+    if xp_gain > 0:
         return {
             "ok": True,
             "twitch_login": login,
             "item_key": item_key,
             "item_name": item_name,
             "effect": "xp",
-            "xp_gain": xp_gain,
-            "happiness_after": new_happiness,
+            "xp_gain": int(xp_gain),
+            "happiness_after": int(new_happiness or 0),
         }
 
     return {
@@ -3112,10 +3062,9 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
         "item_key": item_key,
         "item_name": item_name,
         "effect": "happiness",
-        "happiness_gain": happiness_gain,
-        "happiness_after": new_happiness,
+        "happiness_gain": int(happiness_gain),
+        "happiness_after": int(new_happiness or 0),
     }
-
 
 # =============================================================================
 # ADMIN: Overlay Show
