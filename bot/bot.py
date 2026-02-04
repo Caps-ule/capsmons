@@ -200,7 +200,7 @@ class Bot(commands.Bot):
     
         await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
 
-    def _lineage_label(lk: str) -> str:
+    def self._lineage_label(lk: str) -> str:
         lk = (lk or "").strip().lower()
         return {
             "biolab": "Biolab",
@@ -211,7 +211,7 @@ class Bot(commands.Bot):
         }.get(lk, lk or "—")
     
     
-    def _short_stage(s: int) -> str:
+    def self._short_stage(s: int) -> str:
         try:
             s = int(s)
         except Exception:
@@ -254,8 +254,9 @@ class Bot(commands.Bot):
             cid = it.get("id")
             cm_key = (it.get("cm_key") or "").strip().lower()
             cm_name = (it.get("cm_name") or cm_key).strip()
-            lk = _lineage_label(it.get("lineage_key"))
-            stage = _short_stage(it.get("stage", 0))
+    
+            lk = self._lineage_label(it.get("lineage_key"))   # ✅ self.
+            stage = self._short_stage(it.get("stage", 0))     # ✅ self.
             xp = int(it.get("xp_total", 0) or 0)
     
             star = "★" if bool(it.get("is_active")) else "·"
@@ -265,23 +266,19 @@ class Bot(commands.Bot):
             else:
                 label = f"👾 {cm_name}"
     
-            # ex: ★[350] 🥚 Œuf Biolab S0 137xp
             parts.append(f"{star}[{cid}] {label} {stage} {xp}xp")
     
         if active:
             a_id = active.get("id")
             a_key = (active.get("cm_key") or "").strip().lower()
             a_name = (active.get("cm_name") or a_key).strip()
-            a_lk = _lineage_label(active.get("lineage_key"))
+            a_lk = self._lineage_label(active.get("lineage_key"))  # ✅ self.
     
             active_label = f"🥚 Œuf {a_lk}" if a_key == "egg" else f"👾 {a_name}"
-            await ctx.send(
-                f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  |  Collection: " + " | ".join(parts)
-            )
+            await ctx.send(f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  |  Collection: " + " | ".join(parts))
         else:
-            await ctx.send(
-                f"@{ctx.author.name} 📦 Aucun compagnon actif  |  Collection: " + " | ".join(parts)
-            )
+            await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif  |  Collection: " + " | ".join(parts))
+    
 
     @commands.command(name="companion")
     async def companion(self, ctx: commands.Context):
@@ -426,17 +423,6 @@ class Bot(commands.Bot):
         # Decay Happiness auto
         self.loop.create_task(self.happiness_decay_loop())
 
-
-    
-
-    # ------------------------------------------------------------------------
-    # Verif si mod ou broadcaster
-    # ------------------------------------------------------------------------
-    def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
-        try:
-            return bool(getattr(ctx.author, "is_broadcaster", False) or getattr(ctx.author, "is_mod", False))
-        except Exception:
-            return False
     # ------------------------------------------------------------------------
     # Commande !drop
     # ------------------------------------------------------------------------
