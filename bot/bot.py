@@ -28,6 +28,9 @@ API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
 API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
 API_COLLECTION_URL = "http://api:8000/internal/collection"
 API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
+API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
+API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
+
 
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
@@ -145,6 +148,36 @@ class Bot(commands.Bot):
         # format compact : item xqty
         txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
         await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
+    @commands.command(name="cmlist")
+    async def cmlist(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+    
+        try:
+            r = requests.get(
+                f"{API_COMPANIONS_LIST_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=3,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} ⚠️ Liste CM indisponible.")
+                return
+            data = r.json()
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} ⚠️ Liste CM indisponible.")
+            return
+    
+        cms = data.get("companions", []) or []
+        if not cms:
+            await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
+            return
+    
+        # format compact: [★] key (Sx, XP)
+        parts = []
+        for it in cms[:12]:
+            star = "★" if it.get("is_active") else "·"
+            parts.append(f"{star} {it.get('cm_key')} (S{int(it.get('stage',0))}, {int(it.get('xp_total',0))}xp)")
+    
+        await ctx.send(f"@{ctx.author.name} 👾 Tes CM: " + " | ".join(parts))
 
     @commands.command(name="collection")
     async def collection(self, ctx: commands.Context):

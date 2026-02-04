@@ -2877,6 +2877,94 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "cm_assigned": cm_assigned,  # optionnel (tu l'utilises déjà côté bot)
     }
 
+# =============================================================================
+# COMPANIONS (creatures_v2): list + set active
+# =============================================================================
+
+@app.get("/internal/companions/{login}")
+def internal_companions(login: str, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = (login or "").strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                  c.cm_key,
+                  c.stage,
+                  c.xp_total,
+                  c.happiness,
+                  c.is_active,
+                  COALESCE(cf.name, cms.name) AS display_name
+                FROM creatures_v2 c
+                JOIN cms ON cms.key = c.cm_key
+                LEFT JOIN cm_forms cf
+                  ON cf.cm_key = c.cm_key AND cf.stage = c.stage
+                WHERE c.twitch_login = %s
+                ORDER BY c.is_active DESC, c.lineage_key NULLS LAST, c.cm_key;
+            """, (login,))
+            rows = cur.fetchall()
+
+    items = []
+    for cm_key, stage, xp_total, happiness, is_active, display_name in rows:
+        items.append({
+            "cm_key": cm_key,
+            "name": display_name or cm_key,
+            "stage": int(stage or 0),
+            "xp_total": int(xp_total or 0),
+            "happiness": int(happiness or 0),
+            "is_active": bool(is_active),
+        })
+
+    return {"ok": True, "twitch_login": login, "companions": items}
+
+
+@app.post("/internal/companions/set_active")
+def internal_set_active_companion(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    cm_key = str(payload.get("cm_key", "")).strip().lower()
+
+    if not login or not cm_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or cm_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # user existe (safe)
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+            # vérifier possession
+            cur.execute("""
+                SELECT 1
+                FROM creatures_v2
+                WHERE twitch_login=%s AND cm_key=%s;
+            """, (login, cm_key))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="CM not owned")
+
+            # désactiver tous
+            cur.execute("""
+                UPDATE creatures_v2
+                SET is_active = FALSE
+                WHERE twitch_login=%s AND is_active = TRUE;
+            """, (login,))
+
+            # activer demandé
+            cur.execute("""
+                UPDATE creatures_v2
+                SET is_active = TRUE, updated_at = now()
+                WHERE twitch_login=%s AND cm_key=%s;
+            """, (login, cm_key))
+
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "active_cm_key": cm_key}
+    
+
 
 # =============================================================================
 # ADMIN: Item Use (creatures_v2 only)
