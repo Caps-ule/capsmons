@@ -31,6 +31,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+
 # =============================================================================
 # App / Static / Templates
 # =============================================================================
@@ -944,6 +945,8 @@ def pick_item(kind: str = "any", x_api_key: str | None = Header(default=None)):
     }
 
 
+
+
 @app.post("/internal/choose_lineage")
 def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -955,29 +958,46 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT is_enabled FROM lineages WHERE key=%s;", (lineage_key,))
+            # 1) lineage existe + état (on garde is_enabled pour l'existence “globale”)
+            cur.execute("""
+                SELECT is_enabled, COALESCE(choose_enabled, true)
+                FROM lineages
+                WHERE key=%s;
+            """, (lineage_key,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=400, detail="Unknown lineage")
-            if not bool(row[0]):
+
+            is_enabled = bool(row[0])
+            choose_enabled = bool(row[1])
+
+            if not is_enabled:
                 raise HTTPException(status_code=400, detail="Lineage disabled")
 
+            # ✅ ici on bloque uniquement le choix (ex: LIMITED)
+            if not choose_enabled:
+                raise HTTPException(status_code=403, detail="Choose disabled for this lineage")
+
+            # 2) s'assurer creature existe
             cur.execute("""
                 INSERT INTO creatures (twitch_login, xp_total, stage)
                 VALUES (%s, 0, 0)
                 ON CONFLICT (twitch_login) DO NOTHING;
             """, (login,))
 
+            # 3) choix autorisé seulement au stage 0
             cur.execute("SELECT stage FROM creatures WHERE twitch_login=%s;", (login,))
-            stage = int(cur.fetchone()[0])
+            stage = int(cur.fetchone()[0] or 0)
             if stage != 0:
                 raise HTTPException(status_code=400, detail="Choose only before hatching (egg stage)")
 
+            # 4) update du lineage
             cur.execute("""
                 UPDATE creatures
                 SET lineage_key=%s, updated_at=now()
                 WHERE twitch_login=%s;
             """, (lineage_key, login))
+
         conn.commit()
 
     return {"ok": True, "twitch_login": login, "lineage_key": lineage_key}
@@ -2469,8 +2489,18 @@ def admin_cms(
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT key, name, is_enabled FROM lineages ORDER BY key;")
-            lineages = [{"key": r[0], "name": r[1], "is_enabled": bool(r[2])} for r in cur.fetchall()]
+            # ✅ lineages + choose_enabled (défaut true si colonne NULL / pas encore backfill)
+            cur.execute("""
+                SELECT key, name, is_enabled, COALESCE(choose_enabled, true) AS choose_enabled
+                FROM lineages
+                ORDER BY key;
+            """)
+            lineages = [{
+                "key": r[0],
+                "name": r[1],
+                "is_enabled": bool(r[2]),
+                "choose_enabled": bool(r[3]),
+            } for r in cur.fetchall()]
 
             cur.execute("""
                 SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
@@ -2493,7 +2523,6 @@ def admin_cms(
         "flash": flash,
         "flash_kind": flash_kind,
     })
-
 # =============================================================================
 # ADMIN: CMS ACTION 
 # =============================================================================

@@ -2,145 +2,222 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>CapsMons Admin</title>
+  <title>CapsMons — Admin</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  :root{
-    --bg:#0b0f14;
-    --panel:#111826;
-    --panel2:#0f1623;
-    --text:#e6edf3;
-    --muted:#9aa4b2;
-    --border:#233044;
-    --tableHead:#0e1522;
-    --link:#7aa2ff;
-    --shadow: 0 12px 30px rgba(0,0,0,.35);
-    --radius: 14px;
-  }
-  [data-theme="light"]{
-    --bg:#ffffff;
-    --panel:#ffffff;
-    --panel2:#f7f7f9;
-    --text:#101418;
-    --muted:#5b6777;
-    --border:#e6e8ec;
-    --tableHead:#f2f4f7;
-    --link:#0b57d0;
-    --shadow: 0 10px 24px rgba(0,0,0,.08);
-  }
-  *{box-sizing:border-box}
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; max-width:1100px; background:var(--bg); color:var(--text)}
-  a{color:var(--link); text-decoration:none}
-  a:hover{text-decoration:underline}
-  h1{margin:0 0 12px; font-size:28px}
-  h2{margin:22px 0 10px; font-size:18px}
-  .muted{color:var(--muted); font-size:13px}
-  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
-  input,button{padding:10px 12px; font-size:14px}
-  input{border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
-  button{cursor:pointer; border-radius:12px; border:1px solid var(--border); background:var(--panel); color:var(--text)}
-  button:hover{filter:brightness(1.08)}
-  .card{border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-top:16px; background:linear-gradient(180deg,var(--panel),var(--panel2)); box-shadow:var(--shadow)}
-  table{border-collapse:collapse; width:100%; margin-top:16px; border-radius:12px; overflow:hidden; border:1px solid var(--border)}
-  th,td{border-bottom:1px solid var(--border); padding:10px; text-align:left}
-  th{background:var(--tableHead); color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.04em}
-  tr:last-child td{border-bottom:none}
-  .topbar{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap}
-  .toggle{display:flex; gap:8px; align-items:center; padding:10px 12px; border-radius:12px; border:1px solid var(--border); background:var(--panel)}
-  .toggle input{transform:scale(1.1)}
+
+  <style>
+    :root{
+      --bg:#0b0f14;
+      --panel:#111826;
+      --panel2:#0f1623;
+      --text:#e6edf3;
+      --muted:#9aa4b2;
+      --border:#233044;
+      --tableHead:#0e1522;
+      --link:#7aa2ff;
+      --shadow:0 12px 30px rgba(0,0,0,.35);
+      --radius:14px;
+
+      --ok:#2bd576;
+      --off:#4a5568;
+    }
+    [data-theme="light"]{
+      --bg:#ffffff;
+      --panel:#ffffff;
+      --panel2:#f7f7f9;
+      --text:#101418;
+      --muted:#5b6777;
+      --border:#e6e8ec;
+      --tableHead:#f2f4f7;
+      --link:#0b57d0;
+      --shadow:0 10px 24px rgba(0,0,0,.08);
+
+      --ok:#0a7a2f;
+      --off:#94a3b8;
+    }
+
+    *{box-sizing:border-box}
+    body{
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      margin:24px;
+      max-width:1100px;
+      background:var(--bg);
+      color:var(--text);
+    }
+
+    a{color:var(--link); text-decoration:none}
+    a:hover{text-decoration:underline}
+
+    h1{margin:0 0 6px; font-size:28px}
+    h2{margin:22px 0 10px; font-size:18px}
+
+    .muted{color:var(--muted); font-size:13px}
+    .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+
+    input,button{
+      padding:10px 12px;
+      font-size:14px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:var(--panel);
+      color:var(--text);
+    }
+    button{cursor:pointer}
+    button:hover{filter:brightness(1.08)}
+
+    .card{
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:16px;
+      margin-top:16px;
+      background:linear-gradient(180deg,var(--panel),var(--panel2));
+      box-shadow:var(--shadow);
+    }
+
+    table{
+      border-collapse:collapse;
+      width:100%;
+      margin-top:16px;
+      border-radius:12px;
+      overflow:hidden;
+      border:1px solid var(--border);
+    }
+    th,td{border-bottom:1px solid var(--border); padding:10px; text-align:left; vertical-align:middle}
+    th{
+      background:var(--tableHead);
+      color:var(--muted);
+      font-weight:600;
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+    }
+    tr:last-child td{border-bottom:none}
+
+    .topbar{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-bottom:8px;
+    }
+
+    .toggle{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:var(--panel);
+    }
+    .toggle input{transform:scale(1.1)}
+
+    /* Live buttons */
+    .liveRow{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
     .btn{
-    border:none;
-    border-radius:10px;
-    padding:8px 12px;
-    font-weight:800;
-    cursor:pointer;
-  }
-  .btnLive{ background:#2bd576; color:#07130c; }
-  .btnOff{ background:#4a5568; color:#0b0f14; }
-  .btnDisabled{
-    opacity:.45;
-    cursor:not-allowed;
-  }
-  .badge{
-    padding:4px 10px;
-    border-radius:999px;
-    font-size:12px;
-    border:1px solid rgba(255,255,255,.15);
-    background:rgba(255,255,255,.06);
-    color:#e6edf3;
-  }
-</style>
+      border:none;
+      border-radius:10px;
+      padding:8px 12px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .btnLive{ background:var(--ok); color:#07130c; }
+    .btnOff{ background:var(--off); color:#0b0f14; }
+    .btnDisabled{ opacity:.45; cursor:not-allowed; }
 
+    .badge{
+      padding:4px 10px;
+      border-radius:999px;
+      font-size:12px;
+      border:1px solid rgba(255,255,255,.15);
+      background:rgba(255,255,255,.06);
+      color:var(--text);
+    }
+    [data-theme="light"] .badge{
+      border:1px solid rgba(0,0,0,.12);
+      background:rgba(0,0,0,.04);
+    }
+
+    .navlinks a{margin-right:14px}
+    .navlinks a:last-child{margin-right:0}
+  </style>
 </head>
+
 <body>
-<div class="topbar">
-  <div>
-    <h1>CapsMons — Admin</h1>
-    <div class="muted">Protégé par HTTP Basic (MVP).</div>
-  </div>
-
-  <div class="row">
-    <a href="/admin/stats">📊 Stats</a>
-    <div class="toggle">
-      <input type="checkbox" id="themeToggle" checked>
-      <label for="themeToggle">Dark mode</label>
+  <div class="topbar">
+    <div>
+      <h1>CapsMons — Admin</h1>
+      <div class="muted">Protégé par HTTP Basic (MVP). URL: <b>/admin</b></div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;margin:12px 0;">
 
-  <!-- LIVE -->
-  <form method="post" action="/admin/live" style="margin:0;">
-    <input type="hidden" name="value" value="true">
-    <button
-      type="submit"
-      class="btn btnLive {% if is_live %}btnDisabled{% endif %}"
-      {% if is_live %}disabled{% endif %}
-      title="{% if is_live %}Déjà en LIVE{% else %}Forcer LIVE{% endif %}"
-    >
-      🟢 Live
-    </button>
-  </form>
+    <div class="row">
+      <a href="/admin/stats">📊 Stats</a>
 
-  <!-- OFFLINE -->
-  <form method="post" action="/admin/live" style="margin:0;">
-    <input type="hidden" name="value" value="false">
-    <button
-      type="submit"
-      class="btn btnOff {% if not is_live %}btnDisabled{% endif %}"
-      {% if not is_live %}disabled{% endif %}
-      title="{% if not is_live %}Déjà OFFLINE{% else %}Forcer OFFLINE{% endif %}"
-    >
-      ⚫ Plus en live
-    </button>
-  </form>
+      <div class="toggle">
+        <input type="checkbox" id="themeToggle" checked>
+        <label for="themeToggle">Dark mode</label>
+      </div>
 
-  <span class="badge">
-    État: <b>{% if is_live %}LIVE{% else %}OFFLINE{% endif %}</b>
-  </span>
+      <div class="liveRow">
+        <!-- LIVE -->
+        <form method="post" action="/admin/live" style="margin:0;">
+          <input type="hidden" name="value" value="true">
+          <button
+            type="submit"
+            class="btn btnLive {% if is_live %}btnDisabled{% endif %}"
+            {% if is_live %}disabled{% endif %}
+            title="{% if is_live %}Déjà en LIVE{% else %}Forcer LIVE{% endif %}"
+          >
+            🟢 Live
+          </button>
+        </form>
 
-</div>
+        <!-- OFFLINE -->
+        <form method="post" action="/admin/live" style="margin:0;">
+          <input type="hidden" name="value" value="false">
+          <button
+            type="submit"
+            class="btn btnOff {% if not is_live %}btnDisabled{% endif %}"
+            {% if not is_live %}disabled{% endif %}
+            title="{% if not is_live %}Déjà OFFLINE{% else %}Forcer OFFLINE{% endif %}"
+          >
+            ⚫ Plus en live
+          </button>
+        </form>
+
+        <span class="badge">
+          État : <b>{% if is_live %}LIVE{% else %}OFFLINE{% endif %}</b>
+        </span>
+      </div>
+    </div>
   </div>
-</div>
-
-  <div class="muted">Protégé par HTTP Basic (MVP). URL: /admin</div>
 
   <div class="card">
-    <form method="get" action="/admin" class="row">
-      <label>Rechercher un viewer :</label>
-      <input type="text" name="q" placeholder="pseudo twitch (ex: capsloque)" value="{{ q or '' }}">
+    <form method="get" action="/admin" class="row" style="margin:0 0 10px;">
+      <label for="q">Rechercher un viewer :</label>
+      <input id="q" type="text" name="q" placeholder="pseudo twitch (ex: capsloque)" value="{{ q or '' }}">
       <button type="submit">Rechercher</button>
     </form>
-    <p><a href="/admin/stats">📊 Stats</a>
-    <a href="/admin/cms">🧬 CM & Pool</a>
-    <a href="/admin/rp">📝 RP</a>
-    <a href="/admin/forms">🧬 Forms</a></p>
 
+    <div class="navlinks muted">
+      <a href="/admin/stats">📊 Stats</a>
+      <a href="/admin/cms">🧬 CM & Pool</a>
+      <a href="/admin/rp">📝 RP</a>
+      <a href="/admin/forms">🧬 Forms</a>
+    </div>
 
-
-    {% if q and result %}
-      <p>Résultat : <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a> — {{ result.xp_total }} XP — stage {{ result.stage }}</p>
-    {% elif q and not result %}
-      <p>Aucun résultat pour "{{ q }}".</p>
-    {% endif %}
+    <div style="margin-top:10px">
+      {% if q and result %}
+        <div>
+          Résultat :
+          <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a>
+          — {{ result.xp_total }} XP — stage {{ result.stage }}
+        </div>
+      {% elif q and not result %}
+        <div>Aucun résultat pour “{{ q }}”.</div>
+      {% endif %}
+    </div>
   </div>
 
   <h2>Top XP</h2>
@@ -164,27 +241,26 @@
       {% endfor %}
     </tbody>
   </table>
-<script>
-  (function () {
-    const KEY = "capsmons_theme";
-    const toggle = document.getElementById("themeToggle");
 
-    function apply(theme) {
-      document.documentElement.setAttribute("data-theme", theme);
-      toggle.checked = (theme !== "light");
-    }
+  <script>
+    (function () {
+      const KEY = "capsmons_theme";
+      const toggle = document.getElementById("themeToggle");
 
-    const saved = localStorage.getItem(KEY);
-    if (saved) apply(saved);
-    else apply("dark");
+      function apply(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        toggle.checked = (theme !== "light");
+      }
 
-    toggle.addEventListener("change", () => {
-      const theme = toggle.checked ? "dark" : "light";
-      localStorage.setItem(KEY, theme);
-      apply(theme);
-    });
-  })();
-</script>
+      const saved = localStorage.getItem(KEY);
+      apply(saved || "dark");
 
+      toggle.addEventListener("change", () => {
+        const theme = toggle.checked ? "dark" : "light";
+        localStorage.setItem(KEY, theme);
+        apply(theme);
+      });
+    })();
+  </script>
 </body>
 </html>
