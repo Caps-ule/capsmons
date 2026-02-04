@@ -891,6 +891,59 @@ def admin_rp_save(
 
     return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:%20{key}", status_code=303)
 
+# =============================================================================
+# Pick ITEM pour auto drop
+# =============================================================================
+
+@app.get("/internal/items/pick")
+def pick_item(kind: str = "any", x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    kind = (kind or "any").strip().lower()
+    # kind: any | xp | candy
+    where = "TRUE"
+    params = ()
+
+    if kind == "xp":
+        where = "xp_gain > 0"
+    elif kind == "candy":
+        where = "happiness_gain > 0"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT key, name, COALESCE(icon_url,''), drop_weight, xp_gain, happiness_gain
+                FROM items
+                WHERE {where} AND drop_weight > 0
+            """)
+            rows = cur.fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No items for this kind")
+
+    # tirage pondéré
+    total = sum(int(r[3] or 0) for r in rows)
+    rnd = random.randint(1, max(1, total))
+    acc = 0
+    picked = rows[0]
+    for r in rows:
+        acc += int(r[3] or 0)
+        if rnd <= acc:
+            picked = r
+            break
+
+    key, name, icon_url, weight, xp_gain, happiness_gain = picked
+    return {
+        "ok": True,
+        "item_key": key,
+        "item_name": name,
+        "icon_url": icon_url,
+        "xp_gain": int(xp_gain or 0),
+        "happiness_gain": int(happiness_gain or 0),
+        "drop_weight": int(weight or 0),
+    }
+
+
 @app.post("/internal/choose_lineage")
 def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)

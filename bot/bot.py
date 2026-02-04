@@ -25,6 +25,8 @@ API_INV_URL = "http://api:8000/internal/inventory"
 API_HAPPINESS_BATCH_URL = "http://api:8000/internal/happiness/batch"
 API_HAPPINESS_DECAY_URL = "http://api:8000/internal/happiness/decay"
 API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
+API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
+
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
@@ -186,19 +188,19 @@ class Bot(commands.Bot):
         # !drop first "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
         # !drop random "Titre" URL [durée] [xp] [ticket_key] [qty]
         # !drop coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
-        raw = ctx.message.content.strip()
-    
+        raw = (ctx.message.content or "").strip()
         parts = raw.split()
+    
         if len(parts) < 4:
             await ctx.send('Usage: !drop first|random|coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target]')
             return
     
-        mode = parts[1].lower()
+        mode = (parts[1] or "").lower()
         if mode not in ("first", "random", "coop"):
             await ctx.send("Modes: first, random, coop")
             return
     
-        # Titre entre guillemets
+        # --- Parse titre + reste (supporte "Titre avec espaces")
         title = None
         rest = []
         if '"' in raw:
@@ -210,7 +212,7 @@ class Bot(commands.Bot):
             except Exception:
                 title = None
     
-        if title is None:
+        if not title:
             # fallback: 1 mot de titre
             title = parts[2]
             rest = parts[3:]
@@ -220,25 +222,33 @@ class Bot(commands.Bot):
             return
     
         media_url = rest[0]
-        duration = int(rest[1]) if len(rest) >= 2 and rest[1].isdigit() else 10
-        xp_bonus = int(rest[2]) if len(rest) >= 3 and rest[2].isdigit() else 50
-        ticket_key = rest[3] if len(rest) >= 4 else "ticket_basic"
-        ticket_qty = int(rest[4]) if len(rest) >= 5 and rest[4].isdigit() else 1
+    
+        def _to_int(s: str, default: int) -> int:
+            try:
+                return int(s)
+            except Exception:
+                return default
+    
+        duration = _to_int(rest[1], 10) if len(rest) >= 2 else 10
+        xp_bonus = _to_int(rest[2], 50) if len(rest) >= 3 else 50
+        ticket_key = rest[3].strip().lower() if len(rest) >= 4 else "ticket_basic"
+        ticket_qty = _to_int(rest[4], 1) if len(rest) >= 5 else 1
     
         payload = {
             "mode": mode,
             "title": title,
             "media_url": media_url,
-            "duration_seconds": duration,
-            "xp_bonus": xp_bonus,
+            "duration_seconds": max(3, min(duration, 60)),
+            "xp_bonus": max(0, min(xp_bonus, 100)),
             "ticket_key": ticket_key,
-            "ticket_qty": ticket_qty,
+            "ticket_qty": max(1, min(ticket_qty, 999)),
         }
     
         if mode == "coop":
-            target = int(rest[5]) if len(rest) >= 6 and rest[5].isdigit() else 10
-            payload["target_hits"] = target
+            target = _to_int(rest[5], 10) if len(rest) >= 6 else 10
+            payload["target_hits"] = max(1, min(target, 999))
     
+        # Spawn
         try:
             r = requests.post(
                 API_DROP_SPAWN_URL,
@@ -255,13 +265,17 @@ class Bot(commands.Bot):
             await ctx.send("⛔ drop error")
             return
     
-        # RP spawn (si tu as les clés), sinon fallback
+        # Message RP
         rp_key = f"drop.spawn.{mode}"
-        line = await rp_get(rp_key) or "✨ Drop lancé : {title}. \"!grab\" pour participer"
-        msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
+        line = await rp_get(rp_key) or '✨ Drop lancé : {title} — tape "!grab" pour participer'
+        msg = rp_format(
+            line,
+            title=title,
+            xp=payload["xp_bonus"],
+            ticket_key=payload["ticket_key"],
+            ticket_qty=payload["ticket_qty"],
+        )
         await ctx.send(msg)
-
-
 
 
     # ------------------------------------------------------------------------
@@ -480,17 +494,18 @@ class Bot(commands.Bot):
     
         # XP capsule
         if effect == "xp":
-            gained = int(data.get("xp_gain", 0))
+            gained = int(data.get("xp_gain", data.get("amount", 0)))
             await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{gained} XP ⚡")
             return
-    
+        
         # Bonheur
         if effect == "happiness":
-            gain_h = int(data.get("happiness_gain", 0))
+            gain_h = int(data.get("happiness_gain", data.get("amount", 0)))
             after_h = int(data.get("happiness_after", 0))
             name = data.get("item_name", item_key)
             await ctx.send(f"@{ctx.author.name} 🥰 {name} utilisé ! +{gain_h} bonheur (❤️ {after_h}%).")
             return
+
     
         # Fallback
         await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
