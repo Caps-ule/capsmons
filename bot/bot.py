@@ -26,6 +26,8 @@ API_HAPPINESS_BATCH_URL = "http://api:8000/internal/happiness/batch"
 API_HAPPINESS_DECAY_URL = "http://api:8000/internal/happiness/decay"
 API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
 API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
+API_COLLECTION_URL = "http://api:8000/internal/collection"
+API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
 
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
@@ -143,6 +145,99 @@ class Bot(commands.Bot):
         # format compact : item xqty
         txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
         await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
+
+    @commands.command(name="collection")
+    async def collection(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+    
+        try:
+            r = requests.get(
+                f"{API_COLLECTION_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=3,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
+                return
+            data = r.json()
+        except Exception as e:
+            print("[BOT] collection error:", e, flush=True)
+            await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
+            return
+    
+        active = (data.get("active_cm_key") or "").strip().lower()
+        items = data.get("items", []) or []
+    
+        if not items:
+            await ctx.send(f"@{ctx.author.name} 📦 Collection vide. (Tu auras des œufs très rares via drops)")
+            return
+    
+        # format compact : cm_key(stage,xp) + marquer l’actif
+        # On limite à 10 pour éviter les pavés
+        shown = []
+        for it in items[:10]:
+            cm_key = str(it.get("cm_key", "")).lower()
+            stage = int(it.get("stage", 0) or 0)
+            xp = int(it.get("xp_total", 0) or 0)
+            mark = "⭐" if cm_key and cm_key == active else ""
+            shown.append(f"{mark}{cm_key}(S{stage}, {xp}xp)")
+    
+        more = ""
+        if len(items) > 10:
+            more = f" … +{len(items) - 10}"
+    
+        if active:
+            await ctx.send(f"@{ctx.author.name} 📦 Actif: {active} | {', '.join(shown)}{more}")
+        else:
+            await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif | {', '.join(shown)}{more}")
+
+    @commands.command(name="companion")
+    async def companion(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+        parts = (ctx.message.content or "").strip().split()
+    
+        # Sans argument => on affiche la collection (pratique)
+        if len(parts) < 2:
+            await self.collection(ctx)
+            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <cm_key>")
+            return
+    
+        cm_key = parts[1].strip().lower()
+        if not cm_key:
+            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <cm_key>")
+            return
+    
+        try:
+            r = requests.post(
+                API_COMPANION_SET_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login, "cm_key": cm_key},
+                timeout=3,
+            )
+    
+            if r.status_code != 200:
+                # essayer de remonter un message utile
+                msg = "⛔ Impossible."
+                try:
+                    d = r.json()
+                    detail = str(d.get("detail", "")).strip()
+                    if detail:
+                        msg = f"⛔ {detail}"
+                except Exception:
+                    pass
+    
+                await ctx.send(f"@{ctx.author.name} {msg}")
+                return
+    
+            data = r.json()
+    
+        except Exception as e:
+            print("[BOT] companion set error:", e, flush=True)
+            await ctx.send(f"@{ctx.author.name} ⚠️ Impossible de changer de compagnon.")
+            return
+    
+        active = (data.get("active_cm_key") or cm_key).strip().lower()
+        await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {active} (c’est lui qui gagne l’XP)")
 
 
     # ------------------------------------------------------------------------

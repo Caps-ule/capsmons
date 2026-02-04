@@ -136,6 +136,52 @@ def verify_eventsub_signature(headers: dict, raw_body: bytes) -> bool:
     expected = "sha256=" + digest
     return hmac.compare_digest(expected, msg_sig)
 
+def pick_random_lineage(conn) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT key
+            FROM lineages
+            WHERE is_enabled = TRUE
+              AND COALESCE(choose_enabled, true) = TRUE
+              AND key <> 'egg'
+            ORDER BY random()
+            LIMIT 1;
+        """)
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
+def ensure_active_egg(conn, login: str) -> None:
+    """
+    S'assure qu'il existe un companion actif.
+    Si aucun => crée/active un œuf (cm_key='egg').
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT 1
+            FROM creatures_v2
+            WHERE twitch_login=%s AND is_active=true
+            LIMIT 1;
+        """, (login,))
+        if cur.fetchone():
+            return
+
+        # désactiver d'éventuels autres (sécurité)
+        cur.execute("""
+            UPDATE creatures_v2
+            SET is_active=false
+            WHERE twitch_login=%s AND is_active=true;
+        """, (login,))
+
+        # créer l'œuf si pas déjà dans la collection
+        cur.execute("""
+            INSERT INTO creatures_v2 (twitch_login, cm_key, lineage_key, stage, xp_total, happiness, is_active, acquired_from)
+            VALUES (%s, 'egg', NULL, 0, 0, 50, TRUE, 'legacy')
+            ON CONFLICT (twitch_login, cm_key)
+            DO UPDATE SET is_active = TRUE;
+        """, (login,))
+
+
 # Live 
 # =============================================================================
 
@@ -2727,18 +2773,19 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     if amount <= 0 or amount > 100:
         raise HTTPException(status_code=400, detail="Amount out of range")
 
-    evo_payload = None  # utilisé après commit (overlay)
+    evo_payload = None
     prev_stage = new_stage = new_xp_total = 0
+    cm_assigned = None  # si tu veux le renvoyer au bot
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # 1️⃣ S’assurer que l’utilisateur existe
-            cur.execute(
-                "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
-                (login,),
-            )
+            # user existe
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
 
-            # 2️⃣ Récupérer le CM actif
+            # ✅ NOUVEAU : s'assurer qu'un œuf actif existe si aucun CM actif
+            ensure_active_egg(conn, login)
+
+            # récupérer CM actif
             cur.execute("""
                 SELECT id, cm_key, lineage_key, stage, xp_total
                 FROM creatures_v2
@@ -2746,38 +2793,58 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                 LIMIT 1;
             """, (login,))
             row = cur.fetchone()
-
             if not row:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No active CM"
-                )
+                # ne devrait plus arriver
+                return {"ok": True, "twitch_login": login, "skipped": True}
 
             creature_id, cm_key, lineage_key, prev_stage, xp_total = row
-            prev_stage = int(prev_stage)
-            xp_total = int(xp_total)
+            prev_stage = int(prev_stage or 0)
+            xp_total = int(xp_total or 0)
 
-            # 3️⃣ Log XP
-            cur.execute(
-                "INSERT INTO xp_events (twitch_login, amount) VALUES (%s,%s);",
-                (login, amount),
-            )
+            # log XP global
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s,%s);", (login, amount))
 
-            # 4️⃣ Ajouter XP
+            # ajouter XP
             new_xp_total = xp_total + amount
-            new_stage = stage_from_xp(new_xp_total)
+            new_stage = int(stage_from_xp(new_xp_total))
 
             cur.execute("""
                 UPDATE creatures_v2
                 SET xp_total=%s,
-                    stage=%s
+                    stage=%s,
+                    updated_at=now()
                 WHERE id=%s;
             """, (new_xp_total, new_stage, creature_id))
 
-            stage_changed = new_stage > prev_stage
+            stage_changed = (new_stage > prev_stage)
 
-            # 5️⃣ Si évolution → préparer données overlay
-            if stage_changed:
+            # ✅ NOUVEAU : Hatch (stage 0 -> 1) : si pas de lignée => random
+            if prev_stage == 0 and new_stage >= 1:
+                if not lineage_key:
+                    lineage_key = pick_random_lineage(conn)
+
+                    if lineage_key:
+                        cur.execute("""
+                            UPDATE creatures_v2
+                            SET lineage_key=%s, updated_at=now()
+                            WHERE id=%s;
+                        """, (lineage_key, creature_id))
+
+                # attribuer un CM si on est encore sur egg (ou cm_key NULL, selon ton historique)
+                # ici on attribue si cm_key == 'egg'
+                if lineage_key and cm_key == "egg":
+                    picked = pick_cm_for_lineage(conn, lineage_key)
+                    if picked:
+                        cm_key = picked
+                        cm_assigned = picked
+                        cur.execute("""
+                            UPDATE creatures_v2
+                            SET cm_key=%s, updated_at=now()
+                            WHERE id=%s;
+                        """, (cm_key, creature_id))
+
+            # overlay evolution si forme existe (inchangé)
+            if stage_changed and new_stage >= 1:
                 cur.execute("""
                     SELECT name, image_url, sound_url
                     FROM cm_forms
@@ -2797,7 +2864,6 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
 
         conn.commit()
 
-    # ⚠️ Après commit seulement (overlay / animation)
     if evo_payload:
         trigger_evolution_overlay(evo_payload)
 
@@ -2807,7 +2873,8 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "xp_total": new_xp_total,
         "stage_before": prev_stage,
         "stage_after": new_stage,
-        "evolved": stage_changed,
+        "evolved": (new_stage > prev_stage),
+        "cm_assigned": cm_assigned,  # optionnel (tu l'utilises déjà côté bot)
     }
 
 
@@ -3219,3 +3286,150 @@ def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=N
     return {"ok": True, "inserted": inserted, "session_id": session_id}
 
 
+# =============================================================================
+# V2 — COLLECTION / MULTI-CM (no overlay, bot/admin only)
+# =============================================================================
+
+@app.get("/internal/collection/{login}")
+def internal_collection(login: str, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = (login or "").strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    c.cm_key,
+                    COALESCE(cm.name,'') AS cm_name,
+                    c.lineage_key,
+                    c.stage,
+                    c.xp_total,
+                    c.happiness,
+                    c.is_active,
+                    c.is_limited,
+                    c.acquired_from,
+                    c.acquired_at
+                FROM creatures_v2 c
+                JOIN cms cm ON cm.key = c.cm_key
+                WHERE c.twitch_login = %s
+                ORDER BY c.is_active DESC, c.acquired_at ASC, c.cm_key ASC;
+            """, (login,))
+            rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        items.append({
+            "cm_key": r[0],
+            "cm_name": r[1],
+            "lineage_key": r[2],
+            "stage": int(r[3] or 0),
+            "xp_total": int(r[4] or 0),
+            "happiness": int(r[5] or 0),
+            "is_active": bool(r[6]),
+            "is_limited": bool(r[7]),
+            "acquired_from": r[8],
+            "acquired_at": r[9].isoformat() if r[9] else None,
+        })
+
+    return {"ok": True, "twitch_login": login, "items": items}
+
+
+@app.post("/internal/companion/set")
+def internal_companion_set(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    cm_key = str(payload.get("cm_key", "")).strip().lower()
+    if not login or not cm_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or cm_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # user existe
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+            # le viewer possède ce CM ?
+            cur.execute("""
+                SELECT 1
+                FROM creatures_v2
+                WHERE twitch_login=%s AND cm_key=%s
+                LIMIT 1;
+            """, (login, cm_key))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="Viewer does not own this CM")
+
+            # désactiver tous
+            cur.execute("""
+                UPDATE creatures_v2
+                SET is_active = FALSE
+                WHERE twitch_login=%s AND is_active=TRUE;
+            """, (login,))
+
+            # activer celui demandé
+            cur.execute("""
+                UPDATE creatures_v2
+                SET is_active = TRUE
+                WHERE twitch_login=%s AND cm_key=%s;
+            """, (login, cm_key))
+
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "cm_key": cm_key, "is_active": True}
+
+
+@app.post("/internal/collection/add")
+def internal_collection_add(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    cm_key = str(payload.get("cm_key", "")).strip().lower()
+    acquired_from = str(payload.get("acquired_from", "drop")).strip().lower()
+
+    # valeurs acceptées (ton schema: legacy|egg|drop|admin|event)
+    if acquired_from not in ("legacy", "egg", "drop", "admin", "event"):
+        raise HTTPException(status_code=400, detail="Invalid acquired_from")
+
+    if not login or not cm_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or cm_key")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # user existe
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+            # cm existe ?
+            cur.execute("SELECT lineage_key FROM cms WHERE key=%s;", (cm_key,))
+            cmrow = cur.fetchone()
+            if not cmrow:
+                raise HTTPException(status_code=400, detail="Unknown CM")
+            cm_lineage = cmrow[0]  # peut être utile si tu veux pré-remplir lineage_key
+
+            # a déjà un actif ?
+            cur.execute("""
+                SELECT 1
+                FROM creatures_v2
+                WHERE twitch_login=%s AND is_active=TRUE
+                LIMIT 1;
+            """, (login,))
+            has_active = bool(cur.fetchone())
+
+            # insert (si déjà présent -> no-op)
+            cur.execute("""
+                INSERT INTO creatures_v2 (
+                    twitch_login, cm_key, lineage_key,
+                    stage, xp_total, happiness,
+                    is_active, is_limited,
+                    acquired_from
+                )
+                VALUES (%s, %s, %s, 0, 0, 50, %s, FALSE, %s)
+                ON CONFLICT (twitch_login, cm_key) DO NOTHING;
+            """, (login, cm_key, cm_lineage, (not has_active), acquired_from))
+
+            # si le CM existait déjà, on ne change rien (important : “ne changer que le nécessaire”)
+
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "cm_key": cm_key, "acquired_from": acquired_from}
