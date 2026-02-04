@@ -276,7 +276,7 @@ class Bot(commands.Bot):
             a_lk = self._lineage_label(active.get("lineage_key"))  # ✅ self.
     
             active_label = f"🥚 Œuf {a_lk}" if a_key == "egg" else f"👾 {a_name}"
-            await ctx.send(f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  |  Collection: " + " | ".join(parts))
+            await ctx.send(f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  | Toute ta collection: " + " | ".join(parts))
         else:
             await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif  |  Collection: " + " | ".join(parts))
     
