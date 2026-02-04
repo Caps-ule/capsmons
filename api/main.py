@@ -3066,6 +3066,15 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             egg_lineage = _parse_egg_lineage(item_key)
             if egg_lineage:
                 # vérifier que la lignée existe (et activée)
+                print("[item/use] login=", login, "item_key=", repr(item_key), "egg_lineage=", repr(egg_lineage), flush=True)
+
+                cur.execute("SELECT key, is_enabled FROM lineages ORDER BY key;")
+                print("[item/use] lineages=", cur.fetchall(), flush=True)
+                
+                cur.execute("SELECT is_enabled FROM lineages WHERE key=%s;", (egg_lineage,))
+                lrow = cur.fetchone()
+                print("[item/use] lineage lookup=", egg_lineage, "=>", lrow, flush=True)
+
                 cur.execute("SELECT is_enabled FROM lineages WHERE key=%s;", (egg_lineage,))
                 lrow = cur.fetchone()
                 if not lrow or not bool(lrow[0]):
