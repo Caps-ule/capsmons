@@ -1088,25 +1088,6 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
 
     return {"ok": True}
 
-
-@app.post("/internal/set_live")
-def internal_set_live(payload: dict, x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
-    value = str(payload.get("value", "false")).strip().lower()
-    value = "true" if value in ("true", "1", "yes", "on") else "false"
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO kv (key, value)
-                VALUES ('is_live', %s)
-                ON CONFLICT (key) DO UPDATE
-                SET value = EXCLUDED.value, updated_at = now();
-            """, (value,))
-        conn.commit()
-
-    return {"ok": True, "is_live": (value == "true")}
-
 @app.get("/admin/user/{login}", response_class=HTMLResponse)
 def admin_user(
     request: Request,
@@ -2706,29 +2687,6 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
         "top_events_24h": top_events_24h,
     })
 
-@app.post("/admin/live")
-def admin_set_live(
-    value: str = Form(...),  # "true" ou "false"
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    v = value.strip().lower()
-    v = "true" if v in ("true", "1", "yes", "on") else "false"
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO kv (key, value)
-                VALUES ('is_live', %s)
-                ON CONFLICT (key) DO UPDATE
-                SET value = EXCLUDED.value, updated_at = now();
-            """, (v,))
-        conn.commit()
-
-    msg = "Live forcé ✅" if v == "true" else "Hors live forcé ✅"
-    return RedirectResponse(url=f"/admin?flash_kind=ok&flash={msg.replace(' ', '%20')}", status_code=303)
-
 
 @app.get("/overlay/evolution_state")
 def overlay_evolution_state():
@@ -3119,151 +3077,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
 # ADMIN: Item Use (creatures_v2 only)
 # =============================================================================
 
-@app.post("/internal/item/use")
-def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
 
-    login = str(payload.get("twitch_login", "")).strip().lower()
-    item_key = str(payload.get("item_key", "")).strip().lower()
-
-    if not login or not item_key:
-        raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
-
-    # valeurs de retour
-    item_name = item_key
-    happiness_gain = 0
-    new_happiness = None
-    xp_gain = 0
-    new_xp_total = None
-    stage_before = None
-    stage_after = None
-
-    def _parse_xp_capsule_gain(k: str) -> int:
-        # accepte xp_capsule_10 / xp_capsule_20 / xp_capsule_30
-        if not k.startswith("xp_capsule_"):
-            return 0
-        try:
-            v = int(k.split("_")[-1])
-        except Exception:
-            return 0
-        if v not in (10, 20, 30):
-            return 0
-        return v
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # 0) user existe
-            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
-
-            # 1) item existe ?
-            cur.execute("SELECT name, happiness_gain FROM items WHERE key=%s;", (item_key,))
-            item = cur.fetchone()
-            if not item:
-                raise HTTPException(status_code=400, detail="Unknown item")
-
-            item_name, happiness_gain = item
-            happiness_gain = int(happiness_gain or 0)
-
-            # 2) stock inventaire ?
-            cur.execute("SELECT qty FROM inventory WHERE twitch_login=%s AND item_key=%s;", (login, item_key))
-            row = cur.fetchone()
-            if not row or int(row[0]) <= 0:
-                raise HTTPException(status_code=400, detail="No item in inventory")
-
-            # 3) CM actif ?
-            cur.execute("""
-                SELECT cm_key, stage, xp_total, happiness
-                FROM creatures_v2
-                WHERE twitch_login=%s AND is_active=true
-                LIMIT 1;
-            """, (login,))
-            arow = cur.fetchone()
-            if not arow:
-                raise HTTPException(status_code=400, detail="No active CM")
-
-            active_cm_key, active_stage, active_xp, active_h = arow
-            stage_before = int(active_stage or 0)
-            active_xp = int(active_xp or 0)
-            active_h = int(active_h or 0)
-
-            # 4) consommer 1 item
-            cur.execute("""
-                UPDATE inventory
-                SET qty = qty - 1, updated_at = now()
-                WHERE twitch_login=%s AND item_key=%s;
-            """, (login, item_key))
-
-            # 5) appliquer effet
-            xp_gain = _parse_xp_capsule_gain(item_key)
-
-            if xp_gain > 0:
-                # --- XP capsule : +XP sur le CM actif ---
-                cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (login, xp_gain))
-
-                cur.execute("""
-                    UPDATE creatures_v2
-                    SET xp_total = xp_total + %s, updated_at = now()
-                    WHERE twitch_login=%s AND cm_key=%s
-                    RETURNING xp_total;
-                """, (xp_gain, login, active_cm_key))
-                new_xp_total = int(cur.fetchone()[0])
-
-                # recalcul stage et update si nécessaire
-                stage_after = int(stage_from_xp(new_xp_total))
-                if stage_after != stage_before:
-                    cur.execute("""
-                        UPDATE creatures_v2
-                        SET stage=%s, updated_at=now()
-                        WHERE twitch_login=%s AND cm_key=%s;
-                    """, (stage_after, login, active_cm_key))
-                else:
-                    stage_after = stage_before
-
-                # bonheur inchangé
-                new_happiness = active_h
-
-            else:
-                # --- Bonheur : +happiness sur le CM actif ---
-                new_happiness = max(0, min(100, active_h + happiness_gain))
-
-                cur.execute("""
-                    UPDATE creatures_v2
-                    SET happiness=%s, updated_at=now()
-                    WHERE twitch_login=%s AND cm_key=%s;
-                """, (new_happiness, login, active_cm_key))
-
-                # xp inchangé (optionnel dans la réponse)
-                new_xp_total = active_xp
-                stage_after = stage_before
-
-        conn.commit()
-
-    # Réponse API claire pour le bot
-    if xp_gain > 0:
-        return {
-            "ok": True,
-            "twitch_login": login,
-            "cm_key": str(active_cm_key),
-            "item_key": item_key,
-            "item_name": item_name,
-            "effect": "xp",
-            "xp_gain": int(xp_gain),
-            "xp_total": int(new_xp_total or 0),
-            "stage_before": int(stage_before or 0),
-            "stage_after": int(stage_after or 0),
-            "happiness_after": int(new_happiness or 0),
-        }
-
-    return {
-        "ok": True,
-        "twitch_login": login,
-        "cm_key": str(active_cm_key),
-        "item_key": item_key,
-        "item_name": item_name,
-        "effect": "happiness",
-        "happiness_gain": int(happiness_gain),
-        "happiness_after": int(new_happiness or 0),
-    }
 
 
 # =============================================================================
