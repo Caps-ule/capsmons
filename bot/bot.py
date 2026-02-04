@@ -200,7 +200,7 @@ class Bot(commands.Bot):
     
         await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
 
-    def self._lineage_label(lk: str) -> str:
+    def _lineage_label(lk: str) -> str:
         lk = (lk or "").strip().lower()
         return {
             "biolab": "Biolab",
@@ -211,7 +211,7 @@ class Bot(commands.Bot):
         }.get(lk, lk or "—")
     
     
-    def self._short_stage(s: int) -> str:
+    def _short_stage(s: int) -> str:
         try:
             s = int(s)
         except Exception:
