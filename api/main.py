@@ -2733,6 +2733,39 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
         "top_events_24h": top_events_24h,
     })
 
+@app.get("/overlay/state")
+def overlay_state():
+    # renvoyer l'état "show" (et éventuellement "drop"/"evolution" si tu veux)
+    # mais au minimum: show
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, twitch_login, cm_key, cm_name, stage, cm_media_url, xp_total, happiness, expires_at
+                FROM overlay_events
+                WHERE expires_at > now()
+                ORDER BY id DESC
+                LIMIT 1;
+            """)
+            r = cur.fetchone()
+
+    if not r:
+        return {"show": False}
+
+    return {
+        "show": True,
+        "event": {
+            "id": r[0],
+            "twitch_login": r[1],
+            "cm_key": r[2],
+            "cm_name": r[3],
+            "stage": int(r[4] or 0),
+            "cm_media_url": r[5],
+            "xp_total": int(r[6] or 0),
+            "happiness": int(r[7] or 0),
+            "expires_at": r[8].isoformat() if r[8] else None,
+        }
+    }
+
 
 @app.get("/overlay/evolution_state")
 def overlay_evolution_state():
