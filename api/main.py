@@ -2735,12 +2735,23 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
 
 @app.get("/overlay/state")
 def overlay_state():
-    # renvoyer l'état "show" (et éventuellement "drop"/"evolution" si tu veux)
-    # mais au minimum: show
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, twitch_login, cm_key, cm_name, stage, cm_media_url, xp_total, happiness, expires_at
+                SELECT
+                    id,
+                    twitch_login,
+                    viewer_display,
+                    viewer_avatar,
+                    cm_key,
+                    cm_name,
+                    cm_media_url,
+                    xp_total,
+                    stage,
+                    stage_start_xp,
+                    next_stage_xp,
+                    happiness,
+                    expires_at
                 FROM overlay_events
                 WHERE expires_at > now()
                 ORDER BY id DESC
@@ -2751,19 +2762,68 @@ def overlay_state():
     if not r:
         return {"show": False}
 
+    (
+        _id,
+        twitch_login,
+        viewer_display,
+        viewer_avatar,
+        cm_key,
+        cm_name,
+        cm_media_url,
+        xp_total,
+        stage,
+        stage_start_xp,
+        next_stage_xp,
+        happiness,
+        expires_at,
+    ) = r
+
+    # Calcul % XP dans le stage
+    try:
+        xp_total = int(xp_total or 0)
+        stage_start_xp = int(stage_start_xp or 0)
+        next_stage_xp = int(next_stage_xp or 0) if next_stage_xp is not None else None
+    except Exception:
+        stage_start_xp = 0
+        next_stage_xp = None
+
+    if next_stage_xp is None or next_stage_xp <= stage_start_xp:
+        xp_pct = 100
+        to_next = None
+    else:
+        span = max(1, next_stage_xp - stage_start_xp)
+        cur_in_stage = max(0, min(span, xp_total - stage_start_xp))
+        xp_pct = int(round((cur_in_stage / span) * 100))
+        to_next = max(0, next_stage_xp - xp_total)
+
+    # Bonheur en %
+    try:
+        h_pct = max(0, min(100, int(happiness or 0)))
+    except Exception:
+        h_pct = 0
+
+    # ⚠️ ton JS fait "@${j.viewer.name}" -> il veut un login (pas le display)
+    # On renvoie le login (twitch_login). Le display reste possible si tu veux plus tard.
     return {
         "show": True,
-        "event": {
-            "id": r[0],
-            "twitch_login": r[1],
-            "cm_key": r[2],
-            "cm_name": r[3],
-            "stage": int(r[4] or 0),
-            "cm_media_url": r[5],
-            "xp_total": int(r[6] or 0),
-            "happiness": int(r[7] or 0),
-            "expires_at": r[8].isoformat() if r[8] else None,
-        }
+        "viewer": {
+            "name": twitch_login,
+            "avatar": viewer_avatar or "",
+        },
+        "cm": {
+            "key": cm_key,
+            "name": cm_name or cm_key,
+            "media": cm_media_url or "",
+            "stage": int(stage or 0),
+        },
+        "xp": {
+            "total": xp_total,
+            "pct": xp_pct,
+            "to_next": to_next,
+        },
+        "happiness": {
+            "pct": h_pct,
+        },
     }
 
 
