@@ -477,6 +477,173 @@ def as_int(v: str | None, default: int) -> int:
     except Exception:
         return default
 
+
+def kv_get_many(cur, keys: list[str]) -> dict:
+    cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
+    rows = cur.fetchall()
+    return {k: v for (k, v) in rows}
+
+@app.get("/admin/autodrop")
+def admin_autodrop(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    keys = [
+        "auto_drop_enabled",
+        "auto_drop_min_seconds",
+        "auto_drop_max_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
+        "auto_drop_pick_kind",
+        "auto_drop_mode",
+        "auto_drop_ticket_qty",
+        "auto_drop_fallback_media_url",
+    ]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cfg = kv_get_many(cur, keys)
+
+@app.post("/admin/autodrop/save")
+def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    def s(k, default=""):
+        return str(payload.get(k, default)).strip()
+
+    enabled = "true" if s("enabled","false").lower() in ("1","true","yes","on") else "false"
+
+    def to_int(name, default):
+        try: return int(s(name, str(default)))
+        except: return default
+
+    min_s = max(60, to_int("min_seconds", 900))
+    max_s = max(min_s, to_int("max_seconds", 1500))
+
+    dmin = max(5, to_int("duration_min", 10))
+    dmax = max(dmin, to_int("duration_max", 20))
+
+    kind = s("pick_kind","any").lower()
+    if kind not in ("any","xp","candy","egg"):
+        kind = "any"
+
+    mode = s("mode","random").lower()
+    if mode not in ("random","first"):
+        mode = "random"
+
+    qty = max(1, min(50, to_int("ticket_qty", 1)))
+    fallback = s("fallback_media_url","")
+
+    pairs = [
+        ("auto_drop_enabled", enabled),
+        ("auto_drop_min_seconds", str(min_s)),
+        ("auto_drop_max_seconds", str(max_s)),
+        ("auto_drop_duration_min_seconds", str(dmin)),
+        ("auto_drop_duration_max_seconds", str(dmax)),
+        ("auto_drop_pick_kind", kind),
+        ("auto_drop_mode", mode),
+        ("auto_drop_ticket_qty", str(qty)),
+        ("auto_drop_fallback_media_url", fallback),
+    ]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO kv(key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value=EXCLUDED.value, updated_at=now();
+            """, pairs)
+        conn.commit()
+
+    return {"ok": True}
+import random
+
+@app.post("/admin/autodrop/test")
+def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    keys = [
+        "auto_drop_pick_kind",
+        "auto_drop_mode",
+        "auto_drop_ticket_qty",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
+        "auto_drop_fallback_media_url",
+    ]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cfg = kv_get_many(cur, keys)
+
+    pick_kind = (cfg.get("auto_drop_pick_kind") or "any").strip().lower()
+    if pick_kind not in ("any","xp","candy","egg"):
+        pick_kind = "any"
+
+    mode = (cfg.get("auto_drop_mode") or "random").strip().lower()
+    if mode not in ("random","first"):
+        mode = "random"
+
+    qty = int(cfg.get("auto_drop_ticket_qty") or 1)
+    qty = max(1, min(qty, 50))
+
+    dmin = int(cfg.get("auto_drop_duration_min_seconds") or 10)
+    dmax = int(cfg.get("auto_drop_duration_max_seconds") or 20)
+    dmin = max(5, dmin)
+    dmax = max(dmin, dmax)
+    duration = random.randint(dmin, dmax)
+
+    fallback = (cfg.get("auto_drop_fallback_media_url") or "").strip()
+
+    # pick item (pondéré)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            where = "TRUE"
+            if pick_kind == "xp":
+                where = "xp_gain > 0"
+            elif pick_kind == "candy":
+                where = "happiness_gain > 0"
+            elif pick_kind == "egg":
+                where = "key LIKE 'egg_%'"
+
+            cur.execute(f"""
+                SELECT key, name, COALESCE(icon_url,''), drop_weight
+                FROM items
+                WHERE {where} AND drop_weight > 0
+            """)
+            rows = cur.fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No items for this kind")
+
+    total = sum(int(r[3] or 0) for r in rows)
+    rnd = random.randint(1, max(1, total))
+    acc = 0
+    picked = rows[0]
+    for r in rows:
+        acc += int(r[3] or 0)
+        if rnd <= acc:
+            picked = r
+            break
+
+    item_key, item_name, icon_url, _w = picked
+    media_url = icon_url or fallback
+    if not media_url:
+        raise HTTPException(status_code=400, detail="Picked item has no icon_url and no fallback_media_url")
+
+    # spawn drop
+    payload = {
+        "mode": mode,
+        "title": item_name,
+        "media_url": media_url,
+        "duration_seconds": duration,
+        "xp_bonus": 0,
+        "ticket_key": item_key,
+        "ticket_qty": qty,
+    }
+
+    # appelle ta fonction existante directement
+    out = drop_spawn(payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
+    return {"ok": True, "picked": {"item_key": item_key, "item_name": item_name, "media_url": media_url}, "drop": out}
+
 # =============================================================================
 # DB init (ne pas dupliquer les tables)
 # =============================================================================
@@ -769,6 +936,86 @@ async def eventsub_handler(request: Request):
         return "ok"
 
     return "ok"
+
+@app.get("/internal/settings/autodrop")
+def get_autodrop_settings(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    keys = [
+        "auto_drop_enabled",
+        "auto_drop_min_seconds",
+        "auto_drop_max_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
+        "auto_drop_pick_kind",
+        "auto_drop_mode",
+        "auto_drop_ticket_qty",
+        "auto_drop_fallback_media_url",
+    ]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
+            rows = cur.fetchall()
+
+    d = {k: v for (k, v) in rows}
+    return {"ok": True, "settings": d}
+    return {"ok": True, "settings": cfg}
+
+@app.post("/admin/autodrop/save")
+def admin_save_autodrop(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    def s(k, default=""):
+        return str(payload.get(k, default)).strip()
+
+    # normalisation + garde-fous
+    enabled = "true" if s("enabled","false").lower() in ("1","true","yes","on") else "false"
+
+    def to_int(name, default):
+        try: return int(s(name, str(default)))
+        except: return default
+
+    min_s = max(60, to_int("min_seconds", 900))
+    max_s = max(min_s, to_int("max_seconds", 1500))
+
+    dmin = max(5, to_int("duration_min", 10))
+    dmax = max(dmin, to_int("duration_max", 20))
+
+    kind = s("pick_kind","any").lower()
+    if kind not in ("any","xp","candy"):
+        kind = "any"
+
+    mode = s("mode","random").lower()
+    if mode not in ("first","random"):
+        mode = "random"
+
+    qty = max(1, min(50, to_int("ticket_qty", 1)))
+    fallback = s("fallback_media_url","")
+
+    pairs = [
+        ("auto_drop_enabled", enabled),
+        ("auto_drop_min_seconds", str(min_s)),
+        ("auto_drop_max_seconds", str(max_s)),
+        ("auto_drop_duration_min_seconds", str(dmin)),
+        ("auto_drop_duration_max_seconds", str(dmax)),
+        ("auto_drop_pick_kind", kind),
+        ("auto_drop_mode", mode),
+        ("auto_drop_ticket_qty", str(qty)),
+        ("auto_drop_fallback_media_url", fallback),
+    ]
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO kv(key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value=EXCLUDED.value, updated_at=now();
+            """, pairs)
+        conn.commit()
+
+    return {"ok": True}
+
 
 # =============================================================================
 # BONHEUR

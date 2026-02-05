@@ -30,6 +30,9 @@ API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
 API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_COMPANION_SET_BY_ID_URL = "http://api:8000/internal/companions/set_active"
+API_AUTODROP_SETTINGS_URL = "http://api:8000/internal/settings/autodrop"
+_autodrop_cache = {"ts": 0.0, "cfg": {}}
+
 
 
 
@@ -66,6 +69,24 @@ def rp_format(text: str, **kw) -> str:
     for k, v in kw.items():
         out = out.replace("{" + k + "}", str(v))
     return out
+
+def _autodrop_get_cfg() -> dict:
+    now = time.time()
+    if now - _autodrop_cache["ts"] < 30:
+        return _autodrop_cache["cfg"]
+
+    try:
+        r = requests.get(API_AUTODROP_SETTINGS_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+        if r.status_code == 200:
+            cfg = (r.json() or {}).get("settings", {}) or {}
+            _autodrop_cache["cfg"] = cfg
+            _autodrop_cache["ts"] = now
+            return cfg
+    except Exception:
+        pass
+
+    return _autodrop_cache["cfg"]
+
 
 
 async def rp_get(key: str) -> str | None:
@@ -799,7 +820,6 @@ class Bot(commands.Bot):
     # DROP AUTO
     # ------------------------------------------------------------------------
 
-
     async def auto_drop_loop(self):
         enabled = os.environ.get("AUTO_DROP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
         if not enabled:
@@ -823,6 +843,16 @@ class Bot(commands.Bot):
             pick_kind = "any"
     
         while True:
+            cfg = _autodrop_get_cfg()
+            enabled = str(cfg.get("auto_drop_enabled","false")).lower() == "true"
+            if not enabled:
+                await asyncio.sleep(5)
+                continue
+            
+            min_s = int(cfg.get("auto_drop_min_seconds","900"))
+            max_s = int(cfg.get("auto_drop_max_seconds","1500"))
+            # etc...
+
             await asyncio.sleep(random.randint(min_s, max_s))
     
             # 1) seulement si live
