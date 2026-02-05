@@ -161,7 +161,7 @@
 
       <div class="liveRow">
         <button class="btn btnLive {% if is_live %}btnDisabled{% endif %}" onclick="setLive(true)">🟢 Live</button>
-        <button class="btn btnLive {% if is_live %}btnDisabled{% endif %}" onclick="setLive(false)">⚫ Off Live</button>
+        <button class="btn btnOff {% if not is_live %}btnDisabled{% endif %}" onclick="setLive(false)">⚫ Off Live</button>
 
 
         <span class="badge">
