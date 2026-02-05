@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Admin - {{ login }} - Collection</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:18px;background:#0b0f14;color:#e6edf3}
+    a{color:#7aa2ff;text-decoration:none}
+    table{width:100%;border-collapse:collapse;margin-top:14px}
+    th,td{border-bottom:1px solid rgba(255,255,255,.10);padding:8px 10px;font-size:13px}
+    th{color:#9aa4b2;text-align:left;font-weight:800}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid rgba(255,255,255,.14);border-radius:999px;font-size:12px;color:#9aa4b2}
+    .ok{color:#9bffb2} .err{color:#ff8b8b}
+    .row{display:flex;gap:18px;align-items:flex-start}
+    .card{flex:1;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px;background:rgba(255,255,255,.03)}
+    input,select{background:#0f1620;border:1px solid rgba(255,255,255,.14);border-radius:10px;color:#e6edf3;padding:7px 10px}
+    button{background:#7aa2ff;border:0;border-radius:10px;padding:8px 12px;font-weight:800;cursor:pointer}
+    button.secondary{background:#2a3442}
+  </style>
+</head>
+<body>
+
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:20px;font-weight:900">@{{ login }}</div>
+      <div style="color:#9aa4b2;font-size:13px">
+        <a href="/admin">Admin</a> · <a href="/admin/user/{{ login }}">Fiche user</a>
+      </div>
+    </div>
+  </div>
+
+  {% if flash %}
+    <div style="margin-top:12px" class="{{ flash_kind or 'ok' }}">
+      {{ flash }}
+    </div>
+  {% endif %}
+
+  <div class="row" style="margin-top:14px">
+    <div class="card">
+      <div style="font-weight:900">Actions inventaire</div>
+      <form method="post" action="/admin/user/{{ login }}/collection/action" style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+        <input type="hidden" name="action" value="give_item">
+        <input name="item_key" placeholder="item_key">
+        <input name="item_qty" placeholder="qty" type="number" min="1">
+        <button type="submit">Give item</button>
+      </form>
+
+      <div style="margin-top:12px;color:#9aa4b2;font-size:12px">Inventaire actuel</div>
+      <table>
+        <tr><th>item</th><th>qty</th></tr>
+        {% for it in inventory %}
+          <tr><td>{{ it.item_key }}</td><td>{{ it.qty }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:900">Transfert item (support)</div>
+      <form method="post" action="/admin/inventory/transfer" style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+        <input name="from_login" placeholder="from_login" value="{{ login }}">
+        <input name="to_login" placeholder="to_login">
+        <input name="item_key" placeholder="item_key">
+        <input name="qty" placeholder="qty" type="number" min="1">
+        <button type="submit" class="secondary">Transfer</button>
+      </form>
+    </div>
+  </div>
+
+  <div style="margin-top:18px;font-weight:900">Collection</div>
+
+  <table>
+    <tr>
+      <th>id</th><th>active</th><th>cm_key</th><th>lineage</th><th>stage</th>
+      <th>xp</th><th>bonheur</th><th>acquired</th><th>at</th><th>actions</th>
+    </tr>
+    {% for c in items %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td>{% if c.is_active %}<span class="pill ok">ACTIVE</span>{% else %}<span class="pill">—</span>{% endif %}</td>
+        <td>{{ c.cm_key }}</td>
+        <td>{{ c.lineage_key or '' }}</td>
+        <td>{{ c.stage }}</td>
+        <td>{{ c.xp_total }}</td>
+        <td>{{ c.happiness }}</td>
+        <td>{{ c.acquired_from }}</td>
+        <td style="color:#9aa4b2">{{ c.acquired_at or '' }}</td>
+        <td>
+          <form method="post" action="/admin/user/{{ login }}/collection/action" style="display:flex;gap:6px;flex-wrap:wrap">
+            <input type="hidden" name="creature_id" value="{{ c.id }}">
+            <button name="action" value="set_active" class="secondary">Set active</button>
+
+            <input name="amount" type="number" min="1" placeholder="+xp" style="width:90px">
+            <button name="action" value="add_xp">Add XP</button>
+
+            <input name="stage" type="number" min="0" max="3" placeholder="stage" style="width:80px">
+            <button name="action" value="set_stage" class="secondary">Set stage</button>
+
+            <button name="action" value="reset" class="secondary">Reset</button>
+
+            {% if c.cm_key == 'egg' %}
+              <button name="action" value="delete_egg" class="secondary">Delete egg</button>
+            {% endif %}
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+
+</body>
+</html>

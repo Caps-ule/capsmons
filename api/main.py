@@ -555,7 +555,28 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
         conn.commit()
 
     return {"ok": True}
-import random
+
+@app.get("/internal/settings/autodrop")
+def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    keys = [
+        "auto_drop_enabled",
+        "auto_drop_min_seconds",
+        "auto_drop_max_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
+        "auto_drop_pick_kind",
+        "auto_drop_mode",
+        "auto_drop_ticket_qty",
+        "auto_drop_fallback_media_url",
+    ]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
+            rows = cur.fetchall()
+    return {"ok": True, "settings": {k: v for (k, v) in rows}}
+
 
 @app.post("/admin/autodrop/test")
 def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
@@ -1660,6 +1681,380 @@ def admin_user(
         "cm_key": cm_key,
         "happiness": int(happiness or 0),
     })
+
+from fastapi import Form
+from fastapi.responses import RedirectResponse, HTMLResponse
+
+# -------------------------------
+# ADMIN: page collection complète
+# -------------------------------
+@app.get("/admin/user/{login}/collection", response_class=HTMLResponse)
+def admin_user_collection(
+    request: Request,
+    login: str,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    login = (login or "").strip().lower()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    c.id,
+                    c.is_active,
+                    c.cm_key,
+                    c.lineage_key,
+                    c.stage,
+                    c.xp_total,
+                    COALESCE(c.happiness, 50) AS happiness,
+                    COALESCE(c.acquired_from,'') AS acquired_from,
+                    c.acquired_at
+                FROM creatures_v2 c
+                WHERE c.twitch_login = %s
+                ORDER BY c.is_active DESC, c.acquired_at DESC NULLS LAST, c.id DESC;
+            """, (login,))
+            rows = cur.fetchall()
+
+            # inventaire (optionnel mais pratique sur la même page)
+            cur.execute("""
+                SELECT item_key, qty
+                FROM inventory
+                WHERE twitch_login=%s AND qty>0
+                ORDER BY item_key;
+            """, (login,))
+            inv = [{"item_key": r[0], "qty": int(r[1] or 0)} for r in cur.fetchall()]
+
+    items = []
+    for r in rows:
+        items.append({
+            "id": int(r[0]),
+            "is_active": bool(r[1]),
+            "cm_key": r[2],
+            "lineage_key": r[3],
+            "stage": int(r[4] or 0),
+            "xp_total": int(r[5] or 0),
+            "happiness": int(r[6] or 50),
+            "acquired_from": r[7],
+            "acquired_at": (r[8].isoformat() if r[8] else None),
+        })
+
+    return templates.TemplateResponse("user_collection.html", {
+        "request": request,
+        "login": login,
+        "items": items,
+        "inventory": inv,
+        "flash": flash,
+        "flash_kind": flash_kind,
+    })
+
+
+# ---------------------------------------------------
+# ADMIN: actions collection (set active / xp / stage…)
+# ---------------------------------------------------
+@app.post("/admin/user/{login}/collection/action")
+def admin_user_collection_action(
+    login: str,
+    action: str = Form(...),
+
+    creature_id: int | None = Form(None),
+    amount: int | None = Form(None),
+    stage: int | None = Form(None),
+
+    item_key: str | None = Form(None),
+    item_qty: int | None = Form(None),
+
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    login = (login or "").strip().lower()
+    action = (action or "").strip().lower()
+
+    def go(msg: str, kind: str = "ok"):
+        safe = msg.replace(" ", "%20")
+        return RedirectResponse(
+            url=f"/admin/user/{login}/collection?flash_kind={kind}&flash={safe}",
+            status_code=303
+        )
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+
+            if action == "set_active":
+                if creature_id is None:
+                    return go("creature_id manquant", "err")
+
+                cur.execute("""
+                    SELECT 1 FROM creatures_v2
+                    WHERE id=%s AND twitch_login=%s;
+                """, (int(creature_id), login))
+                if not cur.fetchone():
+                    return go("Creature introuvable", "err")
+
+                cur.execute("""
+                    UPDATE creatures_v2
+                    SET is_active=false, updated_at=now()
+                    WHERE twitch_login=%s AND is_active=true;
+                """, (login,))
+
+                cur.execute("""
+                    UPDATE creatures_v2
+                    SET is_active=true, updated_at=now()
+                    WHERE id=%s AND twitch_login=%s;
+                """, (int(creature_id), login))
+
+                conn.commit()
+                return go(f"Actif => id {creature_id}")
+
+            if action == "add_xp":
+                if creature_id is None or amount is None:
+                    return go("creature_id/amount manquants", "err")
+                amt = int(amount)
+                if amt <= 0:
+                    return go("amount invalide", "err")
+
+                cur.execute("""
+                    SELECT stage, xp_total
+                    FROM creatures_v2
+                    WHERE id=%s AND twitch_login=%s;
+                """, (int(creature_id), login))
+                row = cur.fetchone()
+                if not row:
+                    return go("Creature introuvable", "err")
+
+                prev_stage = int(row[0] or 0)
+
+                cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s,%s);", (login, amt))
+
+                cur.execute("""
+                    UPDATE creatures_v2
+                    SET xp_total = xp_total + %s,
+                        updated_at = now()
+                    WHERE id=%s AND twitch_login=%s
+                    RETURNING xp_total;
+                """, (amt, int(creature_id), login))
+                new_xp = int(cur.fetchone()[0] or 0)
+                new_stage = int(stage_from_xp(new_xp))
+
+                if new_stage != prev_stage:
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET stage=%s, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (new_stage, int(creature_id), login))
+
+                conn.commit()
+                return go(f"+{amt} XP (total {new_xp})")
+
+            if action == "set_stage":
+                if creature_id is None or stage is None:
+                    return go("creature_id/stage manquants", "err")
+                st = int(stage)
+                if st < 0 or st > 3:
+                    return go("stage invalide", "err")
+
+                cur.execute("""
+                    UPDATE creatures_v2
+                    SET stage=%s, updated_at=now()
+                    WHERE id=%s AND twitch_login=%s;
+                """, (st, int(creature_id), login))
+                if cur.rowcount != 1:
+                    return go("Creature introuvable", "err")
+
+                conn.commit()
+                return go(f"Stage => {st}")
+
+            if action == "reset":
+                if creature_id is None:
+                    return go("creature_id manquant", "err")
+
+                cur.execute("""
+                    UPDATE creatures_v2
+                    SET xp_total=0,
+                        stage=0,
+                        lineage_key=NULL,
+                        happiness=50,
+                        updated_at=now()
+                    WHERE id=%s AND twitch_login=%s;
+                """, (int(creature_id), login))
+                if cur.rowcount != 1:
+                    return go("Creature introuvable", "err")
+
+                conn.commit()
+                return go("Reset OK")
+
+            if action == "delete_egg":
+                # supprime uniquement si cm_key='egg'
+                if creature_id is None:
+                    return go("creature_id manquant", "err")
+
+                cur.execute("""
+                    SELECT is_active FROM creatures_v2
+                    WHERE id=%s AND twitch_login=%s AND cm_key='egg';
+                """, (int(creature_id), login))
+                row = cur.fetchone()
+                if not row:
+                    return go("Pas un oeuf (ou introuvable)", "err")
+
+                was_active = bool(row[0])
+
+                cur.execute("""
+                    DELETE FROM creatures_v2
+                    WHERE id=%s AND twitch_login=%s AND cm_key='egg';
+                """, (int(creature_id), login))
+
+                # si c’était actif => activer le meilleur restant (s’il existe)
+                if was_active:
+                    cur.execute("""
+                        SELECT id FROM creatures_v2
+                        WHERE twitch_login=%s
+                        ORDER BY acquired_at DESC NULLS LAST, xp_total DESC, id DESC
+                        LIMIT 1;
+                    """, (login,))
+                    r2 = cur.fetchone()
+                    if r2:
+                        cur.execute("""
+                            UPDATE creatures_v2
+                            SET is_active=true, updated_at=now()
+                            WHERE id=%s AND twitch_login=%s;
+                        """, (int(r2[0]), login))
+
+                conn.commit()
+                return go("Oeuf supprimé")
+
+            if action == "give_item":
+                if not item_key or item_qty is None:
+                    return go("item_key/item_qty manquants", "err")
+                qty = int(item_qty)
+                if qty <= 0:
+                    return go("qty invalide", "err")
+                k = item_key.strip().lower()
+
+                cur.execute("""
+                    INSERT INTO inventory (twitch_login, item_key, qty)
+                    VALUES (%s,%s,%s)
+                    ON CONFLICT (twitch_login, item_key)
+                    DO UPDATE SET qty = inventory.qty + EXCLUDED.qty,
+                                  updated_at = now();
+                """, (login, k, qty))
+
+                conn.commit()
+                return go(f"+{qty} {k}")
+
+            return go("Action inconnue", "err")
+
+@app.post("/admin/dedupe/merge_one")
+def admin_merge_one(
+    login: str = Form(...),
+    cm_key: str = Form(...),
+    lineage_key: str = Form(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    login = login.strip().lower()
+    cm_key = cm_key.strip().lower()
+    lineage_key = (lineage_key or "").strip().lower() or None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, is_active, xp_total, COALESCE(happiness,50), acquired_at
+                FROM creatures_v2
+                WHERE twitch_login=%s AND cm_key=%s
+                  AND ( (lineage_key IS NULL AND %s IS NULL) OR lineage_key=%s )
+                ORDER BY is_active DESC, xp_total DESC, COALESCE(happiness,50) DESC, acquired_at ASC NULLS LAST, id ASC;
+            """, (login, cm_key, lineage_key, lineage_key))
+            rows = cur.fetchall()
+
+            if len(rows) <= 1:
+                conn.commit()
+                return {"ok": True, "merged": False, "reason": "no_duplicates"}
+
+            winner_id = int(rows[0][0])
+            loser_ids = [int(r[0]) for r in rows[1:]]
+
+            # On “harmonise” le winner (max xp/happiness)
+            max_xp = max(int(r[2] or 0) for r in rows)
+            max_h = max(int(r[3] or 50) for r in rows)
+
+            cur.execute("""
+                UPDATE creatures_v2
+                SET xp_total=%s,
+                    happiness=%s,
+                    acquired_from='merge',
+                    updated_at=now()
+                WHERE id=%s AND twitch_login=%s;
+            """, (max_xp, max_h, winner_id, login))
+
+            cur.execute("""
+                DELETE FROM creatures_v2
+                WHERE twitch_login=%s AND id = ANY(%s);
+            """, (login, loser_ids))
+
+        conn.commit()
+
+    return {"ok": True, "merged": True, "winner_id": winner_id, "deleted_ids": loser_ids}
+
+
+@app.post("/admin/inventory/transfer")
+def admin_inventory_transfer(
+    from_login: str = Form(...),
+    to_login: str = Form(...),
+    item_key: str = Form(...),
+    qty: int = Form(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    from_login = from_login.strip().lower()
+    to_login = to_login.strip().lower()
+    item_key = item_key.strip().lower()
+    qty = int(qty)
+
+    if not from_login or not to_login or not item_key or qty <= 0:
+        raise HTTPException(status_code=400, detail="Invalid params")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # lock ligne source (évite course)
+            cur.execute("""
+                SELECT qty
+                FROM inventory
+                WHERE twitch_login=%s AND item_key=%s
+                FOR UPDATE;
+            """, (from_login, item_key))
+            row = cur.fetchone()
+            have = int(row[0] or 0) if row else 0
+            if have < qty:
+                raise HTTPException(status_code=400, detail=f"Not enough qty (have={have}, need={qty})")
+
+            # decrement source
+            cur.execute("""
+                UPDATE inventory
+                SET qty = qty - %s, updated_at=now()
+                WHERE twitch_login=%s AND item_key=%s;
+            """, (qty, from_login, item_key))
+
+            # cleanup si 0
+            cur.execute("""
+                DELETE FROM inventory
+                WHERE twitch_login=%s AND item_key=%s AND qty <= 0;
+            """, (from_login, item_key))
+
+            # increment target
+            cur.execute("""
+                INSERT INTO inventory (twitch_login, item_key, qty)
+                VALUES (%s,%s,%s)
+                ON CONFLICT (twitch_login, item_key)
+                DO UPDATE SET qty = inventory.qty + EXCLUDED.qty,
+                              updated_at = now();
+            """, (to_login, item_key, qty))
+
+        conn.commit()
+
+    return {"ok": True, "from": from_login, "to": to_login, "item_key": item_key, "qty": qty}
 
 @app.get("/admin/forms", response_class=HTMLResponse)
 def admin_forms(
