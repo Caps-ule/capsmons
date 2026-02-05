@@ -800,125 +800,125 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
 
 
-        async def auto_drop_loop(self):
-        enabled = os.environ.get("AUTO_DROP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-        if not enabled:
-            return
+    async def auto_drop_loop(self):
+    enabled = os.environ.get("AUTO_DROP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        return
 
-        # délai entre drops
-        min_s = int(os.environ.get("AUTO_DROP_MIN_SECONDS", "900"))
-        max_s = int(os.environ.get("AUTO_DROP_MAX_SECONDS", "1500"))
-        min_s = max(60, min_s)
-        max_s = max(min_s, max_s)
+    # délai entre drops
+    min_s = int(os.environ.get("AUTO_DROP_MIN_SECONDS", "900"))
+    max_s = int(os.environ.get("AUTO_DROP_MAX_SECONDS", "1500"))
+    min_s = max(60, min_s)
+    max_s = max(min_s, max_s)
 
-        # ✅ durée du drop paramétrable (et aléatoire dans une plage)
-        dmin = int(os.environ.get("AUTO_DROP_DURATION_MIN_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40")))
-        dmax = int(os.environ.get("AUTO_DROP_DURATION_MAX_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40")))
-        dmin = max(5, dmin)
-        dmax = max(dmin, dmax)
+    # ✅ durée du drop paramétrable (et aléatoire dans une plage)
+    dmin = int(os.environ.get("AUTO_DROP_DURATION_MIN_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40")))
+    dmax = int(os.environ.get("AUTO_DROP_DURATION_MAX_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40")))
+    dmin = max(5, dmin)
+    dmax = max(dmin, dmax)
 
-        # ✅ type d’item à piocher: any | xp | candy
-        pick_kind = os.environ.get("AUTO_DROP_PICK_KIND", "any").strip().lower()
-        if pick_kind not in ("any", "xp", "candy"):
-            pick_kind = "any"
+    # ✅ type d’item à piocher: any | xp | candy
+    pick_kind = os.environ.get("AUTO_DROP_PICK_KIND", "any").strip().lower()
+    if pick_kind not in ("any", "xp", "candy"):
+        pick_kind = "any"
 
-        while True:
-            await asyncio.sleep(random.randint(min_s, max_s))
+    while True:
+        await asyncio.sleep(random.randint(min_s, max_s))
 
-            # 1) seulement si live
-            try:
-                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
-                if r.status_code != 200 or not r.json().get("is_live", False):
-                    continue
-            except Exception:
+        # 1) seulement si live
+        try:
+            r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+            if r.status_code != 200 or not r.json().get("is_live", False):
                 continue
+        except Exception:
+            continue
 
-            # 2) ne pas spawn s'il y a déjà un drop actif
-            try:
-                s = requests.get("http://api:8000/overlay/drop_state", timeout=2)
-                if s.status_code == 200 and s.json().get("show", False):
-                    continue
-            except Exception:
+        # 2) ne pas spawn s'il y a déjà un drop actif
+        try:
+            s = requests.get("http://api:8000/overlay/drop_state", timeout=2)
+            if s.status_code == 200 and s.json().get("show", False):
                 continue
+        except Exception:
+            continue
 
-            # 3) ✅ choisir un item pondéré depuis l'API
-            try:
-                pr = requests.get(
-                    f"{API_ITEM_PICK_URL}?kind={pick_kind}",
-                    headers={"X-API-Key": API_KEY},
-                    timeout=2,
+        # 3) ✅ choisir un item pondéré depuis l'API
+        try:
+            pr = requests.get(
+                f"{API_ITEM_PICK_URL}?kind={pick_kind}",
+                headers={"X-API-Key": API_KEY},
+                timeout=2,
+            )
+            if pr.status_code != 200:
+                print("[BOT] items/pick failed:", pr.status_code, (pr.text or "")[:200], flush=True)
+                continue
+            picked = pr.json() or {}
+        except Exception as e:
+            print("[BOT] items/pick error:", e, flush=True)
+            continue
+
+        item_key = (picked.get("item_key") or "").strip().lower()
+        item_name = (picked.get("item_name") or item_key).strip()
+        icon_url = (picked.get("icon_url") or "").strip()
+
+        if not item_key:
+            print("[BOT] items/pick returned empty item_key:", picked, flush=True)
+            continue
+
+        if not icon_url:
+            # si tu veux autoriser des items sans icon => mets un fallback dans .env
+            fallback_media = os.environ.get("AUTO_DROP_MEDIA_URL", "").strip()
+            if not fallback_media:
+                print("[BOT] picked item has no icon_url and no AUTO_DROP_MEDIA_URL fallback:", item_key, flush=True)
+                continue
+            icon_url = fallback_media
+
+        duration = random.randint(dmin, dmax)
+
+        # 4) spawn drop
+        payload = {
+            "mode": os.environ.get("AUTO_DROP_MODE", "random").strip().lower(),
+            "title": item_name,
+            "media_url": icon_url,
+            "duration_seconds": duration,
+
+            # tu peux laisser à 0: l’XP est déjà dans l’item via /internal/item/use
+            "xp_bonus": int(os.environ.get("AUTO_DROP_XP_BONUS", "0")),
+
+            # ✅ l’item gagné = celui tiré en pondéré
+            "ticket_key": item_key,
+            "ticket_qty": int(os.environ.get("AUTO_DROP_TICKET_QTY", "1")),
+        }
+
+        try:
+            rr = requests.post(
+                API_DROP_SPAWN_URL,
+                headers={"X-API-Key": API_KEY},
+                json=payload,
+                timeout=3,
+            )
+            if rr.status_code != 200:
+                print("[BOT] auto drop spawn fail:", rr.status_code, (rr.text or "")[:200], flush=True)
+                continue
+        except Exception as e:
+            print("[BOT] auto drop spawn error:", e, flush=True)
+            continue
+
+        # 5) message RP (optionnel)
+        try:
+            chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+            if chan:
+                rp_key = f"drop.spawn.{payload['mode']}"
+                line = await rp_get(rp_key) or "✨ Drop automatique : {title}. Attrape le avec !grab."
+                msg = rp_format(
+                    line,
+                    title=payload["title"],
+                    xp=payload["xp_bonus"],
+                    ticket_key=payload["ticket_key"],
+                    ticket_qty=payload["ticket_qty"],
                 )
-                if pr.status_code != 200:
-                    print("[BOT] items/pick failed:", pr.status_code, (pr.text or "")[:200], flush=True)
-                    continue
-                picked = pr.json() or {}
-            except Exception as e:
-                print("[BOT] items/pick error:", e, flush=True)
-                continue
-
-            item_key = (picked.get("item_key") or "").strip().lower()
-            item_name = (picked.get("item_name") or item_key).strip()
-            icon_url = (picked.get("icon_url") or "").strip()
-
-            if not item_key:
-                print("[BOT] items/pick returned empty item_key:", picked, flush=True)
-                continue
-
-            if not icon_url:
-                # si tu veux autoriser des items sans icon => mets un fallback dans .env
-                fallback_media = os.environ.get("AUTO_DROP_MEDIA_URL", "").strip()
-                if not fallback_media:
-                    print("[BOT] picked item has no icon_url and no AUTO_DROP_MEDIA_URL fallback:", item_key, flush=True)
-                    continue
-                icon_url = fallback_media
-
-            duration = random.randint(dmin, dmax)
-
-            # 4) spawn drop
-            payload = {
-                "mode": os.environ.get("AUTO_DROP_MODE", "random").strip().lower(),
-                "title": item_name,
-                "media_url": icon_url,
-                "duration_seconds": duration,
-
-                # tu peux laisser à 0: l’XP est déjà dans l’item via /internal/item/use
-                "xp_bonus": int(os.environ.get("AUTO_DROP_XP_BONUS", "0")),
-
-                # ✅ l’item gagné = celui tiré en pondéré
-                "ticket_key": item_key,
-                "ticket_qty": int(os.environ.get("AUTO_DROP_TICKET_QTY", "1")),
-            }
-
-            try:
-                rr = requests.post(
-                    API_DROP_SPAWN_URL,
-                    headers={"X-API-Key": API_KEY},
-                    json=payload,
-                    timeout=3,
-                )
-                if rr.status_code != 200:
-                    print("[BOT] auto drop spawn fail:", rr.status_code, (rr.text or "")[:200], flush=True)
-                    continue
-            except Exception as e:
-                print("[BOT] auto drop spawn error:", e, flush=True)
-                continue
-
-            # 5) message RP (optionnel)
-            try:
-                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                if chan:
-                    rp_key = f"drop.spawn.{payload['mode']}"
-                    line = await rp_get(rp_key) or "✨ Drop automatique : {title}. Attrape le avec !grab."
-                    msg = rp_format(
-                        line,
-                        title=payload["title"],
-                        xp=payload["xp_bonus"],
-                        ticket_key=payload["ticket_key"],
-                        ticket_qty=payload["ticket_qty"],
-                    )
-                    await chan.send(msg)
-            except Exception:
-                pass
+                await chan.send(msg)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------------
     # Presence loop (XP de présence)
