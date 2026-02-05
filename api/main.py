@@ -204,6 +204,26 @@ def internal_set_live(payload: dict, x_api_key: str | None = Header(default=None
     return {"ok": True, "is_live": (value == "true")}
 
 
+@app.post("/admin/set_live")
+def admin_set_live(payload: dict, request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    value = str(payload.get("value", "false")).strip().lower()
+    value = "true" if value in ("true", "1", "yes", "on") else "false"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO kv (key, value)
+                VALUES ('is_live', %s)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = now();
+            """, (value,))
+        conn.commit()
+
+    return {"ok": True, "is_live": (value == "true")}
+
+
 
 # =============================================================================
 # RP helpers
