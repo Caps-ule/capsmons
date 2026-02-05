@@ -187,197 +187,240 @@
 
     <div style="margin-top:10px">
       {% if q and result %}
-        <div>
-          Résultat :
-          <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a>
-          — {{ result.xp_total }} XP — stage {{ result.stage }}
-        </div>
+      <div>
+        Résultat :
+        <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a>
+        — {{ result.xp_total }} XP — stage {{ result.stage }}
+      </div>
       {% elif q and not result %}
-        <div>Aucun résultat pour “{{ q }}”.</div>
+      <div>Aucun résultat pour “{{ q }}”.</div>
       {% endif %}
     </div>
   </div>
 
   <div class="card">
-  <h2 style="margin:0 0 10px;">🎁 Auto Drop</h2>
-  <div class="muted" style="margin-bottom:12px;">
-    Configure les drops automatiques (stocké en BDD, pas dans le .env).
+    <h2 style="margin:0 0 10px;">🎁 Auto Drop</h2>
+    <div class="muted" style="margin-bottom:12px;">
+      Configure les drops automatiques (stocké en BDD, pas dans le .env).
+    </div>
+
+    <div class="row" style="align-items:flex-end;">
+      <label class="row" style="gap:8px;">
+        <input type="checkbox" id="ad_enabled">
+        <span>Activé</span>
+      </label>
+
+      <div>
+        <div class="muted">Délai min (s)</div>
+        <input id="ad_min" type="number" min="60" value="900" style="width:120px">
+      </div>
+      <div>
+        <div class="muted">Délai max (s)</div>
+        <input id="ad_max" type="number" min="60" value="1500" style="width:120px">
+      </div>
+
+      <div>
+        <div class="muted">Durée min (s)</div>
+        <input id="ad_dmin" type="number" min="5" value="10" style="width:120px">
+      </div>
+      <div>
+        <div class="muted">Durée max (s)</div>
+        <input id="ad_dmax" type="number" min="5" value="20" style="width:120px">
+      </div>
+
+      <div>
+        <div class="muted">Type</div>
+        <select id="ad_kind" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
+          <option value="any">any</option>
+          <option value="xp">xp</option>
+          <option value="candy">candy</option>
+          <option value="egg">egg</option>
+        </select>
+      </div>
+
+      <div>
+        <div class="muted">Mode</div>
+        <select id="ad_mode" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
+          <option value="random">random</option>
+          <option value="first">first</option>
+        </select>
+      </div>
+
+      <div>
+        <div class="muted">Qty</div>
+        <input id="ad_qty" type="number" min="1" max="50" value="1" style="width:90px">
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div class="muted">Fallback image URL (si item.icon_url vide)</div>
+      <input id="ad_fallback" type="text" placeholder="https://..." style="width:100%;max-width:780px">
+    </div>
+
+    <div class="row" style="margin-top:14px;">
+      <button onclick="saveAutoDrop()">💾 Enregistrer</button>
+      <button onclick="testAutoDrop()">🧪 Test drop maintenant</button>
+      <span id="ad_status" class="muted"></span>
+    </div>
+  </div>
+  <h2>👥 Viewers</h2>
+
+  <div class="muted">
+    {{ total_users }} viewer(s) — page {{ page }} / {{ total_pages }}
   </div>
 
-  <div class="row" style="align-items:flex-end;">
-    <label class="row" style="gap:8px;">
-      <input type="checkbox" id="ad_enabled">
-      <span>Activé</span>
-    </label>
-
-    <div>
-      <div class="muted">Délai min (s)</div>
-      <input id="ad_min" type="number" min="60" value="900" style="width:120px">
-    </div>
-    <div>
-      <div class="muted">Délai max (s)</div>
-      <input id="ad_max" type="number" min="60" value="1500" style="width:120px">
-    </div>
-
-    <div>
-      <div class="muted">Durée min (s)</div>
-      <input id="ad_dmin" type="number" min="5" value="10" style="width:120px">
-    </div>
-    <div>
-      <div class="muted">Durée max (s)</div>
-      <input id="ad_dmax" type="number" min="5" value="20" style="width:120px">
-    </div>
-
-    <div>
-      <div class="muted">Type</div>
-      <select id="ad_kind" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
-        <option value="any">any</option>
-        <option value="xp">xp</option>
-        <option value="candy">candy</option>
-        <option value="egg">egg</option>
-      </select>
-    </div>
-
-    <div>
-      <div class="muted">Mode</div>
-      <select id="ad_mode" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
-        <option value="random">random</option>
-        <option value="first">first</option>
-      </select>
-    </div>
-
-    <div>
-      <div class="muted">Qty</div>
-      <input id="ad_qty" type="number" min="1" max="50" value="1" style="width:90px">
-    </div>
-  </div>
-
-  <div style="margin-top:12px;">
-    <div class="muted">Fallback image URL (si item.icon_url vide)</div>
-    <input id="ad_fallback" type="text" placeholder="https://..." style="width:100%;max-width:780px">
-  </div>
-
-  <div class="row" style="margin-top:14px;">
-    <button onclick="saveAutoDrop()">💾 Enregistrer</button>
-    <button onclick="testAutoDrop()">🧪 Test drop maintenant</button>
-    <span id="ad_status" class="muted"></span>
-  </div>
-</div>
-
-
-  <h2>Top XP</h2>
   <table>
     <thead>
       <tr>
         <th>Viewer</th>
-        <th>XP</th>
-        <th>Stage</th>
+        <th>CM</th>
+        <th>XP Total</th>
+        <th>Stage max</th>
+        <th>Actif</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
-      {% for u in top %}
+      {% for u in users %}
       <tr>
         <td><a href="/admin/user/{{ u.twitch_login }}">{{ u.twitch_login }}</a></td>
-        <td>{{ u.xp_total }}</td>
-        <td>{{ u.stage }}</td>
-        <td><a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a></td>
+        <td>{{ u.cm_count }}</td>
+        <td>{{ u.xp_total_sum }}</td>
+        <td>{{ u.stage_max }}</td>
+        <td>{% if u.active_id %}#{{ u.active_id }}{% else %}—{% endif %}</td>
+        <td>
+          <a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a>
+          ·
+          <a href="/admin/user/{{ u.twitch_login }}/collection">Collection</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 
-  <script>
-    (function () {
-      const KEY = "capsmons_theme";
-      const toggle = document.getElementById("themeToggle");
+  <div class="row" style="margin-top:12px;">
+    {% set base = '/admin?per=' ~ per ~ (q and ('&q=' ~ q) or '') %}
+    <a href="{{ base }}&page=1">⏮️ Début</a>
+    <a href="{{ base }}&page={{ (page-1) if page>1 else 1 }}">⬅️ Précédent</a>
+    <span class="muted">Page {{ page }} / {{ total_pages }}</span>
+    <a href="{{ base }}&page={{ (page+1) if page<total_pages else total_pages }}">Suivant ➡️</a>
+      <a href="{{ base }}&page={{ total_pages }}">Fin ⏭️</a>
+    </div>
 
-      function apply(theme) {
-        document.documentElement.setAttribute("data-theme", theme);
-        toggle.checked = (theme !== "light");
+
+    <h2>Top XP</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Viewer</th>
+          <th>XP</th>
+          <th>Stage</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in top %}
+        <tr>
+          <td><a href="/admin/user/{{ u.twitch_login }}">{{ u.twitch_login }}</a></td>
+          <td>{{ u.xp_total }}</td>
+          <td>{{ u.stage }}</td>
+          <td><a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <script>
+      (function () {
+        const KEY = "capsmons_theme";
+        const toggle = document.getElementById("themeToggle");
+
+        function apply(theme) {
+          document.documentElement.setAttribute("data-theme", theme);
+          toggle.checked = (theme !== "light");
+        }
+
+        const saved = localStorage.getItem(KEY);
+        apply(saved || "dark");
+
+        toggle.addEventListener("change", () => {
+          const theme = toggle.checked ? "dark" : "light";
+          localStorage.setItem(KEY, theme);
+          apply(theme);
+        });
+      })();
+
+      async function setLive(v){
+        const r = await fetch('/admin/set_live', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({value: v})
+        });
+        const j = await r.json();
+        if(!r.ok) alert(JSON.stringify(j));
+        else location.reload();
       }
 
-      const saved = localStorage.getItem(KEY);
-      apply(saved || "dark");
 
-      toggle.addEventListener("change", () => {
-        const theme = toggle.checked ? "dark" : "light";
-        localStorage.setItem(KEY, theme);
-        apply(theme);
-      });
-    })();
+      async function loadAutoDrop(){
+        const el = (id)=>document.getElementById(id);
+        const r = await fetch('/admin/autodrop');
+        const j = await r.json();
+        if(!r.ok){ el('ad_status').textContent = "Erreur chargement AutoDrop"; return; }
 
-    async function setLive(v){
-  const r = await fetch('/admin/set_live', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({value: v})
-  });
-  const j = await r.json();
-  if(!r.ok) alert(JSON.stringify(j));
-  else location.reload();
-}
+        const s = j.settings || {};
+        el('ad_enabled').checked = (String(s.auto_drop_enabled||"false") === "true");
+        el('ad_min').value = s.auto_drop_min_seconds || 900;
+        el('ad_max').value = s.auto_drop_max_seconds || 1500;
+        el('ad_dmin').value = s.auto_drop_duration_min_seconds || 10;
+        el('ad_dmax').value = s.auto_drop_duration_max_seconds || 20;
+        el('ad_kind').value = s.auto_drop_pick_kind || "any";
+        el('ad_mode').value = s.auto_drop_mode || "random";
+        el('ad_qty').value = s.auto_drop_ticket_qty || 1;
+        el('ad_fallback').value = s.auto_drop_fallback_media_url || "";
+        el('ad_status').textContent = "";
+      }
 
+      async function saveAutoDrop(){
+        const el = (id)=>document.getElementById(id);
 
-async function loadAutoDrop(){
-  const el = (id)=>document.getElementById(id);
-  const r = await fetch('/admin/autodrop');
-  const j = await r.json();
-  if(!r.ok){ el('ad_status').textContent = "Erreur chargement AutoDrop"; return; }
+        const payload = {
+          enabled: el('ad_enabled').checked,
+          min_seconds: el('ad_min').value,
+          max_seconds: el('ad_max').value,
+          duration_min: el('ad_dmin').value,
+          duration_max: el('ad_dmax').value,
+          pick_kind: el('ad_kind').value,
+          mode: el('ad_mode').value,
+          ticket_qty: el('ad_qty').value,
+          fallback_media_url: el('ad_fallback').value
+        };
 
-  const s = j.settings || {};
-  el('ad_enabled').checked = (String(s.auto_drop_enabled||"false") === "true");
-  el('ad_min').value = s.auto_drop_min_seconds || 900;
-  el('ad_max').value = s.auto_drop_max_seconds || 1500;
-  el('ad_dmin').value = s.auto_drop_duration_min_seconds || 10;
-  el('ad_dmax').value = s.auto_drop_duration_max_seconds || 20;
-  el('ad_kind').value = s.auto_drop_pick_kind || "any";
-  el('ad_mode').value = s.auto_drop_mode || "random";
-  el('ad_qty').value = s.auto_drop_ticket_qty || 1;
-  el('ad_fallback').value = s.auto_drop_fallback_media_url || "";
-  el('ad_status').textContent = "";
-}
+        const r = await fetch('/admin/autodrop/save', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        el('ad_status').textContent = r.ok ? "✅ Enregistré" : ("⛔ " + JSON.stringify(j));
+      }
 
-async function saveAutoDrop(){
-  const el = (id)=>document.getElementById(id);
+      async function testAutoDrop(){
+        const el = (id)=>document.getElementById(id);
+        el('ad_status').textContent = "Test...";
+        const r = await fetch('/admin/autodrop/test', {method:'POST'});
+        const j = await r.json();
+        if(!r.ok){
+          el('ad_status').textContent = "⛔ " + JSON.stringify(j);
+          return;
+        }
+        const p = j.picked || {};
+        el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || "?"}`;
+      }
 
-  const payload = {
-    enabled: el('ad_enabled').checked,
-    min_seconds: el('ad_min').value,
-    max_seconds: el('ad_max').value,
-    duration_min: el('ad_dmin').value,
-    duration_max: el('ad_dmax').value,
-    pick_kind: el('ad_kind').value,
-    mode: el('ad_mode').value,
-    ticket_qty: el('ad_qty').value,
-    fallback_media_url: el('ad_fallback').value
-  };
-
-  const r = await fetch('/admin/autodrop/save', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const j = await r.json();
-  el('ad_status').textContent = r.ok ? "✅ Enregistré" : ("⛔ " + JSON.stringify(j));
-}
-
-async function testAutoDrop(){
-  const el = (id)=>document.getElementById(id);
-  el('ad_status').textContent = "Test...";
-  const r = await fetch('/admin/autodrop/test', {method:'POST'});
-  const j = await r.json();
-  if(!r.ok){
-    el('ad_status').textContent = "⛔ " + JSON.stringify(j);
-    return;
-  }
-  const p = j.picked || {};
-  el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || "?"}`;
-}
-
-loadAutoDrop();
+      loadAutoDrop();
 
 
-  </script>
-</body>
-</html>
+    </script>
+  </body>
+  </html>

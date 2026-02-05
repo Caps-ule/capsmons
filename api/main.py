@@ -25,7 +25,7 @@ import hashlib
 import requests
 import psycopg
 
-from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -4363,40 +4363,108 @@ def overlay_drop_state():
 # =============================================================================
 # ADMIN: remettre /admin (minimum)
 # =============================================================================
+from fastapi import Query
+
 @app.get('/admin', response_class=HTMLResponse)
-def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_home(
+    request: Request,
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    per: int = Query(50, ge=10, le=200),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
     require_admin(credentials)
 
     q_clean = (q or '').strip().lower()
     result = None
 
+    offset = (page - 1) * per
+
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT twitch_login, xp_total, stage
-                FROM creatures_v2
-                WHERE is_active=true
-                ORDER BY xp_total DESC
-                LIMIT 50;
-            """)
-            top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
-    
-            cur.execute("""
-                SELECT twitch_login, xp_total, stage
-                FROM creatures_v2
-                WHERE is_active=true
-                ORDER BY xp_total DESC
-                LIMIT 50;
-            """)
-            top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
-    
-
+            # Live flag
             cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
             row = cur.fetchone()
             is_live = bool(row and row[0] == "true")
 
+            # Top XP (companion actif uniquement)
+            cur.execute("""
+                SELECT twitch_login, xp_total, stage
+                FROM creatures_v2
+                WHERE is_active=true
+                ORDER BY xp_total DESC
+                LIMIT 50;
+            """)
+            top = [{'twitch_login': r[0], 'xp_total': int(r[1] or 0), 'stage': int(r[2] or 0)} for r in cur.fetchall()]
 
-    return templates.TemplateResponse('admin.html', {'request': request, 'top': top, 'q': q_clean, 'result': result,'is_live': is_live,})
+            # Liste users (toute la collection -> stats agrégées)
+            params = []
+            where = ""
+            if q_clean:
+                where = "WHERE twitch_login LIKE %s"
+                params.append(f"%{q_clean}%")
+
+            # total users (pour pagination)
+            cur.execute(f"""
+                SELECT COUNT(*) FROM (
+                    SELECT twitch_login
+                    FROM creatures_v2
+                    {where}
+                    GROUP BY twitch_login
+                ) t;
+            """, tuple(params))
+            total_users = int(cur.fetchone()[0] or 0)
+
+            cur.execute(f"""
+                SELECT
+                    twitch_login,
+                    SUM(xp_total)::bigint AS xp_total_sum,
+                    MAX(stage)::int AS stage_max,
+                    COUNT(*)::int AS cm_count,
+                    MAX(CASE WHEN is_active THEN id ELSE NULL END)::bigint AS active_id
+                FROM creatures_v2
+                {where}
+                GROUP BY twitch_login
+                ORDER BY xp_total_sum DESC, twitch_login ASC
+                LIMIT %s OFFSET %s;
+            """, tuple(params + [per, offset]))
+            users = []
+            for r in cur.fetchall():
+                users.append({
+                    "twitch_login": r[0],
+                    "xp_total_sum": int(r[1] or 0),
+                    "stage_max": int(r[2] or 0),
+                    "cm_count": int(r[3] or 0),
+                    "active_id": (int(r[4]) if r[4] is not None else None),
+                })
+
+            # Résultat “exact” (si tu veux garder le bloc Résultat)
+            if q_clean:
+                cur.execute("""
+                    SELECT twitch_login, xp_total, stage
+                    FROM creatures_v2
+                    WHERE is_active=true AND twitch_login=%s
+                    LIMIT 1;
+                """, (q_clean,))
+                r = cur.fetchone()
+                if r:
+                    result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
+
+    return templates.TemplateResponse('admin.html', {
+        'request': request,
+        'top': top,
+        'q': q_clean,
+        'result': result,
+        'is_live': is_live,
+
+        # NEW
+        'users': users,
+        'page': page,
+        'per': per,
+        'total_users': total_users,
+        'total_pages': max(1, (total_users + per - 1) // per),
+    })
+
 
 
 # =============================================================================
