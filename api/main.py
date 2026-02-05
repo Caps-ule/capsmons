@@ -452,6 +452,31 @@ def resolve_drop(drop_id: int):
         "ticket_qty": int(ticket_qty),
     }
 
+
+def kv_get(cur, key: str, default: str | None = None) -> str | None:
+    cur.execute("SELECT value FROM kv WHERE key=%s;", (key,))
+    row = cur.fetchone()
+    return (row[0] if row and row[0] is not None else default)
+
+def kv_set(cur, key: str, value: str) -> None:
+    cur.execute("""
+        INSERT INTO kv (key, value)
+        VALUES (%s, %s)
+        ON CONFLICT (key) DO UPDATE
+        SET value = EXCLUDED.value, updated_at = now();
+    """, (key, value))
+
+def as_bool(v: str | None, default: bool = False) -> bool:
+    if v is None:
+        return default
+    return str(v).strip().lower() in ("true", "1", "yes", "on")
+
+def as_int(v: str | None, default: int) -> int:
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return default
+
 # =============================================================================
 # DB init (ne pas dupliquer les tables)
 # =============================================================================
@@ -922,6 +947,197 @@ def admin_rp_save(
 
     return RedirectResponse(url=f"/admin/rp?flash=Enregistr%C3%A9%20:%20{key}", status_code=303)
 
+
+@app.get("/internal/auto_drop/config")
+def auto_drop_get_config(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cfg = {
+                "enabled": as_bool(kv_get(cur, "auto_drop_enabled", "false")),
+                "kind": (kv_get(cur, "auto_drop_kind", "any") or "any").strip().lower(),
+                "mode": (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower(),
+                "min_seconds": as_int(kv_get(cur, "auto_drop_min_seconds", "900"), 900),
+                "max_seconds": as_int(kv_get(cur, "auto_drop_max_seconds", "1500"), 1500),
+                "duration_seconds": as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40),
+                "xp_bonus": as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0),
+                "ticket_qty": as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1),
+                "force_live": as_bool(kv_get(cur, "auto_drop_force_live", "false")),
+            }
+    return {"ok": True, "config": cfg}
+
+@app.post("/internal/auto_drop/trigger_once")
+def auto_drop_trigger_once(payload: dict | None = None, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    payload = payload or {}
+    # override optionnel pour le test
+    override_kind = (payload.get("kind") or "").strip().lower() or None
+    override_mode = (payload.get("mode") or "").strip().lower() or None
+    override_duration = payload.get("duration_seconds", None)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # 1) live gate (si on ne force pas)
+            force_live = as_bool(kv_get(cur, "auto_drop_force_live", "false"))
+            if not force_live:
+                is_live = (kv_get(cur, "is_live", "false") or "false").strip().lower() == "true"
+                if not is_live:
+                    raise HTTPException(status_code=400, detail="Not live (set auto_drop_force_live=true to test)")
+
+            # 2) lire config
+            kind = override_kind or (kv_get(cur, "auto_drop_kind", "any") or "any").strip().lower()
+            mode = override_mode or (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower()
+            duration = override_duration if override_duration is not None else as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40)
+
+            xp_bonus = as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0)
+            ticket_qty = as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1)
+
+            if kind not in ("any", "xp", "candy", "egg"):
+                kind = "any"
+            if mode not in ("random", "first", "coop"):
+                mode = "random"
+
+            duration = max(5, min(60, int(duration)))
+            xp_bonus = max(0, min(1000, int(xp_bonus)))
+            ticket_qty = max(1, min(50, int(ticket_qty)))
+
+            # 3) pick item pondéré
+            where = "TRUE"
+            if kind == "xp":
+                where = "xp_gain > 0"
+            elif kind == "candy":
+                where = "happiness_gain > 0"
+            elif kind == "egg":
+                where = "key LIKE 'egg_%'"
+
+            cur.execute(f"""
+                SELECT key, name, COALESCE(icon_url,''), drop_weight
+                FROM items
+                WHERE {where} AND drop_weight > 0
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                raise HTTPException(status_code=400, detail="No items for this kind")
+
+            total = sum(int(r[3] or 0) for r in rows)
+            rnd = random.randint(1, max(1, total))
+            acc = 0
+            picked = rows[0]
+            for r in rows:
+                acc += int(r[3] or 0)
+                if rnd <= acc:
+                    picked = r
+                    break
+
+            item_key, item_name, icon_url, drop_weight = picked
+
+            # 4) spawn drop = insert drops
+            title = item_name
+            media_url = icon_url or ""   # si vide -> on refuse (comme ton endpoint drop/spawn)
+            if not title or not media_url:
+                raise HTTPException(status_code=400, detail=f"Picked item has no title/icon_url: {item_key}")
+
+            # pas de coop dans trigger_once sauf si tu veux gérer target_hits
+            target_hits = None
+            if mode == "coop":
+                target_hits = int(payload.get("target_hits") or 10)
+                target_hits = max(2, min(target_hits, 999))
+
+            cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+            cur.execute("""
+                INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
+                RETURNING id;
+            """, (mode, title, media_url, xp_bonus, item_key, ticket_qty, target_hits, duration))
+            drop_id = int(cur.fetchone()[0])
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "drop_id": drop_id,
+        "picked": {
+            "item_key": item_key,
+            "item_name": item_name,
+            "icon_url": icon_url,
+            "drop_weight": int(drop_weight or 0),
+        },
+        "spawn": {
+            "mode": mode,
+            "title": title,
+            "media_url": media_url,
+            "duration_seconds": duration,
+            "xp_bonus": xp_bonus,
+            "ticket_key": item_key,
+            "ticket_qty": ticket_qty,
+        }
+    }
+
+@app.post("/internal/auto_drop/config")
+def auto_drop_set_config(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    # on accepte des champs partiels
+    def _norm_mode(m: str) -> str:
+        m = (m or "random").strip().lower()
+        return m if m in ("random", "first", "coop") else "random"
+
+    def _norm_kind(k: str) -> str:
+        k = (k or "any").strip().lower()
+        return k if k in ("any", "xp", "candy", "egg") else "any"
+
+    enabled = payload.get("enabled", None)
+    kind = payload.get("kind", None)
+    mode = payload.get("mode", None)
+
+    min_s = payload.get("min_seconds", None)
+    max_s = payload.get("max_seconds", None)
+    duration = payload.get("duration_seconds", None)
+    xp_bonus = payload.get("xp_bonus", None)
+    ticket_qty = payload.get("ticket_qty", None)
+    force_live = payload.get("force_live", None)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if enabled is not None:
+                kv_set(cur, "auto_drop_enabled", "true" if bool(enabled) else "false")
+
+            if kind is not None:
+                kv_set(cur, "auto_drop_kind", _norm_kind(str(kind)))
+
+            if mode is not None:
+                kv_set(cur, "auto_drop_mode", _norm_mode(str(mode)))
+
+            if min_s is not None:
+                v = max(10, int(min_s))
+                kv_set(cur, "auto_drop_min_seconds", str(v))
+
+            if max_s is not None:
+                v = max(10, int(max_s))
+                kv_set(cur, "auto_drop_max_seconds", str(v))
+
+            if duration is not None:
+                v = max(5, min(60, int(duration)))
+                kv_set(cur, "auto_drop_duration_seconds", str(v))
+
+            if xp_bonus is not None:
+                v = max(0, min(1000, int(xp_bonus)))
+                kv_set(cur, "auto_drop_xp_bonus", str(v))
+
+            if ticket_qty is not None:
+                v = max(1, min(50, int(ticket_qty)))
+                kv_set(cur, "auto_drop_ticket_qty", str(v))
+
+            if force_live is not None:
+                kv_set(cur, "auto_drop_force_live", "true" if bool(force_live) else "false")
+
+        conn.commit()
+
+    return {"ok": True}
+
+
 # =============================================================================
 # Pick ITEM pour auto drop
 # =============================================================================
@@ -931,14 +1147,15 @@ def pick_item(kind: str = "any", x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
 
     kind = (kind or "any").strip().lower()
-    # kind: any | xp | candy
-    where = "TRUE"
-    params = ()
+    # kind: any | xp | candy | egg
 
+    where = "TRUE"
     if kind == "xp":
         where = "xp_gain > 0"
     elif kind == "candy":
         where = "happiness_gain > 0"
+    elif kind == "egg":
+        where = "key LIKE 'egg_%'"
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -952,7 +1169,6 @@ def pick_item(kind: str = "any", x_api_key: str | None = Header(default=None)):
     if not rows:
         raise HTTPException(status_code=400, detail="No items for this kind")
 
-    # tirage pondéré
     total = sum(int(r[3] or 0) for r in rows)
     rnd = random.randint(1, max(1, total))
     acc = 0
