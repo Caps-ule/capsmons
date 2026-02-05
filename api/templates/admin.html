@@ -307,29 +307,6 @@
       <a href="{{ base }}&page={{ total_pages }}">Fin ⏭️</a>
     </div>
 
-
-    <h2>Top XP</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Viewer</th>
-          <th>XP</th>
-          <th>Stage</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for u in top %}
-        <tr>
-          <td><a href="/admin/user/{{ u.twitch_login }}">{{ u.twitch_login }}</a></td>
-          <td>{{ u.xp_total }}</td>
-          <td>{{ u.stage }}</td>
-          <td><a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-
     <script>
       (function () {
         const KEY = "capsmons_theme";
