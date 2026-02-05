@@ -836,7 +836,7 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
     mode = str(payload.get('mode', '')).strip().lower()
     title = str(payload.get('title', '')).strip()
     media_url = str(payload.get('media_url', '')).strip()
-    duration = int(payload.get('duration_seconds', 40))
+    duration = int(payload.get('duration_seconds', 15))
     xp_bonus = int(payload.get('xp_bonus', 50))
     ticket_key = str(payload.get('ticket_key', 'ticket_basic')).strip()
     ticket_qty = int(payload.get('ticket_qty', 1))
@@ -3229,7 +3229,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
     if not login:
         raise HTTPException(status_code=400, detail="Missing twitch_login")
 
-    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "7"))
+    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "15"))
     duration = max(2, min(duration, 15))
 
     # Données overlay
@@ -3415,7 +3415,7 @@ def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCre
             """)
             top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
     
-            # 👇👇👇 AJOUT ICI
+
             cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
             row = cur.fetchone()
             is_live = bool(row and row[0] == "true")
