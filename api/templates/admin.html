@@ -160,31 +160,9 @@
       </div>
 
       <div class="liveRow">
-        <!-- LIVE -->
-        <form method="post" action="/admin/live" style="margin:0;">
-          <input type="hidden" name="value" value="true">
-          <button
-            type="submit"
-            class="btn btnLive {% if is_live %}btnDisabled{% endif %}"
-            {% if is_live %}disabled{% endif %}
-            title="{% if is_live %}Déjà en LIVE{% else %}Forcer LIVE{% endif %}"
-          >
-            🟢 Live
-          </button>
-        </form>
+        <button onclick="setLive(true)">Live</button>
+<button onclick="setLive(false)">Plus en live</button>
 
-        <!-- OFFLINE -->
-        <form method="post" action="/admin/live" style="margin:0;">
-          <input type="hidden" name="value" value="false">
-          <button
-            type="submit"
-            class="btn btnOff {% if not is_live %}btnDisabled{% endif %}"
-            {% if not is_live %}disabled{% endif %}
-            title="{% if not is_live %}Déjà OFFLINE{% else %}Forcer OFFLINE{% endif %}"
-          >
-            ⚫ Plus en live
-          </button>
-        </form>
 
         <span class="badge">
           État : <b>{% if is_live %}LIVE{% else %}OFFLINE{% endif %}</b>
@@ -261,6 +239,17 @@
         apply(theme);
       });
     })();
+
+    async function setLive(v){
+  const r = await fetch('/admin/set_live', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({value: v})
+  });
+  const j = await r.json();
+  if(!r.ok) alert(JSON.stringify(j));
+  else location.reload();
+}
   </script>
 </body>
 </html>
