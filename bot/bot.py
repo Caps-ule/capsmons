@@ -1337,25 +1337,20 @@ class Bot(commands.Bot):
     @commands.command(name="hit")
     async def hit(self, ctx: commands.Context):
         await self.grab(ctx)
-
-
-
-    class Bot(commands.Bot):
-        # ... (le reste)
     
-        @commands.command(name="commands")
-        async def commands_cmd(self, ctx: commands.Context):
-            # Liste courte (limite Twitch ~500 chars)
-            msg = (
-                f"@{ctx.author.name} 📜 Commandes viewers: "
-                "!creature (État de la créature selectionnée) | "
-                "!inv (Inventaire - Voir les noms items) | "
-                "!use <Nom item> (Utilise l'objet)| "
-                "!companion <id> (voir les ID de ses compagnon / selectionner son compagnon) | "
-                "!show (Montre ta créature sur le stream) | "
-                "!grab (participer au drop)"
-            )
-            await ctx.send(msg)
+    @commands.command(name="commands")
+    async def commands_cmd(self, ctx: commands.Context):
+        # Liste courte (limite Twitch ~500 chars)
+        msg = (
+            f"@{ctx.author.name} 📜 Commandes viewers: "
+            "!creature (État de la créature selectionnée) | "
+            "!inv (Inventaire - Voir les noms items) | "
+            "!use <Nom item> (Utilise l'objet)| "
+            "!companion <id> (voir les ID de ses compagnon / selectionner son compagnon) | "
+            "!show (Montre ta créature sur le stream) | "
+            "!grab (participer au drop)"
+        )
+        await ctx.send(msg)
 
 
 
