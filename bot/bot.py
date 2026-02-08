@@ -57,6 +57,23 @@ def stage_label(stage: int) -> str:
         3: "👑 Évolution 2",
     }.get(stage, f"Stage {stage}")
 
+def emoji_number(n: int) -> str:
+    digits = {
+        "0": "0️⃣",
+        "1": "1️⃣",
+        "2": "2️⃣",
+        "3": "3️⃣",
+        "4": "4️⃣",
+        "5": "5️⃣",
+        "6": "6️⃣",
+        "7": "7️⃣",
+        "8": "8️⃣",
+        "9": "9️⃣",
+    }
+    s = str(int(n))
+    return "".join(digits.get(ch, ch) for ch in s)
+
+
 
 def rp_format(text: str, **kw) -> str:
     """
@@ -319,7 +336,9 @@ class Bot(commands.Bot):
             else:
                 label = f"👾 {cm_name}"
 
-            parts.append(f"{star}{idx}) {label} {stage} {xp}xp")
+            num = emoji_number(idx)
+            parts.append(f"{star}{num} {label} {stage} {xp}xp")
+
 
         if active:
             a_key = (active.get("cm_key") or "").strip().lower()
@@ -327,7 +346,7 @@ class Bot(commands.Bot):
             a_lk = self._lineage_label(active.get("lineage_key"))
 
             active_label = f"🥚 Œuf {a_lk}" if a_key == "egg" else f"👾 {a_name}"
-            num_txt = f"{active_num}) " if active_num is not None else ""
+            num_txt = f"{emoji_number(active_num)} " if active_num is not None else ""
             await ctx.send(
                 f"@{ctx.author.name} ⭐ Actif: {num_txt}{active_label}  | Toute ta collection: " + " | ".join(parts)
             )
