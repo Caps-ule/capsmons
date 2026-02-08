@@ -33,9 +33,6 @@ API_COMPANION_SET_BY_ID_URL = "http://api:8000/internal/companions/set_active"
 API_AUTODROP_SETTINGS_URL = "http://api:8000/internal/settings/autodrop"
 _autodrop_cache = {"ts": 0.0, "cfg": {}}
 
-
-
-
 API_KEY = os.environ["INTERNAL_API_KEY"]
 
 # ============================================================================
@@ -70,6 +67,7 @@ def rp_format(text: str, **kw) -> str:
         out = out.replace("{" + k + "}", str(v))
     return out
 
+
 def _autodrop_get_cfg() -> dict:
     now = time.time()
     if now - _autodrop_cache["ts"] < 30:
@@ -87,9 +85,11 @@ def _autodrop_get_cfg() -> dict:
 
     return _autodrop_cache["cfg"]
 
+
 def _cfg_bool(cfg: dict, key: str, default: bool = False) -> bool:
     v = str(cfg.get(key, "true" if default else "false")).strip().lower()
     return v in ("true", "1", "yes", "on")
+
 
 def _cfg_int(cfg: dict, key: str, default: int) -> int:
     try:
@@ -97,10 +97,9 @@ def _cfg_int(cfg: dict, key: str, default: int) -> int:
     except Exception:
         return int(default)
 
+
 def _cfg_str(cfg: dict, key: str, default: str = "") -> str:
     return str(cfg.get(key, default) or default).strip()
-
-
 
 
 async def rp_get(key: str) -> str | None:
@@ -146,6 +145,7 @@ def happiness_multiplier(h: int) -> float:
     # 90–100 : gros bonus
     return 1.6
 
+
 def lineage_label(lk: str | None) -> str:
     if not lk:
         return "Inconnue"
@@ -167,10 +167,14 @@ class Bot(commands.Bot):
             prefix="!",
             initial_channels=[os.environ["TWITCH_CHANNEL"]],
         )
+
+    # ------------------------------------------------------------------------
+    # Commande: !inv
+    # ------------------------------------------------------------------------
     @commands.command(name="inv")
     async def inv(self, ctx: commands.Context):
         login = ctx.author.name.lower()
-    
+
         try:
             r = requests.get(
                 f"{API_INV_URL}/{login}",
@@ -184,21 +188,23 @@ class Bot(commands.Bot):
         except Exception:
             await ctx.send(f"@{ctx.author.name} ⚠️ Inventaire indisponible.")
             return
-    
+
         items = data.get("items", []) or []
         if not items:
             await ctx.send(f"@{ctx.author.name} 🎒 Inventaire vide.")
             return
-    
+
         # format compact : item xqty
         txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
         await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
 
-
+    # ------------------------------------------------------------------------
+    # Commande: !cmlist (legacy / debug)
+    # ------------------------------------------------------------------------
     @commands.command(name="cmlist")
     async def cmlist(self, ctx: commands.Context):
         login = ctx.author.name.lower()
-    
+
         try:
             r = requests.get(
                 f"{API_COMPANIONS_LIST_URL}/{login}",
@@ -212,12 +218,12 @@ class Bot(commands.Bot):
         except Exception:
             await ctx.send(f"@{ctx.author.name} ⚠️ Liste CM indisponible.")
             return
-    
+
         cms = data.get("companions", []) or []
         if not cms:
             await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
             return
-    
+
         parts = []
         for it in cms[:12]:
             star = "★" if it.get("is_active") else "·"
@@ -225,14 +231,14 @@ class Bot(commands.Bot):
             cm_key = str(it.get("cm_key", ""))
             cm_name = str(it.get("cm_name", cm_key))
             lk = it.get("lineage_key", None)
-    
+
             if cm_key == "egg":
                 label = f"🥚 Œuf {lineage_label(lk)}"
             else:
                 label = cm_name
-    
+
             parts.append(f"{star} [ID : {cid}] {label} — S{int(it.get('stage',0))} • {int(it.get('xp_total',0))}xp")
-    
+
         await ctx.send(f"@{ctx.author.name} 👾 Tes CapsMons: " + " | ".join(parts) + " — !setcm <id>")
 
     def _lineage_label(self, lk: str | None) -> str:
@@ -245,19 +251,19 @@ class Bot(commands.Bot):
             "egg": "Tech",
         }.get(lk, lk or "—")
 
-    
-    
     def _short_stage(self, s: int | None) -> str:
         try:
             s = int(s or 0)
         except Exception:
             s = 0
         return f"S{s}"
-    
-    
+
+    # ------------------------------------------------------------------------
+    # Collection (helper interne) -> affiche une liste numérotée 1..N
+    # ------------------------------------------------------------------------
     async def collection(self, ctx: commands.Context):
         login = ctx.author.name.lower()
-    
+
         try:
             r = requests.get(
                 f"{API_COLLECTION_URL}/{login}",
@@ -271,93 +277,133 @@ class Bot(commands.Bot):
         except Exception:
             await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
             return
-    
+
         items = data.get("items", []) or []
         if not items:
             await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
             return
-    
+
         # Trouver l'actif
         active = None
         for it in items:
             if bool(it.get("is_active")):
                 active = it
                 break
-    
-        # Construire une liste user-friendly
+
+        # Numéro de l'actif (1..)
+        active_num = None
+        if active:
+            try:
+                active_id = int(active.get("id"))
+                for i, it in enumerate(items, start=1):
+                    if int(it.get("id") or 0) == active_id:
+                        active_num = i
+                        break
+            except Exception:
+                active_num = None
+
+        # Construire une liste user-friendly numérotée
         parts = []
-        for it in items[:12]:
-            cid = it.get("id")
+        for idx, it in enumerate(items[:12], start=1):
             cm_key = (it.get("cm_key") or "").strip().lower()
             cm_name = (it.get("cm_name") or cm_key).strip()
-    
-            lk = self._lineage_label(it.get("lineage_key"))   # ✅ self.
-            stage = self._short_stage(it.get("stage", 0))     # ✅ self.
+
+            lk = self._lineage_label(it.get("lineage_key"))
+            stage = self._short_stage(it.get("stage", 0))
             xp = int(it.get("xp_total", 0) or 0)
-    
+
             star = "★" if bool(it.get("is_active")) else "·"
-    
+
             if cm_key == "egg":
                 label = f"🥚 Œuf {lk}"
             else:
                 label = f"👾 {cm_name}"
-    
-            parts.append(f"{star}[{cid}] {label} {stage} {xp}xp")
-    
+
+            parts.append(f"{star}{idx}) {label} {stage} {xp}xp")
+
         if active:
-            a_id = active.get("id")
             a_key = (active.get("cm_key") or "").strip().lower()
             a_name = (active.get("cm_name") or a_key).strip()
-            a_lk = self._lineage_label(active.get("lineage_key"))  # ✅ self.
-    
+            a_lk = self._lineage_label(active.get("lineage_key"))
+
             active_label = f"🥚 Œuf {a_lk}" if a_key == "egg" else f"👾 {a_name}"
-            await ctx.send(f"@{ctx.author.name} ⭐ Actif: [{a_id}] {active_label}  | Toute ta collection: " + " | ".join(parts))
+            num_txt = f"{active_num}) " if active_num is not None else ""
+            await ctx.send(
+                f"@{ctx.author.name} ⭐ Actif: {num_txt}{active_label}  | Toute ta collection: " + " | ".join(parts)
+            )
         else:
             await ctx.send(f"@{ctx.author.name} 📦 Aucun compagnon actif  |  Collection: " + " | ".join(parts))
-    
 
+    # ------------------------------------------------------------------------
+    # Commande: !companion -> utilise un numéro 1..N (plus simple)
+    # ------------------------------------------------------------------------
     @commands.command(name="companion")
     async def companion(self, ctx: commands.Context):
         login = ctx.author.name.lower()
         parts = (ctx.message.content or "").strip().split()
-    
+
         # Sans argument => affiche la collection + rappel usage
         if len(parts) < 2:
-            await self.collection(ctx)  # ta fonction existante
-            await ctx.send(
-                f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou !companion <cm_key> si tu n'as qu'un seul exemplaire)"
-            )
+            await self.collection(ctx)
+            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <numéro>  (ex: !companion 2)")
             return
-    
+
         target = parts[1].strip().lower()
         if not target:
-            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <id>  (ou <cm_key>)")
+            await ctx.send(f"@{ctx.author.name} ℹ️ Usage: !companion <numéro> (ex: !companion 2)")
             return
-    
-        # Parse ID si numérique
-        creature_id = None
+
+        # Si numérique => numéro (1..)
+        pick_index = None
         try:
-            creature_id = int(target)
+            pick_index = int(target)
         except Exception:
-            creature_id = None
-    
-        # 1) Appel API set_active (par id) ou fallback legacy (par cm_key)
+            pick_index = None
+
         try:
-            if creature_id is not None:
+            if pick_index is not None:
+                if pick_index <= 0:
+                    await ctx.send(f"@{ctx.author.name} ⛔ Numéro invalide. Exemple: !companion 1")
+                    return
+
+                rr = requests.get(
+                    f"{API_COLLECTION_URL}/{login}",
+                    headers={"X-API-Key": API_KEY},
+                    timeout=3,
+                )
+                if rr.status_code != 200:
+                    await ctx.send(f"@{ctx.author.name} ⚠️ Collection indisponible.")
+                    return
+                col = rr.json() or {}
+                items = col.get("items", []) or []
+                if not items:
+                    await ctx.send(f"@{ctx.author.name} 👾 Tu n’as aucun CapsMon pour l’instant.")
+                    return
+
+                if pick_index > len(items):
+                    await ctx.send(f"@{ctx.author.name} ⛔ Tu n'as que {len(items)} CapsMons. Exemple: !companion 1")
+                    return
+
+                creature_id = items[pick_index - 1].get("id", None)
+                if creature_id is None:
+                    await ctx.send(f"@{ctx.author.name} ⛔ Impossible (id manquant).")
+                    return
+
                 r = requests.post(
                     API_COMPANION_SET_BY_ID_URL,
                     headers={"X-API-Key": API_KEY},
-                    json={"twitch_login": login, "creature_id": creature_id},
+                    json={"twitch_login": login, "creature_id": int(creature_id)},
                     timeout=3,
                 )
             else:
+                # Fallback legacy: cm_key
                 r = requests.post(
                     API_COMPANION_SET_URL,
                     headers={"X-API-Key": API_KEY},
                     json={"twitch_login": login, "cm_key": target},
                     timeout=3,
                 )
-    
+
             if r.status_code != 200:
                 msg = "⛔ Impossible."
                 try:
@@ -367,20 +413,18 @@ class Bot(commands.Bot):
                         msg = f"⛔ {detail}"
                 except Exception:
                     pass
-    
-                await ctx.send(
-                    f"@{ctx.author.name} {msg} (Astuce: utilise l'ID affiché dans ta collection, ex: !companion 355)"
-                )
+
+                await ctx.send(f"@{ctx.author.name} {msg} (Astuce: fais !companion pour voir les numéros)")
                 return
-    
+
             data = r.json()
-    
+
         except Exception as e:
             print("[BOT] companion set error:", e, flush=True)
             await ctx.send(f"@{ctx.author.name} ⚠️ Impossible de changer de compagnon.")
             return
-    
-        # 2) IMPORTANT : relire la collection pour afficher un résultat fiable
+
+        # 2) relire la collection pour afficher un résultat fiable + numéro
         active_id = data.get("active_id", None)
         try:
             rr = requests.get(
@@ -389,38 +433,46 @@ class Bot(commands.Bot):
                 timeout=3,
             )
             if rr.status_code != 200:
-                # on affiche au moins l'id activé
-                await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅ (id {active_id})")
+                await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅")
                 return
-    
+
             col = rr.json() or {}
             items = col.get("items", []) or []
-    
-            # Cherche l'actif
+
             active_item = None
             for it in items:
                 if it.get("is_active"):
                     active_item = it
                     break
-    
-            if not active_item:
-                # fallback : si on a un active_id, cherche par id (si l’API renvoie id)
-                if active_id is not None:
-                    for it in items:
-                        if str(it.get("id", "")).isdigit() and int(it.get("id")) == int(active_id):
+
+            if not active_item and active_id is not None:
+                for it in items:
+                    try:
+                        if int(it.get("id") or 0) == int(active_id):
                             active_item = it
                             break
-    
+                    except Exception:
+                        pass
+
             if not active_item:
                 await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅")
                 return
-    
+
+            # numéro 1..N
+            active_num = None
+            try:
+                aid = int(active_item.get("id") or 0)
+                for i, it in enumerate(items, start=1):
+                    if int(it.get("id") or 0) == aid:
+                        active_num = i
+                        break
+            except Exception:
+                active_num = None
+
             cm_key = (active_item.get("cm_key") or "").strip().lower()
             cm_name = (active_item.get("cm_name") or cm_key).strip()
             lineage_key = (active_item.get("lineage_key") or "").strip().lower()
-            shown_id = active_item.get("id", active_id)
-    
-            # Label user friendly
+
             if cm_key == "egg":
                 lk_label = {
                     "biolab": "Biolab",
@@ -431,57 +483,50 @@ class Bot(commands.Bot):
                 label = f"🥚 Œuf {lk_label}"
             else:
                 label = f"👾 {cm_name}"
-    
-            await ctx.send(
-                f"@{ctx.author.name} ⭐ Compagnon actif : {label} [id {shown_id}] (c’est lui qui gagne l’XP)"
-            )
-    
+
+            num_txt = f"{active_num}" if active_num is not None else "?"
+            await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif : {label} (n°{num_txt}) (c’est lui qui gagne l’XP)")
+
         except Exception as e:
             print("[BOT] companion refresh collection error:", e, flush=True)
             await ctx.send(f"@{ctx.author.name} ⭐ Compagnon actif mis à jour ✅")
 
-    
     # ------------------------------------------------------------------------
     # Startup
     # ------------------------------------------------------------------------
     async def event_ready(self):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
-    
+
         # XP passive (si tu veux la loop)
         self.loop.create_task(self.presence_loop())
         # Drops: annonce résultats
-        self.loop.create_task(self.drop_announce_loop())    
+        self.loop.create_task(self.drop_announce_loop())
         # Drops auto
-        self.loop.create_task(self.auto_drop_loop())    
+        self.loop.create_task(self.auto_drop_loop())
         # Decay Happiness auto
         self.loop.create_task(self.happiness_decay_loop())
 
     # ------------------------------------------------------------------------
     # Commande !drop
     # ------------------------------------------------------------------------
-
     @commands.command(name="drop")
     async def drop_cmd(self, ctx: commands.Context):
         # Mod / streamer only
         if not self._is_mod_or_broadcaster(ctx):
             return
-    
-        # Usage:
-        # !drop first "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
-        # !drop random "Titre" URL [durée] [xp] [ticket_key] [qty]
-        # !drop coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target_hits]
+
         raw = (ctx.message.content or "").strip()
         parts = raw.split()
-    
+
         if len(parts) < 4:
             await ctx.send('Usage: !drop first|random|coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target]')
             return
-    
+
         mode = (parts[1] or "").lower()
         if mode not in ("first", "random", "coop"):
             await ctx.send("Modes: first, random, coop")
             return
-    
+
         # --- Parse titre + reste (supporte "Titre avec espaces")
         title = None
         rest = []
@@ -493,29 +538,29 @@ class Bot(commands.Bot):
                 rest = raw[i2 + 1:].strip().split()
             except Exception:
                 title = None
-    
+
         if not title:
             # fallback: 1 mot de titre
             title = parts[2]
             rest = parts[3:]
-    
+
         if not rest:
             await ctx.send('Usage: !drop first|random|coop "Titre" URL [durée] [xp] [ticket_key] [qty] [target]')
             return
-    
+
         media_url = rest[0]
-    
+
         def _to_int(s: str, default: int) -> int:
             try:
                 return int(s)
             except Exception:
                 return default
-    
+
         duration = _to_int(rest[1], 10) if len(rest) >= 2 else 10
         xp_bonus = _to_int(rest[2], 50) if len(rest) >= 3 else 50
         ticket_key = rest[3].strip().lower() if len(rest) >= 4 else "ticket_basic"
         ticket_qty = _to_int(rest[4], 1) if len(rest) >= 5 else 1
-    
+
         payload = {
             "mode": mode,
             "title": title,
@@ -525,11 +570,11 @@ class Bot(commands.Bot):
             "ticket_key": ticket_key,
             "ticket_qty": max(1, min(ticket_qty, 999)),
         }
-    
+
         if mode == "coop":
             target = _to_int(rest[5], 10) if len(rest) >= 6 else 10
             payload["target_hits"] = max(1, min(target, 999))
-    
+
         # Spawn
         try:
             r = requests.post(
@@ -546,7 +591,7 @@ class Bot(commands.Bot):
             print("[BOT] drop spawn error:", e, flush=True)
             await ctx.send("⛔ drop error")
             return
-    
+
         # Message RP
         rp_key = f"drop.spawn.{mode}"
         line = await rp_get(rp_key) or '✨ Drop lancé : {title} — tape "!grab" pour participer'
@@ -558,7 +603,6 @@ class Bot(commands.Bot):
             ticket_qty=payload["ticket_qty"],
         )
         await ctx.send(msg)
-
 
     # ------------------------------------------------------------------------
     # Message handler (XP chat + commands)
@@ -625,7 +669,6 @@ class Bot(commands.Bot):
         await self.handle_commands(message)
 
     def _is_mod_or_broadcaster(self, ctx: commands.Context) -> bool:
-    # twitchio fournit généralement ces flags
         try:
             if getattr(ctx.author, "is_broadcaster", False):
                 return True
@@ -635,33 +678,26 @@ class Bot(commands.Bot):
             pass
         return False
 
+    # ------------------------------------------------------------------------
+    # Commande !spawn (legacy)
+    # ------------------------------------------------------------------------
     @commands.command(name="spawn")
     async def spawn(self, ctx: commands.Context):
-        # sécurité: mod / broadcaster seulement
         if not self._is_mod_or_broadcaster(ctx):
             return
-    
-        # Usage:
-        # !spawn first "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
-        # !spawn random "Nom du drop" https://.../drop.png 10 50 ticket_basic 1
-        #
-        # (durée=10s, xp=50, ticket=ticket_basic x1)
-    
+
         parts = ctx.message.content.strip().split()
         if len(parts) < 4:
             await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
             return
-    
+
         mode = parts[1].lower()
         if mode not in ("first", "random", "coop"):
             await ctx.send("Modes: first, random, coop")
             return
-    
-        # --- Parsing simple mais robuste :
-        # On accepte un titre entre guillemets ou sans guillemets.
+
         raw = ctx.message.content.strip()
-    
-        # essayer de récupérer le titre entre "..."
+
         title = None
         if '"' in raw:
             try:
@@ -671,22 +707,21 @@ class Bot(commands.Bot):
                 rest = raw[second + 1:].strip().split()
             except Exception:
                 title = None
-    
+
         if title is None:
-            # fallback: titre = 1 mot (moins bien)
             title = parts[2]
             rest = parts[3:]
-    
+
         if not rest:
             await ctx.send('Usage: !spawn first|random "Titre" URL [durée] [xp] [ticket_key] [qty]')
             return
-    
+
         media_url = rest[0]
         duration = int(rest[1]) if len(rest) >= 2 and rest[1].isdigit() else 10
         xp_bonus = int(rest[2]) if len(rest) >= 3 and rest[2].isdigit() else 50
         ticket_key = rest[3] if len(rest) >= 4 else "ticket_basic"
         ticket_qty = int(rest[4]) if len(rest) >= 5 and rest[4].isdigit() else 1
-    
+
         payload = {
             "mode": mode,
             "title": title,
@@ -696,13 +731,11 @@ class Bot(commands.Bot):
             "ticket_key": ticket_key,
             "ticket_qty": ticket_qty,
         }
-    
-        # coop : target_hits en option en dernier
+
         if mode == "coop":
-            # exemple: ... ticket_basic 1 12
             target = int(rest[5]) if len(rest) >= 6 and rest[5].isdigit() else 10
             payload["target_hits"] = target
-    
+
         try:
             r = requests.post(
                 "http://api:8000/internal/drop/spawn",
@@ -718,8 +751,7 @@ class Bot(commands.Bot):
             print("[BOT] spawn error:", e, flush=True)
             await ctx.send("⛔ spawn error")
             return
-    
-        # RP spawn (différent selon mode)
+
         rp_key = f"drop.spawn.{mode}"
         line = await rp_get(rp_key) or "✨ Drop lancé !"
         msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty)
@@ -728,19 +760,17 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     # Commande USE
     # ------------------------------------------------------------------------
-
-
     @commands.command(name="use")
     async def use_item(self, ctx: commands.Context):
         login = ctx.author.name.lower()
         parts = ctx.message.content.strip().split()
-    
+
         if len(parts) < 2:
             await ctx.send(f"@{ctx.author.name} usage: !use <item_key>")
             return
-    
+
         item_key = parts[1].strip().lower()
-    
+
         try:
             r = requests.post(
                 "http://api:8000/internal/item/use",
@@ -748,8 +778,7 @@ class Bot(commands.Bot):
                 json={"twitch_login": login, "item_key": item_key},
                 timeout=2,
             )
-    
-            # Erreurs API avec détail exploitable
+
             if r.status_code != 200:
                 msg = "⛔ Objet indisponible."
                 try:
@@ -761,33 +790,31 @@ class Bot(commands.Bot):
                         msg = "⛔ Tu n’en as pas dans ton inventaire."
                 except Exception:
                     pass
-    
+
                 await ctx.send(f"@{ctx.author.name} {msg}")
                 return
-    
+
             data = r.json()
-    
+
         except Exception as e:
             print("[BOT] use error:", e, flush=True)
             await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
             return
-    
+
         effect = data.get("effect")
-    
-        # XP capsule
+
         if effect == "xp":
             gained = int(data.get("xp_gain", data.get("amount", 0)))
             await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{gained} XP ⚡")
             return
-        
-        # Bonheur
+
         if effect == "happiness":
             gain_h = int(data.get("happiness_gain", data.get("amount", 0)))
             after_h = int(data.get("happiness_after", 0))
             name = data.get("item_name", item_key)
             await ctx.send(f"@{ctx.author.name} 🥰 {name} utilisé ! +{gain_h} bonheur (❤️ {after_h}%).")
             return
-        # Oeuf
+
         if effect == "egg":
             lk = data.get("lineage_key", "?")
             activated = bool(data.get("activated", False))
@@ -797,18 +824,17 @@ class Bot(commands.Bot):
                 await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Ajouté à ta collection ✅")
             return
 
-    
-        # Fallback
         await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
 
+    # ------------------------------------------------------------------------
+    # Happiness decay loop
+    # ------------------------------------------------------------------------
     async def happiness_decay_loop(self):
-        # laisse le temps au bot/containers de démarrer
         await asyncio.sleep(60)
-    
+
         while True:
-            # on tente 1 fois / heure (l'API skip si déjà fait aujourd'hui)
             await asyncio.sleep(3600)
-    
+
             try:
                 r = requests.post(
                     API_HAPPINESS_DECAY_URL,
@@ -818,79 +844,67 @@ class Bot(commands.Bot):
                 if r.status_code != 200:
                     print("[BOT] happiness decay fail:", r.status_code, (r.text or "")[:160], flush=True)
                     continue
-    
+
                 data = r.json()
                 if not data.get("skipped", False):
                     print("[BOT] happiness decay ran:", data.get("date"), flush=True)
-    
+
             except Exception as e:
                 print("[BOT] happiness decay error:", e, flush=True)
-
 
     # ------------------------------------------------------------------------
     # DROP AUTO
     # ------------------------------------------------------------------------
-
     async def auto_drop_loop(self):
-        # fallback env (si kv vide)
         env_enabled = os.environ.get("AUTO_DROP_ENABLED", "false").lower() in ("1", "true", "yes", "on")
-    
+
         while True:
             cfg = _autodrop_get_cfg()
-    
+
             enabled = _cfg_bool(cfg, "auto_drop_enabled", env_enabled)
             if not enabled:
                 await asyncio.sleep(5)
                 continue
-    
-            # délai entre drops
+
             min_s = _cfg_int(cfg, "auto_drop_min_seconds", int(os.environ.get("AUTO_DROP_MIN_SECONDS", "900")))
             max_s = _cfg_int(cfg, "auto_drop_max_seconds", int(os.environ.get("AUTO_DROP_MAX_SECONDS", "1500")))
             min_s = max(60, min_s)
             max_s = max(min_s, max_s)
-    
-            # durée du drop (plage)
+
             dmin = _cfg_int(cfg, "auto_drop_duration_min_seconds", int(os.environ.get("AUTO_DROP_DURATION_MIN_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40"))))
             dmax = _cfg_int(cfg, "auto_drop_duration_max_seconds", int(os.environ.get("AUTO_DROP_DURATION_MAX_SECONDS", os.environ.get("AUTO_DROP_DURATION_SECONDS", "40"))))
             dmin = max(5, dmin)
             dmax = max(dmin, dmax)
-    
-            # type d'item à piocher
+
             pick_kind = _cfg_str(cfg, "auto_drop_pick_kind", os.environ.get("AUTO_DROP_PICK_KIND", "any")).lower()
             if pick_kind not in ("any", "xp", "candy"):
                 pick_kind = "any"
-    
-            # mode drop + qty
+
             mode = _cfg_str(cfg, "auto_drop_mode", os.environ.get("AUTO_DROP_MODE", "random")).lower()
             if mode not in ("first", "random", "coop"):
                 mode = "random"
-    
+
             ticket_qty = _cfg_int(cfg, "auto_drop_ticket_qty", int(os.environ.get("AUTO_DROP_TICKET_QTY", "1")))
             ticket_qty = max(1, min(ticket_qty, 50))
-    
-            # fallback media si item sans icon_url
+
             fallback_media = _cfg_str(cfg, "auto_drop_fallback_media_url", os.environ.get("AUTO_DROP_MEDIA_URL", "")).strip()
-    
-            # attendre avant de tenter un spawn
+
             await asyncio.sleep(random.randint(min_s, max_s))
-    
-            # 1) seulement si live
+
             try:
                 r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
                 if r.status_code != 200 or not r.json().get("is_live", False):
                     continue
             except Exception:
                 continue
-    
-            # 2) ne pas spawn s'il y a déjà un drop actif
+
             try:
                 s = requests.get("http://api:8000/overlay/drop_state", timeout=2)
                 if s.status_code == 200 and s.json().get("show", False):
                     continue
             except Exception:
                 continue
-    
-            # 3) choisir un item pondéré
+
             try:
                 pr = requests.get(
                     f"{API_ITEM_PICK_URL}?kind={pick_kind}",
@@ -904,34 +918,33 @@ class Bot(commands.Bot):
             except Exception as e:
                 print("[BOT] items/pick error:", e, flush=True)
                 continue
-    
+
             item_key = (picked.get("item_key") or "").strip().lower()
             item_name = (picked.get("item_name") or item_key).strip()
             icon_url = (picked.get("icon_url") or "").strip()
-    
+
             if not item_key:
                 print("[BOT] items/pick returned empty item_key:", picked, flush=True)
                 continue
-    
+
             if not icon_url:
                 if not fallback_media:
                     print("[BOT] picked item has no icon_url and no fallback_media:", item_key, flush=True)
                     continue
                 icon_url = fallback_media
-    
+
             duration = random.randint(dmin, dmax)
-    
-            # 4) spawn drop
+
             payload = {
                 "mode": mode,
                 "title": item_name,
                 "media_url": icon_url,
                 "duration_seconds": duration,
-                "xp_bonus": 0,            # l’item fait foi via /internal/item/use
-                "ticket_key": item_key,   # l’item gagné
+                "xp_bonus": 0,
+                "ticket_key": item_key,
                 "ticket_qty": ticket_qty,
             }
-    
+
             try:
                 rr = requests.post(
                     API_DROP_SPAWN_URL,
@@ -945,8 +958,7 @@ class Bot(commands.Bot):
             except Exception as e:
                 print("[BOT] auto drop spawn error:", e, flush=True)
                 continue
-    
-            # 5) message RP (optionnel)
+
             try:
                 chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
                 if chan:
@@ -962,7 +974,6 @@ class Bot(commands.Bot):
                     await chan.send(msg)
             except Exception:
                 pass
-    
 
     # ------------------------------------------------------------------------
     # Presence loop (XP de présence)
@@ -970,17 +981,16 @@ class Bot(commands.Bot):
     async def presence_loop(self):
         tick = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
         base_amount = int(os.environ.get("PRESENCE_XP_AMOUNT", "2"))
-    
+
         ignore_bots = set(
             x.strip().lower()
             for x in os.environ.get("PRESENCE_IGNORE_BOTS", "").split(",")
             if x.strip()
         )
-    
+
         while True:
             await asyncio.sleep(tick)
-    
-            # 1) Ne donner la présence XP que si stream LIVE
+
             try:
                 r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
                 if r.status_code != 200 or not r.json().get("is_live", False):
@@ -988,19 +998,18 @@ class Bot(commands.Bot):
             except Exception as e:
                 print("[BOT] is_live check error:", e, flush=True)
                 continue
-    
-            # 2) Récupérer la liste des chatters (présents dans le chat)
+
             chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
             if not chan:
                 continue
-    
+
             try:
                 chatters = getattr(chan, "chatters", None)
                 if not chatters:
                     continue
-    
+
                 logins: list[str] = []
-    
+
                 if isinstance(chatters, dict):
                     logins = [str(k).strip().lower() for k in chatters.keys() if str(k).strip()]
                 else:
@@ -1014,32 +1023,29 @@ class Bot(commands.Bot):
                             name = c.display_name
                         if name:
                             logins.append(str(name).strip().lower())
-    
+
                 logins = list({u for u in logins if u})
-    
+
             except Exception as e:
                 print("[BOT] chatters read error:", e, flush=True)
                 continue
-    
+
             if not logins:
                 continue
-    
-            # 3) Ignorer le bot (et autres bots optionnels)
+
             bot_login = os.environ.get("TWITCH_BOT_LOGIN", "").strip().lower()
             if bot_login:
                 logins = [u for u in logins if u != bot_login]
             if ignore_bots:
                 logins = [u for u in logins if u not in ignore_bots]
-    
+
             if not logins:
                 continue
-    
+
             print("[BOT] chatters=", 0 if not chatters else len(chatters), flush=True)
             print(f"[BOT] Presence tick: live OK, chatters={len(logins)}, base={base_amount} XP (bonheur scaling)", flush=True)
             print("[BOT] sample logins:", logins[:5], flush=True)
-    
-            # 3.5) 🔥 NOUVEAU : enregistrer les présents pour la session de stream (streak)
-            # (silencieux, pas de spam)
+
             try:
                 pb = requests.post(
                     API_STREAM_PRESENT_BATCH_URL,
@@ -1051,8 +1057,7 @@ class Bot(commands.Bot):
                     print("[BOT] present_batch failed:", pb.status_code, (pb.text or "")[:120], flush=True)
             except Exception as e:
                 print("[BOT] present_batch error:", e, flush=True)
-    
-            # 4) Récupérer le bonheur de tout le monde en 1 appel (batch)
+
             try:
                 rr = requests.post(
                     API_HAPPINESS_BATCH_URL,
@@ -1069,14 +1074,13 @@ class Bot(commands.Bot):
             except Exception as e:
                 print("[BOT] happiness batch error:", e, flush=True)
                 happ_map = {}
-    
-            # 5) Donner XP à tous les présents, modulé par bonheur
+
             for ulogin in logins:
                 try:
                     h = int(happ_map.get(ulogin, 50))
                     mult = happiness_multiplier(h)
                     give = max(1, int(round(base_amount * mult)))
-    
+
                     resp = requests.post(
                         API_XP_URL,
                         headers={"X-API-Key": API_KEY},
@@ -1085,19 +1089,19 @@ class Bot(commands.Bot):
                     )
                     if resp.status_code != 200:
                         print("[BOT] Presence XP failed:", resp.status_code, (resp.text or "")[:120], "login=", ulogin, flush=True)
-    
+
                 except Exception as e:
                     print("[BOT] Presence API error:", e, flush=True)
-    
-        # ------------------------------------------------------------------------
-        # Drops announce loop (poll_result)
-        # ------------------------------------------------------------------------
+
+    # ------------------------------------------------------------------------
+    # Drops announce loop (poll_result)
+    # ------------------------------------------------------------------------
     async def drop_announce_loop(self):
         await asyncio.sleep(2)
-    
+
         while True:
             await asyncio.sleep(2)
-    
+
             try:
                 r = requests.get(
                     API_DROP_POLL_URL,
@@ -1109,10 +1113,10 @@ class Bot(commands.Bot):
                 data = r.json()
             except Exception:
                 continue
-    
+
             if not data.get("announce", False):
                 continue
-    
+
             mode = data.get("mode", "random")
             status = data.get("status", "expired")
             title = data.get("title", "un objet")
@@ -1120,16 +1124,24 @@ class Bot(commands.Bot):
             xp_bonus = int(data.get("xp_bonus", 0))
             ticket_key = data.get("ticket_key", "ticket_basic")
             ticket_qty = int(data.get("ticket_qty", 1))
-    
+
             sig = f"{mode}|{status}|{title}|{','.join(winners)}|{xp_bonus}|{ticket_key}|{ticket_qty}"
             if _last_drop_announce["sig"] == sig:
                 continue
             _last_drop_announce["sig"] = sig
-    
+
             if status != "resolved":
                 rp_key = "drop.fail.coop" if mode == "coop" else "drop.fail.timeout"
                 line = await rp_get(rp_key) or "⌛ Trop tard…"
-                msg = rp_format(line, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners), viewer="")
+                msg = rp_format(
+                    line,
+                    title=title,
+                    xp=xp_bonus,
+                    ticket_key=ticket_key,
+                    ticket_qty=ticket_qty,
+                    count=len(winners),
+                    viewer="",
+                )
             else:
                 if mode == "first":
                     rp_key = "drop.win.first"
@@ -1137,11 +1149,19 @@ class Bot(commands.Bot):
                     rp_key = "drop.win.random"
                 else:
                     rp_key = "drop.win.coop"
-    
+
                 line = await rp_get(rp_key) or "🏆 {viewer} gagne {title} !"
                 viewer = f"@{winners[0]}" if winners else ""
-                msg = rp_format(line, viewer=viewer, title=title, xp=xp_bonus, ticket_key=ticket_key, ticket_qty=ticket_qty, count=len(winners))
-    
+                msg = rp_format(
+                    line,
+                    viewer=viewer,
+                    title=title,
+                    xp=xp_bonus,
+                    ticket_key=ticket_key,
+                    ticket_qty=ticket_qty,
+                    count=len(winners),
+                )
+
             try:
                 chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
                 if chan:
@@ -1156,7 +1176,6 @@ class Bot(commands.Bot):
     async def creature(self, ctx: commands.Context):
         login = ctx.author.name.lower()
 
-        # API state
         try:
             r = requests.get(
                 f"{API_STATE_URL}/{login}",
@@ -1176,10 +1195,13 @@ class Bot(commands.Bot):
         xp_total = int(data.get("xp_total", 0))
         nxt = data.get("next", "Max")
         xp_to_next = int(data.get("xp_to_next", 0))
-        happy = int(data.get("happiness", 0))
-        happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
-        streak = int(data.get("streak_count", 0))
 
+        happy = int(data.get("happiness", 0))
+        happy = max(0, min(100, happy))
+        happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
+
+        streak = int(data.get("streak_count", 0))
+        streak_txt = f"🔥 Fidélité ManaCorp : {streak} stream(s)" if streak > 0 else "🔥 Fidélité ManaCorp : 0 stream"
 
         lineage = data.get("lineage_key")
         cm_key = data.get("cm_key")
@@ -1197,21 +1219,10 @@ class Bot(commands.Bot):
         header = f"👁️ @{ctx.author.name}"
         state = f"{stage_label(stage)} | {xp_total} XP"
         prog = "🏁 Stade max" if nxt == "Max" else f"⏳ {nxt} dans {xp_to_next} XP"
-        
-        # bonheur
-        happy = int(data.get("happiness", 0))
-        happy = max(0, min(100, happy))
-        happy_bar = "█" * (happy // 10) + "░" * (10 - (happy // 10))
-        
-        # streak
-        streak = int(data.get("streak_count", 0))
-        streak_txt = f"🔥 Fidélité ManaCorp : {streak} stream(s)" if streak > 0 else "🔥 Fidélité ManaCorp : 0 stream"
-        
+
         await ctx.send(
             f"{header} • {state} • {prog}{extra}{flavor_txt} | ❤️ {happy}% [{happy_bar}] | {streak_txt}"
         )
-
-
 
     # ------------------------------------------------------------------------
     # Commande: !choose
@@ -1246,14 +1257,13 @@ class Bot(commands.Bot):
         await ctx.send(f"@{ctx.author.name} {ok_line} ({lineage})")
 
     # ------------------------------------------------------------------------
-    # Commande: !show (overlay CM/oeuf + son)
+    # Commande: !show
     # ------------------------------------------------------------------------
     @commands.command(name="show")
     async def show(self, ctx: commands.Context):
         now = time.time()
         login = ctx.author.name.lower()
 
-        # cooldowns show
         if now - _show_last["global"] < 8:
             return
         if now - _show_last["users"].get(login, 0.0) < 30:
@@ -1302,7 +1312,6 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} {late}")
             return
 
-        # si déjà inscrit, on peut le dire
         joined = bool(data.get("joined", False))
         title = data.get("title", "un objet")
 
@@ -1311,14 +1320,11 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} {ok} ({title})")
             return
 
-        # participation OK
         ok = await rp_get("drop.claim.ok") or "📡 Participation validée."
         await ctx.send(f"@{ctx.author.name} {ok} ({title})")
 
-        # cas spécial: mode first peut renvoyer result.won
         result = data.get("result")
         if result and result.get("won"):
-            # annonce immédiate (en plus de la loop)
             line = await rp_get("drop.win.first") or "⚡ {viewer} gagne {title} !"
             msg = rp_format(
                 line,
@@ -1337,23 +1343,19 @@ class Bot(commands.Bot):
     @commands.command(name="hit")
     async def hit(self, ctx: commands.Context):
         await self.grab(ctx)
-    
+
+    # ------------------------------------------------------------------------
+    # Commande: !commands
+    # ------------------------------------------------------------------------
     @commands.command(name="commands")
     async def commands_cmd(self, ctx: commands.Context):
-        # Liste courte (limite Twitch ~500 chars)
         msg = (
             f"@{ctx.author.name} 📜 Commandes viewers: "
-            "!creature (État de la créature selectionnée) | "
-            "!inv (Inventaire - Voir les noms items) | "
-            "!use <Nom item> (Utilise l'objet)| "
-            "!companion <id> (voir les ID de ses compagnon / selectionner son compagnon) | "
-            "!show (Montre ta créature sur le stream) | "
-            "!grab (participer au drop)"
+            "!creature | !inv | !use <item_key> | "
+            "!companion (liste) / !companion <numéro> | "
+            "!show | !grab"
         )
         await ctx.send(msg)
-
-
-
 
 
 # ============================================================================
