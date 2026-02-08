@@ -1473,6 +1473,22 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
     with get_db() as conn:
         with conn.cursor() as cur:
             # 1) lineage existe + flags
+
+            cur.execute(
+            "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
+            (login,),
+             )
+        
+            # ✅ Assure un œuf actif si aucun CM actif
+            ensure_active_egg(conn, login)
+        
+            # 2) CM actif
+            cur.execute("""
+                SELECT id, stage
+                FROM creatures_v2
+                WHERE twitch_login=%s AND is_active=true
+                LIMIT 1;
+            """, (login,))
             cur.execute("""
                 SELECT is_enabled, COALESCE(choose_enabled, true)
                 FROM lineages
