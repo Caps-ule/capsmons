@@ -154,18 +154,9 @@ def pick_random_lineage(conn) -> str | None:
 def ensure_active_egg(conn, login: str) -> None:
     """
     S'assure qu'il existe un companion actif.
-    Si aucun => active un CM existant (priorité à un œuf), sinon crée un œuf legacy.
+    Si aucun => crée/active un œuf (cm_key='egg').
     """
-    login = str(login or "").strip().lower()
-    if not login:
-        return
-
     with conn.cursor() as cur:
-        # Lock la ligne user pour éviter des doubles créations en concurrence.
-        cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
-        cur.execute("SELECT id FROM users WHERE twitch_login=%s FOR UPDATE;", (login,))
-
-        # Déjà un actif ?
         cur.execute("""
             SELECT 1
             FROM creatures_v2
@@ -175,56 +166,20 @@ def ensure_active_egg(conn, login: str) -> None:
         if cur.fetchone():
             return
 
-        # Candidate : un œuf existant si possible
-        cur.execute("""
-            SELECT id
-            FROM creatures_v2
-            WHERE twitch_login=%s AND cm_key='egg'
-            ORDER BY id DESC
-            LIMIT 1;
-        """, (login,))
-        row = cur.fetchone()
-
-        if row:
-            cid = int(row[0])
-        else:
-            # Sinon, n'importe quel CM existant
-            cur.execute("""
-                SELECT id
-                FROM creatures_v2
-                WHERE twitch_login=%s
-                ORDER BY id DESC
-                LIMIT 1;
-            """, (login,))
-            row2 = cur.fetchone()
-            if row2:
-                cid = int(row2[0])
-            else:
-                # Sinon, créer un œuf legacy
-                cur.execute("""
-                    INSERT INTO creatures_v2
-                      (twitch_login, cm_key, lineage_key, stage, xp_total, happiness,
-                       is_active, acquired_from)
-                    VALUES
-                      (%s, 'egg', NULL, 0, 0, 50, TRUE, 'legacy')
-                    RETURNING id;
-                """, (login,))
-                cid = int(cur.fetchone()[0])
-
-        # Désactiver d'éventuels autres (sécurité)
+        # désactiver d'éventuels autres (sécurité)
         cur.execute("""
             UPDATE creatures_v2
-            SET is_active=false, updated_at=now()
+            SET is_active=false
             WHERE twitch_login=%s AND is_active=true;
         """, (login,))
 
-        # Activer le candidat
+        # créer l'œuf si pas déjà dans la collection
         cur.execute("""
-            UPDATE creatures_v2
-            SET is_active=true, updated_at=now()
-            WHERE id=%s AND twitch_login=%s;
-        """, (cid, login))
-
+            INSERT INTO creatures_v2 (twitch_login, cm_key, lineage_key, stage, xp_total, happiness, is_active, acquired_from)
+            VALUES (%s, 'egg', NULL, 0, 0, 50, TRUE, 'legacy')
+            ON CONFLICT (twitch_login, cm_key)
+            DO UPDATE SET is_active = TRUE;
+        """, (login,))
 
 
 # Live 
@@ -4032,42 +3987,116 @@ def overlay_drop_state():
 
 
 # =============================================================================
-# ADMIN: remettre /admin (minimum)
+# ADMIN: accueil /admin (liste users + top + recherche + pagination)
 # =============================================================================
+from fastapi import Query
+
 @app.get('/admin', response_class=HTMLResponse)
-def admin_home(request: Request, q: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_home(
+    request: Request,
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    per: int = Query(50, ge=10, le=200),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
     require_admin(credentials)
 
     q_clean = (q or '').strip().lower()
     result = None
 
+    offset = (page - 1) * per
+
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT twitch_login, xp_total, stage
-                FROM creatures_v2
-                WHERE is_active=true
-                ORDER BY xp_total DESC
-                LIMIT 50;
-            """)
-            top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
-    
-            cur.execute("""
-                SELECT twitch_login, xp_total, stage
-                FROM creatures_v2
-                WHERE is_active=true
-                ORDER BY xp_total DESC
-                LIMIT 50;
-            """)
-            top = [{'twitch_login': r[0], 'xp_total': r[1], 'stage': r[2]} for r in cur.fetchall()]
-    
-
+            # Live flag
             cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
             row = cur.fetchone()
             is_live = bool(row and row[0] == "true")
 
+            # Top XP (companion actif)
+            cur.execute("""
+                SELECT twitch_login, xp_total, stage
+                FROM creatures_v2
+                WHERE is_active=true
+                ORDER BY xp_total DESC
+                LIMIT 50;
+            """)
+            top = [{'twitch_login': r[0], 'xp_total': int(r[1] or 0), 'stage': int(r[2] or 0)} for r in cur.fetchall()]
 
-    return templates.TemplateResponse('admin.html', {'request': request, 'top': top, 'q': q_clean, 'result': result,'is_live': is_live,})
+            # Recherche (résultat exact sur actif)
+            if q_clean:
+                cur.execute("""
+                    SELECT twitch_login, xp_total, stage
+                    FROM creatures_v2
+                    WHERE is_active=true AND twitch_login=%s
+                    LIMIT 1;
+                """, (q_clean,))
+                r = cur.fetchone()
+                if r:
+                    result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
+
+            # Liste users (dérivée de creatures_v2)
+            params = []
+            where = ""
+            if q_clean:
+                where = "WHERE twitch_login LIKE %s"
+                params.append(f"%{q_clean}%")
+
+            # Total users (pagination)
+            cur.execute(f"""
+                SELECT COUNT(*) FROM (
+                    SELECT twitch_login
+                    FROM creatures_v2
+                    {where}
+                    GROUP BY twitch_login
+                ) t;
+            """, tuple(params))
+            total_users = int(cur.fetchone()[0] or 0)
+            total_pages = max(1, (total_users + per - 1) // per)
+
+            # Clamp page si hors bornes
+            if page > total_pages:
+                page = total_pages
+                offset = (page - 1) * per
+
+            cur.execute(f"""
+                SELECT
+                    twitch_login,
+                    SUM(xp_total)::bigint AS xp_total_sum,
+                    MAX(stage)::int AS stage_max,
+                    COUNT(*)::int AS cm_count,
+                    MAX(CASE WHEN is_active THEN id ELSE NULL END)::bigint AS active_id
+                FROM creatures_v2
+                {where}
+                GROUP BY twitch_login
+                ORDER BY xp_total_sum DESC, twitch_login ASC
+                LIMIT %s OFFSET %s;
+            """, tuple(params + [per, offset]))
+
+            users = []
+            for r in cur.fetchall():
+                users.append({
+                    "twitch_login": r[0],
+                    "xp_total_sum": int(r[1] or 0),
+                    "stage_max": int(r[2] or 0),
+                    "cm_count": int(r[3] or 0),
+                    "active_id": (int(r[4]) if r[4] is not None else None),
+                })
+
+    return templates.TemplateResponse('admin.html', {
+        'request': request,
+        'top': top,
+        'q': q_clean,
+        'result': result,
+        'is_live': is_live,
+
+        # variables attendues par l'UI "liste users"
+        'users': users,
+        'page': page,
+        'per': per,
+        'total_users': total_users,
+        'total_pages': total_pages,
+    })
 
 
 # =============================================================================
@@ -4264,7 +4293,7 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
                     acquired_from
                 )
                 VALUES (%s, %s, %s, 0, 0, 50, %s, FALSE, %s)
-                ;
+                ON CONFLICT (twitch_login, cm_key) DO NOTHING;
             """, (login, cm_key, cm_lineage, (not has_active), acquired_from))
 
             # si le CM existait déjà, on ne change rien (important : “ne changer que le nécessaire”)
