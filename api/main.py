@@ -1638,6 +1638,56 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
 
     return {"ok": True}
 
+
+@app.get("/admin/user/{login}/collection")
+def admin_user_collection(
+    login: str,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = login.strip().lower()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    is_active,
+                    cm_key,
+                    lineage_key,
+                    stage,
+                    xp_total,
+                    happiness,
+                    acquired_from,
+                    acquired_at
+                FROM creatures_v2
+                WHERE twitch_login=%s
+                ORDER BY is_active DESC, acquired_at ASC NULLS LAST, id ASC;
+                """,
+                (login,),
+            )
+            rows = cur.fetchall()
+
+    collection = []
+    for r in rows:
+        collection.append(
+            {
+                "id": int(r[0]),
+                "is_active": bool(r[1]),
+                "cm_key": r[2],
+                "lineage_key": r[3],
+                "stage": int(r[4] or 0),
+                "xp_total": int(r[5] or 0),
+                "happiness": int(r[6] or 0),
+                "acquired_from": r[7],
+                "acquired_at": (r[8].isoformat() if r[8] else None),
+            }
+        )
+
+    return {"ok": True, "twitch_login": login, "collection": collection}
+
 @app.get("/admin/user/{login}", response_class=HTMLResponse)
 def admin_user(
     request: Request,
@@ -3987,117 +4037,166 @@ def overlay_drop_state():
 
 
 # =============================================================================
-# ADMIN: accueil /admin (liste users + top + recherche + pagination)
+# ADMIN: accueil /admin (liste users + recherche + pagination)
 # =============================================================================
-from fastapi import Query
-
-@app.get('/admin', response_class=HTMLResponse)
+@app.get("/admin", response_class=HTMLResponse)
 def admin_home(
     request: Request,
     q: str | None = None,
-    page: int = Query(1, ge=1),
-    per: int = Query(50, ge=10, le=200),
+    page: int = 1,
+    per: int = 50,
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
 
-    q_clean = (q or '').strip().lower()
-    result = None
+    # imports locaux -> évite de toucher aux imports globaux
+    import math
+    from urllib.parse import urlencode
 
-    offset = (page - 1) * per
+    q_clean = (q or "").strip().lower()
+
+    try:
+        page = int(page or 1)
+    except Exception:
+        page = 1
+    if page < 1:
+        page = 1
+
+    try:
+        per = int(per or 50)
+    except Exception:
+        per = 50
+    per = max(10, min(200, per))
+
+    result = None
+    users: list[dict] = []
+    total = 0
+    pages = 1
+    is_live = False
+    top: list[dict] = []
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Live flag
+            # état live
             cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
             row = cur.fetchone()
-            is_live = bool(row and row[0] == "true")
+            is_live = bool(row and str(row[0]).lower() == "true")
 
-            # Top XP (companion actif)
-            cur.execute("""
+            # top XP (CM actifs)
+            cur.execute(
+                """
                 SELECT twitch_login, xp_total, stage
                 FROM creatures_v2
                 WHERE is_active=true
                 ORDER BY xp_total DESC
                 LIMIT 50;
-            """)
-            top = [{'twitch_login': r[0], 'xp_total': int(r[1] or 0), 'stage': int(r[2] or 0)} for r in cur.fetchall()]
+                """
+            )
+            top = [
+                {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
+                for r in cur.fetchall()
+            ]
 
-            # Recherche (résultat exact sur actif)
+            # recherche (affiche un lien direct)
             if q_clean:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT twitch_login, xp_total, stage
                     FROM creatures_v2
-                    WHERE is_active=true AND twitch_login=%s
+                    WHERE twitch_login=%s AND is_active=true
                     LIMIT 1;
-                """, (q_clean,))
+                    """,
+                    (q_clean,),
+                )
                 r = cur.fetchone()
                 if r:
                     result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
+                else:
+                    cur.execute(
+                        """
+                        SELECT twitch_login, xp_total, stage
+                        FROM creatures_v2
+                        WHERE twitch_login ILIKE %s AND is_active=true
+                        ORDER BY xp_total DESC
+                        LIMIT 1;
+                        """,
+                        (f"%{q_clean}%",),
+                    )
+                    r = cur.fetchone()
+                    if r:
+                        result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
 
-            # Liste users (dérivée de creatures_v2)
-            params = []
+            # liste users (pagination) — basée sur users + un résumé depuis creatures_v2
             where = ""
+            params: list = []
             if q_clean:
-                where = "WHERE twitch_login LIKE %s"
+                where = "WHERE u.twitch_login ILIKE %s"
                 params.append(f"%{q_clean}%")
 
-            # Total users (pagination)
-            cur.execute(f"""
-                SELECT COUNT(*) FROM (
-                    SELECT twitch_login
-                    FROM creatures_v2
-                    {where}
-                    GROUP BY twitch_login
-                ) t;
-            """, tuple(params))
-            total_users = int(cur.fetchone()[0] or 0)
-            total_pages = max(1, (total_users + per - 1) // per)
+            cur.execute(f"SELECT COUNT(*) FROM users u {where};", params)
+            total = int(cur.fetchone()[0] or 0)
+            pages = max(1, int(math.ceil(total / per))) if total else 1
+            if page > pages:
+                page = pages
 
-            # Clamp page si hors bornes
-            if page > total_pages:
-                page = total_pages
-                offset = (page - 1) * per
-
-            cur.execute(f"""
+            offset = (page - 1) * per
+            cur.execute(
+                f"""
                 SELECT
-                    twitch_login,
-                    SUM(xp_total)::bigint AS xp_total_sum,
-                    MAX(stage)::int AS stage_max,
-                    COUNT(*)::int AS cm_count,
-                    MAX(CASE WHEN is_active THEN id ELSE NULL END)::bigint AS active_id
-                FROM creatures_v2
+                    u.twitch_login,
+                    COALESCE(MAX(c.xp_total) FILTER (WHERE c.is_active=true), 0) AS xp_total_active,
+                    COALESCE(MAX(c.stage) FILTER (WHERE c.is_active=true), 0) AS stage_active,
+                    COUNT(c.id) AS cm_count,
+                    MAX(c.acquired_at) AS last_acquired_at
+                FROM users u
+                LEFT JOIN creatures_v2 c ON c.twitch_login = u.twitch_login
                 {where}
-                GROUP BY twitch_login
-                ORDER BY xp_total_sum DESC, twitch_login ASC
+                GROUP BY u.twitch_login
+                ORDER BY last_acquired_at DESC NULLS LAST, u.twitch_login ASC
                 LIMIT %s OFFSET %s;
-            """, tuple(params + [per, offset]))
+                """,
+                params + [per, offset],
+            )
 
-            users = []
             for r in cur.fetchall():
-                users.append({
-                    "twitch_login": r[0],
-                    "xp_total_sum": int(r[1] or 0),
-                    "stage_max": int(r[2] or 0),
-                    "cm_count": int(r[3] or 0),
-                    "active_id": (int(r[4]) if r[4] is not None else None),
-                })
+                users.append(
+                    {
+                        "twitch_login": r[0],
+                        "xp_total": int(r[1] or 0),
+                        "stage": int(r[2] or 0),
+                        "cm_count": int(r[3] or 0),
+                        "last_acquired_at": r[4].isoformat() if r[4] else None,
+                    }
+                )
 
-    return templates.TemplateResponse('admin.html', {
-        'request': request,
-        'top': top,
-        'q': q_clean,
-        'result': result,
-        'is_live': is_live,
+    # base sert aux liens de pagination dans le template (ex: {{ base }}&page=2)
+    base_params = {}
+    if q_clean:
+        base_params["q"] = q_clean
+    if per != 50:
+        base_params["per"] = str(per)
 
-        # variables attendues par l'UI "liste users"
-        'users': users,
-        'page': page,
-        'per': per,
-        'total_users': total_users,
-        'total_pages': total_pages,
-    })
+    base = "/admin"
+    if base_params:
+        base = base + "?" + urlencode(base_params)
 
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "top": top,
+            "q": q_clean,
+            "result": result,
+            "is_live": is_live,
+            # pour la version “user list”
+            "users": users,
+            "page": page,
+            "pages": pages,
+            "per": per,
+            "total": total,
+            "base": base,
+        },
+    )
 
 # =============================================================================
 # PRESENCES
