@@ -44,6 +44,15 @@ templates = Jinja2Templates(directory="templates")
 _twitch_token_cache = {"token": None, "exp": 0.0}
 
 # =============================================================================
+# Root
+# =============================================================================
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    # Petit confort: redirige vers l'admin (auth Basic demandée sur /admin)
+    return RedirectResponse(url="/admin", status_code=302)
+
+
+# =============================================================================
 # DB
 # =============================================================================
 def get_db():
@@ -154,32 +163,70 @@ def pick_random_lineage(conn) -> str | None:
 def ensure_active_egg(conn, login: str) -> None:
     """
     S'assure qu'il existe un companion actif.
-    Si aucun => crée/active un œuf (cm_key='egg').
+    Si aucun => active un œuf existant (cm_key='egg') sinon en crée un.
     """
+    login = (login or "").strip().lower()
+    if not login:
+        return
+
     with conn.cursor() as cur:
-        cur.execute("""
+        # déjà un actif ?
+        cur.execute(
+            """
             SELECT 1
             FROM creatures_v2
             WHERE twitch_login=%s AND is_active=true
             LIMIT 1;
-        """, (login,))
+            """,
+            (login,),
+        )
         if cur.fetchone():
             return
 
         # désactiver d'éventuels autres (sécurité)
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE creatures_v2
             SET is_active=false
             WHERE twitch_login=%s AND is_active=true;
-        """, (login,))
+            """,
+            (login,),
+        )
 
-        # créer l'œuf si pas déjà dans la collection
-        cur.execute("""
-            INSERT INTO creatures_v2 (twitch_login, cm_key, lineage_key, stage, xp_total, happiness, is_active, acquired_from)
-            VALUES (%s, 'egg', NULL, 0, 0, 50, TRUE, 'legacy')
-            ON CONFLICT (twitch_login, cm_key)
-            DO UPDATE SET is_active = TRUE;
-        """, (login,))
+        # prendre un œuf existant si possible
+        cur.execute(
+            """
+            SELECT id
+            FROM creatures_v2
+            WHERE twitch_login=%s AND cm_key='egg'
+            ORDER BY acquired_at ASC NULLS LAST, id ASC
+            LIMIT 1;
+            """,
+            (login,),
+        )
+        row = cur.fetchone()
+        if row:
+            egg_id = int(row[0])
+            cur.execute(
+                """
+                UPDATE creatures_v2
+                SET is_active=true, updated_at=now()
+                WHERE id=%s;
+                """,
+                (egg_id,),
+            )
+            return
+
+        # sinon, on crée un œuf actif
+        cur.execute(
+            """
+            INSERT INTO creatures_v2
+                (twitch_login, cm_key, lineage_key, stage, xp_total, happiness, is_active, acquired_from)
+            VALUES
+                (%s, 'egg', NULL, 0, 0, 50, TRUE, 'legacy');
+            """,
+            (login,),
+        )
 
 
 # Live 
@@ -1639,14 +1686,16 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
     return {"ok": True}
 
 
-@app.get("/admin/user/{login}/collection")
-def admin_user_collection(
+@app.get("/admin/user/{login}/collection", response_class=HTMLResponse)
+def admin_user_collection_page(
+    request: Request,
     login: str,
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
-
-    login = login.strip().lower()
+    login = (login or "").strip().lower()
+    if not login:
+        return HTMLResponse("<h1>Missing login</h1>", status_code=400)
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -1656,11 +1705,11 @@ def admin_user_collection(
                     id,
                     is_active,
                     cm_key,
-                    lineage_key,
+                    COALESCE(lineage_key,'') AS lineage_key,
                     stage,
                     xp_total,
                     happiness,
-                    acquired_from,
+                    COALESCE(acquired_from,'') AS acquired_from,
                     acquired_at
                 FROM creatures_v2
                 WHERE twitch_login=%s
@@ -1670,23 +1719,100 @@ def admin_user_collection(
             )
             rows = cur.fetchall()
 
-    collection = []
-    for r in rows:
-        collection.append(
-            {
-                "id": int(r[0]),
-                "is_active": bool(r[1]),
-                "cm_key": r[2],
-                "lineage_key": r[3],
-                "stage": int(r[4] or 0),
-                "xp_total": int(r[5] or 0),
-                "happiness": int(r[6] or 0),
-                "acquired_from": r[7],
-                "acquired_at": (r[8].isoformat() if r[8] else None),
-            }
+    # HTML simple et autonome (pas de dépendance à un template)
+    def esc(s: str) -> str:
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
         )
 
-    return {"ok": True, "twitch_login": login, "collection": collection}
+    trs = []
+    for r in rows:
+        cid = int(r[0])
+        is_active = bool(r[1])
+        cm_key = esc(r[2])
+        lineage_key = esc(r[3] or "")
+        stage = int(r[4] or 0)
+        xp_total = int(r[5] or 0)
+        happiness = int(r[6] or 0)
+        acquired_from = esc(r[7] or "")
+        acquired_at = esc(r[8].isoformat() if r[8] else "")
+        trs.append(
+            f"<tr>"
+            f"<td>{cid}</td>"
+            f"<td>{'✅' if is_active else ''}</td>"
+            f"<td>{cm_key}</td>"
+            f"<td>{lineage_key}</td>"
+            f"<td>{stage}</td>"
+            f"<td>{xp_total}</td>"
+            f"<td>{happiness}</td>"
+            f"<td>{acquired_from}</td>"
+            f"<td style='white-space:nowrap'>{acquired_at}</td>"
+            f"</tr>"
+        )
+
+    html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CapsMons — Collection {esc(login)}</title>
+  <style>
+    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#0b0f14;color:#e6edf3}}
+    a{{color:#7aa2ff;text-decoration:none}}
+    a:hover{{text-decoration:underline}}
+    .wrap{{max-width:1200px;margin:0 auto;padding:22px}}
+    .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}}
+    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px}}
+    table{{width:100%;border-collapse:collapse;margin-top:12px}}
+    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px}}
+    th{{color:#9aa4b2;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
+    .muted{{color:#9aa4b2}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="muted">Utilisateur</div>
+        <h1 style="margin:0;font-size:22px">📦 Collection — {esc(login)}</h1>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <a class="card" style="padding:10px 12px" href="/admin">← Admin</a>
+        <a class="card" style="padding:10px 12px" href="/admin/user/{esc(login)}">← Fiche user</a>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="muted">Total: {len(rows)} exemplaire(s)</div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Actif</th>
+            <th>cm_key</th>
+            <th>lineage</th>
+            <th>stage</th>
+            <th>XP</th>
+            <th>bonheur</th>
+            <th>acquired_from</th>
+            <th>acquired_at</th>
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(trs) if trs else '<tr><td colspan="9" class="muted">Aucun CM.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
 
 @app.get("/admin/user/{login}", response_class=HTMLResponse)
 def admin_user(
@@ -4188,12 +4314,14 @@ def admin_home(
             "q": q_clean,
             "result": result,
             "is_live": is_live,
-            # pour la version “user list”
             "users": users,
             "page": page,
-            "pages": pages,
             "per": per,
+            "pages": pages,
             "total": total,
+            # compat templates (anciens noms)
+            "total_users": total,
+            "total_pages": pages,
             "base": base,
         },
     )
@@ -4392,8 +4520,7 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
                     acquired_from
                 )
                 VALUES (%s, %s, %s, 0, 0, 50, %s, FALSE, %s)
-                ON CONFLICT (twitch_login, cm_key) DO NOTHING;
-            """, (login, cm_key, cm_lineage, (not has_active), acquired_from))
+                ;""", (login, cm_key, cm_lineage, (not has_active), acquired_from))
 
             # si le CM existait déjà, on ne change rien (important : “ne changer que le nécessaire”)
 
