@@ -5396,3 +5396,206 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
         conn.commit()
 
     return {"ok": True, "twitch_login": login, "cm_key": cm_key, "acquired_from": acquired_from}
+
+
+# =============================================================================
+# ADMIN: lancer un drop manuel (page + endpoint)
+# =============================================================================
+@app.get("/admin/drops", response_class=HTMLResponse)
+def admin_drops_page(
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    html = """<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — Drops</title>
+  <style>
+    :root {
+      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
+      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
+      --radius:14px;
+    }
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+    .wrap{max-width:1100px;margin:0 auto;padding:22px}
+    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px;margin:14px 0}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+    label{display:block;font-size:12px;color:var(--muted)}
+    input,select{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:220px}
+    .btn{display:inline-block;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer}
+    .btn:hover{border-color:#2f415c}
+    .muted{color:var(--muted)}
+    code{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <h1 style="margin:0 0 6px;">🎲 Lancer un drop</h1>
+        <div class="muted">Spawn direct en base (comme <code>/internal/drop/spawn</code>), mais via l’admin.</div>
+      </div>
+      <div class="row">
+        <a class="btn" href="/admin">⬅️ Retour admin</a>
+        <a class="btn" href="/admin/autodrop">🎁 AutoDrop</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px;">Drop manuel</h2>
+
+      <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="d_mode">
+            <option value="random">random</option>
+            <option value="first">first</option>
+            <option value="coop">coop</option>
+          </select>
+        </div>
+        <div>
+          <label>Durée (sec)</label>
+          <input id="d_duration" type="number" min="5" max="60" value="15">
+        </div>
+        <div>
+          <label>ticket_qty</label>
+          <input id="d_qty" type="number" min="1" max="50" value="1">
+        </div>
+        <div>
+          <label>target_hits (coop)</label>
+          <input id="d_hits" type="number" min="2" max="999" value="10">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div style="flex:1;min-width:260px;">
+          <label>Title (overlay)</label>
+          <input id="d_title" type="text" placeholder="Titre overlay" style="width:100%">
+        </div>
+        <div style="flex:1;min-width:260px;">
+          <label>media_url (image)</label>
+          <input id="d_media" type="text" placeholder="https://..." style="width:100%">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div style="flex:1;min-width:260px;">
+          <label>ticket_key (item gagné)</label>
+          <input id="d_ticket" type="text" placeholder="ex: grande_capsule, bonbon_2, egg_biolab" style="width:100%">
+          <div class="muted" style="margin-top:6px;">Doit exister dans <code>items.key</code>.</div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px;">
+        <button class="btn" onclick="spawnDrop()">🚀 Lancer le drop</button>
+        <span id="d_status" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px;">Test AutoDrop</h2>
+      <div class="muted" style="margin-bottom:10px;">Déclenche un drop avec le tirage pondéré selon tes réglages AutoDrop.</div>
+      <button class="btn" onclick="testAutoDrop()">🧪 Test AutoDrop maintenant</button>
+      <span id="ad_status" class="muted" style="margin-left:10px;"></span>
+    </div>
+  </div>
+
+<script>
+async function spawnDrop(){
+  const el = (id)=>document.getElementById(id);
+  el('d_status').textContent = "Spawn...";
+
+  const payload = {
+    mode: el('d_mode').value,
+    title: el('d_title').value,
+    media_url: el('d_media').value,
+    duration_seconds: el('d_duration').value,
+    ticket_key: el('d_ticket').value,
+    ticket_qty: el('d_qty').value,
+    target_hits: el('d_hits').value
+  };
+
+  const r = await fetch('/admin/drop/spawn', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+
+  let j = null;
+  try{ j = await r.json(); }catch(e){ j = {detail:'bad json'}; }
+
+  el('d_status').textContent = r.ok ? ("✅ Drop lancé (id " + j.drop_id + ")") : ("⛔ " + JSON.stringify(j));
+}
+
+async function testAutoDrop(){
+  const el = (id)=>document.getElementById(id);
+  el('ad_status').textContent = "Test...";
+  const r = await fetch('/admin/autodrop/test', {method:'POST'});
+  let j = null;
+  try{ j = await r.json(); }catch(e){ j = {detail:'bad json'}; }
+  if(!r.ok){
+    el('ad_status').textContent = "⛔ " + JSON.stringify(j);
+    return;
+  }
+  const p = j.picked || {};
+  el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || "?"}`;
+}
+</script>
+
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+@app.post("/admin/drop/spawn")
+def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    mode = str(payload.get("mode", "")).strip().lower()
+    title = str(payload.get("title", "")).strip()
+    media_url = str(payload.get("media_url", "")).strip()
+    duration = int(payload.get("duration_seconds", 15))
+    ticket_key = str(payload.get("ticket_key", "")).strip()
+    ticket_qty = int(payload.get("ticket_qty", 1))
+    target_hits = payload.get("target_hits", None)
+
+    if mode not in ("first", "random", "coop"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    if not title or not media_url:
+        raise HTTPException(status_code=400, detail="Missing title/media_url")
+    if not ticket_key:
+        raise HTTPException(status_code=400, detail="Missing ticket_key")
+
+    duration = max(5, min(duration, 60))
+    ticket_qty = max(1, min(ticket_qty, 50))
+
+    if mode == "coop":
+        target_hits = int(target_hits or 10)
+        target_hits = max(2, min(target_hits, 999))
+    else:
+        target_hits = None
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # expire any previous active drop
+            cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+
+            cur.execute(
+                """
+                INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
+                RETURNING id;
+                """,
+                (mode, title, media_url, 0, ticket_key, ticket_qty, target_hits, duration),
+            )
+            drop_id = int(cur.fetchone()[0])
+
+        conn.commit()
+
+    return {"ok": True, "drop_id": drop_id}
+
