@@ -547,8 +547,11 @@ def kv_get_many(cur, keys: list[str]) -> dict:
     rows = cur.fetchall()
     return {k: v for (k, v) in rows}
 
-@app.get("/admin/autodrop")
-def admin_autodrop(credentials: HTTPBasicCredentials = Depends(security)):
+@app.get("/admin/autodrop", response_class=HTMLResponse)
+def admin_autodrop_page(
+    request: Request,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
     require_admin(credentials)
 
     keys = [
@@ -567,7 +570,212 @@ def admin_autodrop(credentials: HTTPBasicCredentials = Depends(security)):
         with conn.cursor() as cur:
             cfg = kv_get_many(cur, keys)
 
+    # defaults
+    def g(k: str, default: str):
+        v = cfg.get(k)
+        return default if v is None or str(v).strip() == "" else str(v)
+
+    enabled = g("auto_drop_enabled", "false").lower() in ("1", "true", "yes", "on")
+    min_s = int(g("auto_drop_min_seconds", "900"))
+    max_s = int(g("auto_drop_max_seconds", "1500"))
+    dmin = int(g("auto_drop_duration_min_seconds", "10"))
+    dmax = int(g("auto_drop_duration_max_seconds", "20"))
+    kind = g("auto_drop_pick_kind", "any").lower()
+    mode = g("auto_drop_mode", "random").lower()
+    qty = int(g("auto_drop_ticket_qty", "1"))
+    fallback = g("auto_drop_fallback_media_url", "").strip()
+
+    # clamp
+    min_s = max(60, min_s)
+    max_s = max(min_s, max_s)
+    dmin = max(5, dmin)
+    dmax = max(dmin, dmax)
+    if kind not in ("any", "xp", "candy", "egg"):
+        kind = "any"
+    if mode not in ("random", "first"):
+        mode = "random"
+    qty = max(1, min(50, qty))
+
+    html = f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — AutoDrop</title>
+  <style>
+    :root {{
+      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
+      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
+      --radius:14px;
+    }}
+    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
+    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
+    .wrap{{max-width:1100px;margin:0 auto;padding:22px}}
+    .card{{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px;margin:14px 0}}
+    .row{{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}}
+    label{{display:block;font-size:12px;color:var(--muted)}}
+    input,select{{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:220px}}
+    input[type="checkbox"]{{min-width:auto}}
+    .btn{{display:inline-block;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer}}
+    .btn:hover{{border-color:#2f415c}}
+    .muted{{color:var(--muted)}}
+    .ok{{color:var(--ok)}} .err{{color:var(--err)}} .warn{{color:var(--warn)}}
+    code{{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <h1 style="margin:0 0 6px;">🎁 AutoDrop</h1>
+        <div class="muted">Réglages stockés en BDD (table <code>kv</code>) et lus par le bot via <code>/internal/settings/autodrop</code>.</div>
+      </div>
+      <div class="row">
+        <a class="btn" href="/admin">⬅️ Retour admin</a>
+        <a class="btn" href="/admin/drops">🎲 Lancer un drop</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label style="display:flex;gap:10px;align-items:center">
+          <input type="checkbox" id="ad_enabled" {"checked" if enabled else ""}>
+          <span>Activer les drops automatiques</span>
+        </label>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Fréquence min (sec)</label>
+          <input id="ad_min" type="number" min="60" value="{min_s}">
+        </div>
+        <div>
+          <label>Fréquence max (sec)</label>
+          <input id="ad_max" type="number" min="60" value="{max_s}">
+        </div>
+        <div>
+          <label>Durée drop min (sec)</label>
+          <input id="ad_dmin" type="number" min="5" value="{dmin}">
+        </div>
+        <div>
+          <label>Durée drop max (sec)</label>
+          <input id="ad_dmax" type="number" min="5" value="{dmax}">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Type item (pondéré)</label>
+          <select id="ad_kind">
+            <option value="any" {"selected" if kind=="any" else ""}>any</option>
+            <option value="xp" {"selected" if kind=="xp" else ""}>xp</option>
+            <option value="candy" {"selected" if kind=="candy" else ""}>candy</option>
+            <option value="egg" {"selected" if kind=="egg" else ""}>egg</option>
+          </select>
+        </div>
+        <div>
+          <label>Mode</label>
+          <select id="ad_mode">
+            <option value="random" {"selected" if mode=="random" else ""}>random</option>
+            <option value="first" {"selected" if mode=="first" else ""}>first</option>
+          </select>
+        </div>
+        <div>
+          <label>Quantité item (ticket_qty)</label>
+          <input id="ad_qty" type="number" min="1" max="50" value="{qty}">
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <label>Fallback media_url (si icon_url vide)</label>
+        <input id="ad_fallback" type="text" placeholder="https://..." style="width:100%;max-width:900px" value="{fallback}">
+        <div class="muted" style="margin-top:6px;">Si l'item tiré n'a pas d'icon_url, on utilise ce fallback pour l'overlay.</div>
+      </div>
+
+      <div class="row" style="margin-top:14px;">
+        <button class="btn" onclick="saveAutoDrop()">💾 Enregistrer</button>
+        <button class="btn" onclick="testAutoDrop()">🧪 Test drop maintenant</button>
+        <span id="ad_status" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 8px;">🧩 Dépannage</h2>
+      <ul class="muted" style="margin:0;padding-left:18px;">
+        <li>Le test utilise la table <code>items</code> et <code>drop_weight</code> (et filtre selon le type).</li>
+        <li>Si tu as <code>⛔ No items for this kind</code>, c’est que tes <code>drop_weight</code> sont à 0 pour ce filtre.</li>
+        <li>Si tu as <code>⛔ Picked item has no icon_url ...</code>, mets un <code>icon_url</code> sur les items ou un fallback.</li>
+      </ul>
+    </div>
+  </div>
+
+<script>
+async function saveAutoDrop(){{
+  const el = (id)=>document.getElementById(id);
+  const payload = {{
+    enabled: el('ad_enabled').checked,
+    min_seconds: el('ad_min').value,
+    max_seconds: el('ad_max').value,
+    duration_min: el('ad_dmin').value,
+    duration_max: el('ad_dmax').value,
+    pick_kind: el('ad_kind').value,
+    mode: el('ad_mode').value,
+    ticket_qty: el('ad_qty').value,
+    fallback_media_url: el('ad_fallback').value
+  }};
+  el('ad_status').textContent = "Enregistrement...";
+  const r = await fetch('/admin/autodrop/save', {{
+    method:'POST',
+    headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify(payload)
+  }});
+  let j = null;
+  try{{ j = await r.json(); }}catch(e){{ j = {{detail:'bad json'}}; }}
+  el('ad_status').textContent = r.ok ? "✅ Enregistré" : ("⛔ " + JSON.stringify(j));
+}}
+
+async function testAutoDrop(){{
+  const el = (id)=>document.getElementById(id);
+  el('ad_status').textContent = "Test...";
+  const r = await fetch('/admin/autodrop/test', {{method:'POST'}});
+  let j = null;
+  try{{ j = await r.json(); }}catch(e){{ j = {{detail:'bad json'}}; }}
+  if(!r.ok){{
+    el('ad_status').textContent = "⛔ " + JSON.stringify(j);
+    return;
+  }}
+  const p = j.picked || {{}};
+  el('ad_status').textContent = `✅ Drop lancé: ${{p.item_name || p.item_key || "?"}}`;
+}}
+</script>
+
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+# JSON (si tu veux l'utiliser côté JS ailleurs)
+@app.get("/admin/autodrop.json")
+def admin_autodrop_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    keys = [
+        "auto_drop_enabled",
+        "auto_drop_min_seconds",
+        "auto_drop_max_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
+        "auto_drop_pick_kind",
+        "auto_drop_mode",
+        "auto_drop_ticket_qty",
+        "auto_drop_fallback_media_url",
+    ]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cfg = kv_get_many(cur, keys)
+    return {"ok": True, "settings": cfg}
+
 @app.post("/admin/autodrop/save")
+
 def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
 
