@@ -251,6 +251,23 @@ def internal_set_live(payload: dict, x_api_key: str | None = Header(default=None
     return {"ok": True, "is_live": (value == "true")}
 
 
+def _admin_esc(val) -> str:
+    s = "" if val is None else str(val)
+    return (
+        s.replace("&", "&amp;")
+         .replace("<", "&lt;")
+         .replace(">", "&gt;")
+         .replace('"', "&quot;")
+         .replace("'", "&#39;")
+    )
+
+def _admin_flash_html(flash: str | None, kind: str | None) -> str:
+    if not flash:
+        return ""
+    k = (kind or "ok").lower()
+    cls = "ok" if k == "ok" else ("warn" if k == "warn" else "err")
+    return f"<div class='flash {cls}'>" + _admin_esc(flash) + "</div>"
+
 @app.post("/admin/set_live")
 def admin_set_live(payload: dict, request: Request, credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
@@ -1690,6 +1707,8 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
 def admin_user_collection_page(
     request: Request,
     login: str,
+    flash: str | None = None,
+    flash_kind: str | None = None,
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
@@ -1697,8 +1716,20 @@ def admin_user_collection_page(
     if not login:
         return HTMLResponse("<h1>Missing login</h1>", status_code=400)
 
+    rows: list[dict] = []
+    active_id: int | None = None
+
     with get_db() as conn:
         with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id
+                FROM creatures_v2
+                WHERE twitch_login=%s AND is_active=true
+                LIMIT 1;
+            """, (login,))
+            ar = cur.fetchone()
+            active_id = int(ar[0]) if ar else None
+
             cur.execute(
                 """
                 SELECT
@@ -1717,61 +1748,80 @@ def admin_user_collection_page(
                 """,
                 (login,),
             )
-            rows = cur.fetchall()
+            for r in cur.fetchall():
+                rows.append({
+                    "id": int(r[0]),
+                    "is_active": bool(r[1]),
+                    "cm_key": r[2],
+                    "lineage_key": r[3] or "",
+                    "stage": int(r[4] or 0),
+                    "xp_total": int(r[5] or 0),
+                    "happiness": int(r[6] or 0),
+                    "acquired_from": r[7] or "",
+                    "acquired_at": r[8].isoformat() if r[8] else "",
+                })
 
-    # HTML simple et autonome (pas de dépendance à un template)
-    def esc(s: str) -> str:
-        return (
-            str(s)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#39;")
+    def row_actions_html(cid: int, is_active: bool, cm_key: str) -> str:
+        btns = []
+        if not is_active:
+            btns.append(
+                f"<form method='post' action='/admin/user_action' style='display:inline;margin:0'>"
+                f"<input type='hidden' name='login' value='{_admin_esc(login)}'>"
+                f"<input type='hidden' name='action' value='set_active'>"
+                f"<input type='hidden' name='creature_id' value='{cid}'>"
+                f"<input type='hidden' name='next' value='/admin/user/{_admin_esc(login)}/collection'>"
+                f"<button class='btn' type='submit'>Activer</button></form>"
+            )
+        # delete egg (only if egg)
+        if (cm_key or "").strip().lower() == "egg":
+            btns.append(
+                f"<form method='post' action='/admin/user_action' style='display:inline;margin:0'>"
+                f"<input type='hidden' name='login' value='{_admin_esc(login)}'>"
+                f"<input type='hidden' name='action' value='delete_egg'>"
+                f"<input type='hidden' name='creature_id' value='{cid}'>"
+                f"<input type='hidden' name='next' value='/admin/user/{_admin_esc(login)}/collection'>"
+                f"<button class='btn' type='submit'>Suppr œuf</button></form>"
+            )
+        btns.append(
+            f"<form method='post' action='/admin/user_action' style='display:inline;margin:0'>"
+            f"<input type='hidden' name='login' value='{_admin_esc(login)}'>"
+            f"<input type='hidden' name='action' value='delete_creature'>"
+            f"<input type='hidden' name='creature_id' value='{cid}'>"
+            f"<input type='hidden' name='next' value='/admin/user/{_admin_esc(login)}/collection'>"
+            f"<button class='btn' type='submit'>Suppr</button></form>"
         )
-
-    trs = []
-    for r in rows:
-        cid = int(r[0])
-        is_active = bool(r[1])
-        cm_key = esc(r[2])
-        lineage_key = esc(r[3] or "")
-        stage = int(r[4] or 0)
-        xp_total = int(r[5] or 0)
-        happiness = int(r[6] or 0)
-        acquired_from = esc(r[7] or "")
-        acquired_at = esc(r[8].isoformat() if r[8] else "")
-        trs.append(
-            f"<tr>"
-            f"<td>{cid}</td>"
-            f"<td>{'✅' if is_active else ''}</td>"
-            f"<td>{cm_key}</td>"
-            f"<td>{lineage_key}</td>"
-            f"<td>{stage}</td>"
-            f"<td>{xp_total}</td>"
-            f"<td>{happiness}</td>"
-            f"<td>{acquired_from}</td>"
-            f"<td style='white-space:nowrap'>{acquired_at}</td>"
-            f"</tr>"
-        )
+        return " ".join(btns)
 
     html = f"""<!doctype html>
-<html>
+<html lang="fr">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>CapsMons — Collection {esc(login)}</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — Collection {_admin_esc(login)}</title>
   <style>
-    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:#0b0f14;color:#e6edf3}}
-    a{{color:#7aa2ff;text-decoration:none}}
-    a:hover{{text-decoration:underline}}
-    .wrap{{max-width:1200px;margin:0 auto;padding:22px}}
+    :root {{
+      --bg:#0b0f14; --text:#e6edf3; --muted:#9aa4b2; --link:#7aa2ff;
+      --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166; --radius:14px;
+    }}
+    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
+    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
+    .wrap{{max-width:1300px;margin:0 auto;padding:20px}}
     .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}}
-    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:16px}}
-    table{{width:100%;border-collapse:collapse;margin-top:12px}}
-    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px}}
-    th{{color:#9aa4b2;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
-    .muted{{color:#9aa4b2}}
+    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:var(--radius);padding:14px}}
+    .muted{{color:var(--muted)}}
+    .row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+    .btn{{cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);border-radius:12px;padding:8px 10px}}
+    .btn:hover{{background:rgba(255,255,255,.10)}}
+    input,select{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:var(--text);border-radius:10px;padding:8px 10px;outline:none}}
+    table{{width:100%;border-collapse:collapse;margin-top:10px}}
+    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px;vertical-align:top}}
+    th{{color:var(--muted);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
+    .flash{{margin:12px 0;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06)}}
+    .flash.ok{{border-color:rgba(43,213,118,.35)}}
+    .flash.err{{border-color:rgba(255,107,107,.35)}}
+    .flash.warn{{border-color:rgba(255,209,102,.35)}}
+    .pill{{display:inline-block;padding:3px 9px;border:1px solid rgba(255,255,255,.16);border-radius:999px;font-size:12px}}
+    .pill.ok{{border-color:rgba(43,213,118,.45);color:var(--ok)}}
   </style>
 </head>
 <body>
@@ -1779,32 +1829,78 @@ def admin_user_collection_page(
     <div class="top">
       <div>
         <div class="muted">Utilisateur</div>
-        <h1 style="margin:0;font-size:22px">📦 Collection — {esc(login)}</h1>
+        <h1 style="margin:0;font-size:22px">📦 Collection — {_admin_esc(login)}</h1>
+        <div class="muted" style="margin-top:4px">CM: <b>{len(rows)}</b> · Actif: <b>{active_id if active_id else '—'}</b></div>
       </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <a class="card" style="padding:10px 12px" href="/admin">← Admin</a>
-        <a class="card" style="padding:10px 12px" href="/admin/user/{esc(login)}">← Fiche user</a>
+      <div class="row">
+        <a class="btn" href="/admin">← Admin</a>
+        <a class="btn" href="/admin/user/{_admin_esc(login)}">← Fiche user</a>
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px">
-      <div class="muted">Total: {len(rows)} exemplaire(s)</div>
+    {_admin_flash_html(flash, flash_kind)}
+
+    <div class="card">
+      <div style="font-weight:800">Actions rapides</div>
+      <div class="muted" style="margin-top:4px">Ces actions ciblent le CM actif (si aucun ID fourni).</div>
+
+      <div class="row" style="margin-top:10px">
+        <form method="post" action="/admin/user_action" class="row" style="margin:0">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="add_xp">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}/collection">
+          <input name="creature_id" type="number" placeholder="id (optionnel)" style="width:140px">
+          <input name="amount" type="number" placeholder="+XP" style="width:120px">
+          <button class="btn" type="submit">Ajouter XP</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin:0">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="set_stage">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}/collection">
+          <input name="creature_id" type="number" placeholder="id (optionnel)" style="width:140px">
+          <input name="stage" type="number" placeholder="stage" style="width:120px">
+          <button class="btn" type="submit">Fixer stage</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin:0">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="reset_active">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}/collection">
+          <button class="btn" type="submit">Reset actif</button>
+        </form>
+      </div>
+
       <table>
         <thead>
           <tr>
             <th>ID</th>
             <th>Actif</th>
             <th>cm_key</th>
-            <th>lineage</th>
+            <th>lignée</th>
             <th>stage</th>
             <th>XP</th>
             <th>bonheur</th>
             <th>acquired_from</th>
             <th>acquired_at</th>
+            <th>actions</th>
           </tr>
         </thead>
         <tbody>
-          {''.join(trs) if trs else '<tr><td colspan="9" class="muted">Aucun CM.</td></tr>'}
+          {''.join([
+            f"<tr>"
+            f"<td>{r['id']}</td>"
+            f"<td>{'✅' if r['is_active'] else ''}</td>"
+            f"<td>{_admin_esc(r['cm_key'])}</td>"
+            f"<td>{_admin_esc(r['lineage_key'])}</td>"
+            f"<td>{r['stage']}</td>"
+            f"<td>{r['xp_total']}</td>"
+            f"<td>{r['happiness']}</td>"
+            f"<td>{_admin_esc(r['acquired_from'])}</td>"
+            f"<td style='white-space:nowrap'>{_admin_esc(r['acquired_at'])}</td>"
+            f"<td style='white-space:nowrap'>{row_actions_html(r['id'], r['is_active'], r['cm_key'])}</td>"
+            f"</tr>"
+          for r in rows]) if rows else "<tr><td colspan='10' class='muted'>Aucun CM.</td></tr>"}
         </tbody>
       </table>
     </div>
@@ -1813,6 +1909,270 @@ def admin_user_collection_page(
 </html>"""
     return HTMLResponse(html)
 
+
+@app.get("/admin/user/{login}/collection.json")
+def admin_user_collection_json(
+    login: str,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    login = (login or "").strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id, is_active, cm_key, COALESCE(lineage_key,''),
+                    stage, xp_total, happiness,
+                    COALESCE(acquired_from,''), acquired_at
+                FROM creatures_v2
+                WHERE twitch_login=%s
+                ORDER BY is_active DESC, acquired_at ASC NULLS LAST, id ASC;
+                """,
+                (login,),
+            )
+            out = []
+            for r in cur.fetchall():
+                out.append({
+                    "id": int(r[0]),
+                    "is_active": bool(r[1]),
+                    "cm_key": r[2],
+                    "lineage_key": r[3] or "",
+                    "stage": int(r[4] or 0),
+                    "xp_total": int(r[5] or 0),
+                    "happiness": int(r[6] or 0),
+                    "acquired_from": r[7] or "",
+                    "acquired_at": r[8].isoformat() if r[8] else None,
+                })
+    return {"ok": True, "twitch_login": login, "collection": out}
+
+
+@app.post("/admin/user_action")
+def admin_user_action(
+    login: str = Form(...),
+    action: str = Form(...),
+    creature_id: int | None = Form(None),
+    amount: int | None = Form(None),
+    stage: int | None = Form(None),
+    happiness: int | None = Form(None),
+    item_key: str | None = Form(None),
+    qty: int | None = Form(None),
+    to_login: str | None = Form(None),
+    next: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    login = (login or "").strip().lower()
+    action = (action or "").strip().lower()
+    to_login = (to_login or "").strip().lower() if to_login else None
+    item_key = (item_key or "").strip().lower() if item_key else None
+
+    redirect_to = next or f"/admin/user/{login}"
+
+    def go(kind: str, msg: str):
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"{redirect_to}?flash_kind={quote(kind)}&flash={quote(msg)}",
+            status_code=303,
+        )
+
+    if not login:
+        return go("err", "Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # ensure users exist
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+            def get_target_creature_id() -> int | None:
+                if creature_id is not None:
+                    try:
+                        return int(creature_id)
+                    except Exception:
+                        return None
+                cur.execute("""
+                    SELECT id
+                    FROM creatures_v2
+                    WHERE twitch_login=%s AND is_active=true
+                    LIMIT 1;
+                """, (login,))
+                r = cur.fetchone()
+                return int(r[0]) if r else None
+
+            # ===== CM actions =====
+            if action == "set_active":
+                if creature_id is None:
+                    return go("err", "creature_id manquant")
+                cid = int(creature_id)
+                cur.execute("SELECT 1 FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid, login))
+                if not cur.fetchone():
+                    return go("err", "CM introuvable")
+                cur.execute("UPDATE creatures_v2 SET is_active=false WHERE twitch_login=%s AND is_active=true;", (login,))
+                cur.execute("UPDATE creatures_v2 SET is_active=true, updated_at=now() WHERE id=%s AND twitch_login=%s;", (cid, login))
+                conn.commit()
+                return go("ok", f"CM actif = {cid}")
+
+            if action in ("add_xp", "set_xp", "set_stage", "set_happiness", "reset_active", "delete_creature", "delete_egg"):
+                cid = get_target_creature_id()
+                if cid is None and action not in ("delete_creature", "delete_egg"):
+                    return go("err", "Aucun CM actif (et aucun ID fourni)")
+
+                if action == "add_xp":
+                    if amount is None:
+                        return go("err", "amount manquant")
+                    delta = int(amount)
+                    if delta == 0:
+                        return go("warn", "delta = 0")
+                    cur.execute("SELECT xp_total FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid, login))
+                    r = cur.fetchone()
+                    if not r:
+                        return go("err", "CM introuvable")
+                    new_xp = max(0, int(r[0] or 0) + delta)
+                    new_stage = stage_from_xp(int(new_xp))
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET xp_total=%s, stage=%s, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (new_xp, new_stage, cid, login))
+                    conn.commit()
+                    return go("ok", f"XP = {new_xp} (stage {new_stage})")
+
+                if action == "set_xp":
+                    if amount is None:
+                        return go("err", "amount manquant")
+                    new_xp = max(0, int(amount))
+                    new_stage = stage_from_xp(int(new_xp))
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET xp_total=%s, stage=%s, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (new_xp, new_stage, cid, login))
+                    if cur.rowcount <= 0:
+                        return go("err", "CM introuvable")
+                    conn.commit()
+                    return go("ok", f"XP fixé à {new_xp} (stage {new_stage})")
+
+                if action == "set_stage":
+                    if stage is None:
+                        return go("err", "stage manquant")
+                    st = max(0, int(stage))
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET stage=%s, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (st, cid, login))
+                    if cur.rowcount <= 0:
+                        return go("err", "CM introuvable")
+                    conn.commit()
+                    return go("ok", f"Stage fixé à {st}")
+
+                if action == "set_happiness":
+                    if happiness is None:
+                        return go("err", "bonheur manquant")
+                    h = max(0, min(100, int(happiness)))
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET happiness=%s, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (h, cid, login))
+                    if cur.rowcount <= 0:
+                        return go("err", "CM introuvable")
+                    conn.commit()
+                    return go("ok", f"Bonheur fixé à {h}")
+
+                if action == "reset_active":
+                    cur.execute("""
+                        UPDATE creatures_v2
+                        SET xp_total=0, stage=0, lineage_key=NULL, happiness=50, updated_at=now()
+                        WHERE id=%s AND twitch_login=%s;
+                    """, (cid, login))
+                    if cur.rowcount <= 0:
+                        return go("err", "CM introuvable")
+                    conn.commit()
+                    return go("ok", "CM reset")
+
+                if action == "delete_creature":
+                    if creature_id is None:
+                        return go("err", "creature_id manquant")
+                    cid2 = int(creature_id)
+                    cur.execute("DELETE FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid2, login))
+                    if cur.rowcount <= 0:
+                        return go("err", "CM introuvable")
+                    conn.commit()
+                    return go("ok", f"CM {cid2} supprimé")
+
+                if action == "delete_egg":
+                    if creature_id is None:
+                        return go("err", "creature_id manquant")
+                    cid2 = int(creature_id)
+                    cur.execute("SELECT cm_key FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid2, login))
+                    r = cur.fetchone()
+                    if not r:
+                        return go("err", "CM introuvable")
+                    if str(r[0] or "").lower() != "egg":
+                        return go("err", "Ce CM n'est pas un œuf (cm_key != egg)")
+                    cur.execute("DELETE FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid2, login))
+                    conn.commit()
+                    return go("ok", f"Œuf {cid2} supprimé")
+
+            # ===== Inventory actions =====
+            if action in ("give_item", "take_item", "transfer_item"):
+                if not item_key:
+                    return go("err", "item_key manquant")
+                if qty is None:
+                    return go("err", "qty manquant")
+                n = int(qty)
+                if n <= 0:
+                    return go("err", "qty doit être > 0")
+
+                # item exists?
+                cur.execute("SELECT 1 FROM items WHERE key=%s;", (item_key,))
+                if not cur.fetchone():
+                    return go("err", "Item inconnu")
+
+                def add_item(target_login: str, delta: int):
+                    cur.execute("""
+                        UPDATE inventory
+                        SET qty = qty + %s
+                        WHERE twitch_login=%s AND item_key=%s;
+                    """, (delta, target_login, item_key))
+                    if cur.rowcount <= 0:
+                        cur.execute("""
+                            INSERT INTO inventory (twitch_login, item_key, qty)
+                            VALUES (%s,%s,%s);
+                        """, (target_login, item_key, delta))
+
+                def remove_item(target_login: str, delta: int):
+                    cur.execute("""
+                        UPDATE inventory
+                        SET qty = GREATEST(qty - %s, 0)
+                        WHERE twitch_login=%s AND item_key=%s;
+                    """, (delta, target_login, item_key))
+
+                if action == "give_item":
+                    add_item(login, n)
+                    conn.commit()
+                    return go("ok", f"+{n} {item_key}")
+
+                if action == "take_item":
+                    remove_item(login, n)
+                    conn.commit()
+                    return go("ok", f"-{n} {item_key}")
+
+                if action == "transfer_item":
+                    if not to_login:
+                        return go("err", "to_login manquant")
+                    cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (to_login,))
+                    remove_item(login, n)
+                    add_item(to_login, n)
+                    conn.commit()
+                    return go("ok", f"Transfert {n} {item_key} -> {to_login}")
+
+            return go("err", "Action inconnue")
 
 @app.get("/admin/user/{login}", response_class=HTMLResponse)
 def admin_user(
@@ -1824,39 +2184,235 @@ def admin_user(
 ):
     require_admin(credentials)
 
-    login = login.strip().lower()
+    login = (login or "").strip().lower()
+    if not login:
+        return HTMLResponse("<h1>Missing login</h1>", status_code=400)
+
+    active = None
+    summary = {"xp_total_sum": 0, "stage_max": 0, "cm_count": 0}
+    inv: list[dict] = []
+    items: list[dict] = []
 
     with get_db() as conn:
         with conn.cursor() as cur:
+            # user exist
+            cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+            # active
             cur.execute("""
-                SELECT xp_total, stage, lineage_key, cm_key, happiness
+                SELECT id, cm_key, COALESCE(lineage_key,''), stage, xp_total, happiness,
+                       COALESCE(acquired_from,''), acquired_at
                 FROM creatures_v2
                 WHERE twitch_login=%s AND is_active=true
                 LIMIT 1;
             """, (login,))
-            row = cur.fetchone()
+            r = cur.fetchone()
+            if r:
+                active = {
+                    "id": int(r[0]),
+                    "cm_key": r[1],
+                    "lineage_key": r[2] or "",
+                    "stage": int(r[3] or 0),
+                    "xp_total": int(r[4] or 0),
+                    "happiness": int(r[5] or 0),
+                    "acquired_from": r[6] or "",
+                    "acquired_at": r[7].isoformat() if r[7] else "",
+                }
 
-    if not row:
-        xp_total, stage, lineage_key, cm_key, happiness = 0, 0, None, None, 50
-    else:
-        xp_total, stage, lineage_key, cm_key, happiness = row
+            # summary
+            cur.execute("""
+                SELECT COALESCE(SUM(xp_total),0), COALESCE(MAX(stage),0), COUNT(*)
+                FROM creatures_v2
+                WHERE twitch_login=%s;
+            """, (login,))
+            s = cur.fetchone()
+            if s:
+                summary = {"xp_total_sum": int(s[0] or 0), "stage_max": int(s[1] or 0), "cm_count": int(s[2] or 0)}
 
-    nxt, label = next_threshold(int(xp_total))
-    xp_to_next = 0 if nxt is None else max(0, int(nxt) - int(xp_total))
+            # inventory (+ join items name si possible)
+            cur.execute("""
+                SELECT inv.item_key, inv.qty, COALESCE(it.name,''), COALESCE(it.icon_url,'')
+                FROM inventory inv
+                LEFT JOIN items it ON it.key = inv.item_key
+                WHERE inv.twitch_login=%s AND inv.qty > 0
+                ORDER BY inv.item_key ASC;
+            """, (login,))
+            for ir in cur.fetchall():
+                inv.append({"item_key": ir[0], "qty": int(ir[1] or 0), "name": ir[2] or "", "icon_url": ir[3] or ""})
 
-    return templates.TemplateResponse("user.html", {
-        "request": request,
-        "login": login,
-        "xp_total": int(xp_total),
-        "stage": int(stage),
-        "next_label": label,
-        "xp_to_next": int(xp_to_next),
-        "flash": flash,
-        "flash_kind": flash_kind,
-        "lineage_key": lineage_key,
-        "cm_key": cm_key,
-        "happiness": int(happiness or 0),
-    })
+            # items list for selects
+            cur.execute("SELECT key, name FROM items ORDER BY key ASC;")
+            for it in cur.fetchall():
+                items.append({"key": it[0], "name": it[1]})
+
+    def opt_items(selected: str | None = None) -> str:
+        out = ["<option value=''>—</option>"]
+        for it in items:
+            k = it["key"]
+            nm = it["name"] or k
+            sel = " selected" if selected and selected == k else ""
+            out.append(f"<option value='{_admin_esc(k)}'{sel}>{_admin_esc(k)} — {_admin_esc(nm)}</option>")
+        return "".join(out)
+
+    html = f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — Admin user {_admin_esc(login)}</title>
+  <style>
+    :root {{
+      --bg:#0b0f14; --text:#e6edf3; --muted:#9aa4b2; --link:#7aa2ff;
+      --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166; --radius:14px;
+    }}
+    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
+    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
+    .wrap{{max-width:1200px;margin:0 auto;padding:20px}}
+    .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}}
+    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:var(--radius);padding:14px}}
+    .grid{{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}}
+    @media (min-width: 980px){{ .grid{{grid-template-columns: 1fr 1fr;}} }}
+    .muted{{color:var(--muted)}}
+    .row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+    .btn{{cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);border-radius:12px;padding:8px 10px}}
+    .btn:hover{{background:rgba(255,255,255,.10)}}
+    input,select{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:var(--text);border-radius:10px;padding:8px 10px;outline:none}}
+    table{{width:100%;border-collapse:collapse;margin-top:10px}}
+    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px;vertical-align:top}}
+    th{{color:var(--muted);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
+    .flash{{margin:12px 0;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06)}}
+    .flash.ok{{border-color:rgba(43,213,118,.35)}}
+    .flash.err{{border-color:rgba(255,107,107,.35)}}
+    .flash.warn{{border-color:rgba(255,209,102,.35)}}
+    .pill{{display:inline-block;padding:3px 9px;border:1px solid rgba(255,255,255,.16);border-radius:999px;font-size:12px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="muted">Utilisateur</div>
+        <h1 style="margin:0;font-size:22px">👤 {_admin_esc(login)}</h1>
+        <div class="muted" style="margin-top:4px">
+          XP total: <b>{summary['xp_total_sum']}</b> · Stage max: <b>{summary['stage_max']}</b> · #CM: <b>{summary['cm_count']}</b>
+        </div>
+      </div>
+      <div class="row">
+        <a class="btn" href="/admin">← Admin</a>
+        <a class="btn" href="/admin/user/{_admin_esc(login)}/collection">📦 Collection</a>
+      </div>
+    </div>
+
+    {_admin_flash_html(flash, flash_kind)}
+
+    <div class="grid">
+      <div class="card">
+        <div class="muted">CM actif</div>
+        {(
+            f"<div style='margin-top:8px'>"
+            f"<div><span class='pill'>id {active['id']}</span> <b>{_admin_esc(active['cm_key'])}</b> {('· '+_admin_esc(active['lineage_key'])) if active.get('lineage_key') else ''}</div>"
+            f"<div class='muted' style='margin-top:6px'>stage {active['stage']} · xp {active['xp_total']} · bonheur {active['happiness']}</div>"
+            f"<div class='muted' style='margin-top:4px'>acquired_from: {_admin_esc(active['acquired_from'])} · acquired_at: {_admin_esc(active['acquired_at'])}</div>"
+            f"</div>"
+        ) if active else "<div class='muted' style='margin-top:8px'>Aucun CM actif.</div>"}
+
+        <hr style="border:none;border-top:1px solid rgba(255,255,255,.10);margin:14px 0">
+
+        <div style="font-weight:800;margin-bottom:6px">Actions sur le CM actif</div>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin:0">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="add_xp">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <input name="amount" type="number" placeholder="+XP" style="width:120px">
+          <button class="btn" type="submit">Ajouter XP</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin-top:8px">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="set_xp">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <input name="amount" type="number" placeholder="XP exact" style="width:120px">
+          <button class="btn" type="submit">Fixer XP</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin-top:8px">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="set_stage">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <input name="stage" type="number" placeholder="stage" style="width:120px">
+          <button class="btn" type="submit">Fixer stage</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin-top:8px">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="set_happiness">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <input name="happiness" type="number" placeholder="bonheur (0-100)" style="width:160px">
+          <button class="btn" type="submit">Fixer bonheur</button>
+        </form>
+
+        <form method="post" action="/admin/user_action" class="row" style="margin-top:8px">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="reset_active">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <button class="btn" type="submit">Reset CM actif</button>
+        </form>
+
+      </div>
+
+      <div class="card">
+        <div class="muted">Inventaire</div>
+
+        <div class="row" style="margin-top:8px">
+          <form method="post" action="/admin/user_action" class="row" style="margin:0">
+            <input type="hidden" name="login" value="{_admin_esc(login)}">
+            <input type="hidden" name="action" value="give_item">
+            <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+            <select name="item_key" style="min-width:260px">{opt_items()}</select>
+            <input name="qty" type="number" value="1" style="width:110px">
+            <button class="btn" type="submit">Ajouter</button>
+          </form>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <form method="post" action="/admin/user_action" class="row" style="margin:0">
+            <input type="hidden" name="login" value="{_admin_esc(login)}">
+            <input type="hidden" name="action" value="take_item">
+            <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+            <select name="item_key" style="min-width:260px">{opt_items()}</select>
+            <input name="qty" type="number" value="1" style="width:110px">
+            <button class="btn" type="submit">Retirer</button>
+          </form>
+        </div>
+
+        <div style="margin-top:14px;font-weight:800">Transférer un item</div>
+        <form method="post" action="/admin/user_action" class="row" style="margin-top:8px">
+          <input type="hidden" name="login" value="{_admin_esc(login)}">
+          <input type="hidden" name="action" value="transfer_item">
+          <input type="hidden" name="next" value="/admin/user/{_admin_esc(login)}">
+          <input name="to_login" placeholder="vers login..." style="min-width:220px">
+          <select name="item_key" style="min-width:260px">{opt_items()}</select>
+          <input name="qty" type="number" value="1" style="width:110px">
+          <button class="btn" type="submit">Transférer</button>
+        </form>
+
+        <table>
+          <thead><tr><th>item_key</th><th>nom</th><th>qty</th></tr></thead>
+          <tbody>
+            {''.join([
+                f"<tr><td>{_admin_esc(it['item_key'])}</td><td>{_admin_esc(it['name'])}</td><td>{it['qty']}</td></tr>"
+            for it in inv]) if inv else "<tr><td colspan='3' class='muted'>Inventaire vide.</td></tr>"}
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 @app.get("/admin/forms", response_class=HTMLResponse)
 def admin_forms(
@@ -4171,11 +4727,12 @@ def admin_home(
     q: str | None = None,
     page: int = 1,
     per: int = 50,
+    flash: str | None = None,
+    flash_kind: str | None = None,
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
 
-    # imports locaux -> évite de toucher aux imports globaux
     import math
     from urllib.parse import urlencode
 
@@ -4185,8 +4742,7 @@ def admin_home(
         page = int(page or 1)
     except Exception:
         page = 1
-    if page < 1:
-        page = 1
+    page = max(1, page)
 
     try:
         per = int(per or 50)
@@ -4194,65 +4750,37 @@ def admin_home(
         per = 50
     per = max(10, min(200, per))
 
-    result = None
+    is_live = False
+    top: list[dict] = []
     users: list[dict] = []
     total = 0
     pages = 1
-    is_live = False
-    top: list[dict] = []
 
     with get_db() as conn:
         with conn.cursor() as cur:
             # état live
-            cur.execute("SELECT value FROM kv WHERE key = 'is_live';")
+            cur.execute("SELECT value FROM kv WHERE key='is_live';")
             row = cur.fetchone()
             is_live = bool(row and str(row[0]).lower() == "true")
 
             # top XP (CM actifs)
-            cur.execute(
-                """
-                SELECT twitch_login, xp_total, stage
+            cur.execute("""
+                SELECT twitch_login, xp_total, stage, cm_key, COALESCE(lineage_key,'')
                 FROM creatures_v2
                 WHERE is_active=true
                 ORDER BY xp_total DESC
                 LIMIT 50;
-                """
-            )
-            top = [
-                {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
-                for r in cur.fetchall()
-            ]
+            """)
+            for r in cur.fetchall():
+                top.append({
+                    "twitch_login": r[0],
+                    "xp_total": int(r[1] or 0),
+                    "stage": int(r[2] or 0),
+                    "cm_key": r[3],
+                    "lineage_key": r[4] or "",
+                })
 
-            # recherche (affiche un lien direct)
-            if q_clean:
-                cur.execute(
-                    """
-                    SELECT twitch_login, xp_total, stage
-                    FROM creatures_v2
-                    WHERE twitch_login=%s AND is_active=true
-                    LIMIT 1;
-                    """,
-                    (q_clean,),
-                )
-                r = cur.fetchone()
-                if r:
-                    result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
-                else:
-                    cur.execute(
-                        """
-                        SELECT twitch_login, xp_total, stage
-                        FROM creatures_v2
-                        WHERE twitch_login ILIKE %s AND is_active=true
-                        ORDER BY xp_total DESC
-                        LIMIT 1;
-                        """,
-                        (f"%{q_clean}%",),
-                    )
-                    r = cur.fetchone()
-                    if r:
-                        result = {"twitch_login": r[0], "xp_total": int(r[1] or 0), "stage": int(r[2] or 0)}
-
-            # liste users (pagination) — basée sur users + un résumé depuis creatures_v2
+            # pagination users
             where = ""
             params: list = []
             if q_clean:
@@ -4266,14 +4794,20 @@ def admin_home(
                 page = pages
 
             offset = (page - 1) * per
+
             cur.execute(
                 f"""
                 SELECT
                     u.twitch_login,
-                    COALESCE(MAX(c.xp_total) FILTER (WHERE c.is_active=true), 0) AS xp_total_active,
-                    COALESCE(MAX(c.stage) FILTER (WHERE c.is_active=true), 0) AS stage_active,
+                    COALESCE(SUM(c.xp_total), 0) AS xp_total_sum,
+                    COALESCE(MAX(c.stage), 0) AS stage_max,
                     COUNT(c.id) AS cm_count,
-                    MAX(c.acquired_at) AS last_acquired_at
+                    MAX(c.acquired_at) AS last_acquired_at,
+                    MAX(c.id) FILTER (WHERE c.is_active=true) AS active_id,
+                    MAX(c.cm_key) FILTER (WHERE c.is_active=true) AS active_cm_key,
+                    MAX(COALESCE(c.lineage_key,'')) FILTER (WHERE c.is_active=true) AS active_lineage_key,
+                    MAX(c.stage) FILTER (WHERE c.is_active=true) AS active_stage,
+                    MAX(c.xp_total) FILTER (WHERE c.is_active=true) AS active_xp_total
                 FROM users u
                 LEFT JOIN creatures_v2 c ON c.twitch_login = u.twitch_login
                 {where}
@@ -4283,19 +4817,20 @@ def admin_home(
                 """,
                 params + [per, offset],
             )
-
             for r in cur.fetchall():
-                users.append(
-                    {
-                        "twitch_login": r[0],
-                        "xp_total": int(r[1] or 0),
-                        "stage": int(r[2] or 0),
-                        "cm_count": int(r[3] or 0),
-                        "last_acquired_at": r[4].isoformat() if r[4] else None,
-                    }
-                )
+                users.append({
+                    "twitch_login": r[0],
+                    "xp_total_sum": int(r[1] or 0),
+                    "stage_max": int(r[2] or 0),
+                    "cm_count": int(r[3] or 0),
+                    "last_acquired_at": r[4].isoformat() if r[4] else None,
+                    "active_id": int(r[5]) if r[5] is not None else None,
+                    "active_cm_key": r[6],
+                    "active_lineage_key": r[7] or "",
+                    "active_stage": int(r[8] or 0),
+                    "active_xp_total": int(r[9] or 0),
+                })
 
-    # base sert aux liens de pagination dans le template (ex: {{ base }}&page=2)
     base_params = {}
     if q_clean:
         base_params["q"] = q_clean
@@ -4306,26 +4841,152 @@ def admin_home(
     if base_params:
         base = base + "?" + urlencode(base_params)
 
-    return templates.TemplateResponse(
-        "admin.html",
-        {
-            "request": request,
-            "top": top,
-            "q": q_clean,
-            "result": result,
-            "is_live": is_live,
-            "users": users,
-            "page": page,
-            "per": per,
-            "pages": pages,
-            "total": total,
-            # compat templates (anciens noms)
-            "total_users": total,
-            "total_pages": pages,
-            "base": base,
-        },
-    )
+    def page_link(p: int) -> str:
+        if "?" in base:
+            return base + f"&page={p}"
+        return base + f"?page={p}"
 
+    html = f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — Admin</title>
+  <style>
+    :root {{
+      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
+      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
+      --radius:14px;
+    }}
+    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
+    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
+    .wrap{{max-width:1300px;margin:0 auto;padding:20px}}
+    .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}}
+    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:var(--radius);padding:14px}}
+    .grid{{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}}
+    @media (min-width: 980px){{ .grid{{grid-template-columns: 1.15fr .85fr;}} }}
+    table{{width:100%;border-collapse:collapse;margin-top:10px}}
+    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px;vertical-align:top}}
+    th{{color:var(--muted);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
+    .muted{{color:var(--muted)}}
+    .pill{{display:inline-block;padding:3px 9px;border:1px solid rgba(255,255,255,.16);border-radius:999px;font-size:12px}}
+    .pill.ok{{border-color:rgba(43,213,118,.45);color:var(--ok)}}
+    .pill.off{{border-color:rgba(154,164,178,.35);color:var(--muted)}}
+    .btn{{cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);border-radius:12px;padding:8px 10px}}
+    .btn:hover{{background:rgba(255,255,255,.10)}}
+    input,select{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:var(--text);border-radius:10px;padding:8px 10px;outline:none}}
+    input::placeholder{{color:rgba(154,164,178,.8)}}
+    .row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+    .flash{{margin:12px 0;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06)}}
+    .flash.ok{{border-color:rgba(43,213,118,.35)}}
+    .flash.err{{border-color:rgba(255,107,107,.35)}}
+    .flash.warn{{border-color:rgba(255,209,102,.35)}}
+    .pager{{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="muted">CapsMons</div>
+        <h1 style="margin:0;font-size:22px">🛠️ Admin</h1>
+      </div>
+      <div class="row">
+        <span class="pill {'ok' if is_live else 'off'}">{'🟢 LIVE' if is_live else '⚪ OFFLINE'}</span>
+        <form method="post" action="/admin/set_live" style="margin:0">
+          <input type="hidden" name="value" value="{'false' if is_live else 'true'}">
+          <button class="btn" type="submit">{'Passer OFF' if is_live else 'Passer LIVE'}</button>
+        </form>
+        <a class="btn" href="/admin/autodrop">Auto-drop</a>
+        <a class="btn" href="/admin/stats">Stats</a>
+        <a class="btn" href="/admin/rp">RP</a>
+      </div>
+    </div>
+
+    {_admin_flash_html(flash, flash_kind)}
+
+    <div class="grid">
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div class="muted">Viewers ({total})</div>
+            <div style="font-weight:800;margin-top:2px">Liste</div>
+          </div>
+          <form method="get" action="/admin" class="row" style="margin:0">
+            <input name="q" value="{_admin_esc(q_clean)}" placeholder="recherche login..." />
+            <input name="per" value="{per}" style="width:90px" />
+            <button class="btn" type="submit">Rechercher</button>
+          </form>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>login</th>
+              <th>CM actif</th>
+              <th>XP actif</th>
+              <th>Stage actif</th>
+              <th>XP total</th>
+              <th>Stage max</th>
+              <th>#CM</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join([
+              f"<tr>"
+              f"<td><a href='/admin/user/{_admin_esc(u['twitch_login'])}'>{_admin_esc(u['twitch_login'])}</a></td>"
+              f"<td>{_admin_esc(u.get('active_cm_key') or '')}{(' · '+_admin_esc(u.get('active_lineage_key') or '')) if u.get('active_lineage_key') else ''}</td>"
+              f"<td>{u.get('active_xp_total') or 0}</td>"
+              f"<td>{u.get('active_stage') or 0}</td>"
+              f"<td>{u.get('xp_total_sum') or 0}</td>"
+              f"<td>{u.get('stage_max') or 0}</td>"
+              f"<td>{u.get('cm_count') or 0}</td>"
+              f"<td class='row' style='gap:8px'>"
+              f"<a class='btn' href='/admin/user/{_admin_esc(u['twitch_login'])}'>Fiche</a>"
+              f"<a class='btn' href='/admin/user/{_admin_esc(u['twitch_login'])}/collection'>Collection</a>"
+              f"</td>"
+              f"</tr>"
+            for u in users]) if users else "<tr><td colspan='8' class='muted'>Aucun résultat.</td></tr>"}
+          </tbody>
+        </table>
+
+        <div class="pager">
+          <div class="muted">page {page}/{pages}</div>
+          <a class="btn" href="{page_link(1)}">⏮️</a>
+          <a class="btn" href="{page_link(page-1 if page>1 else 1)}">⬅️</a>
+          <a class="btn" href="{page_link(page+1 if page<pages else pages)}">➡️</a>
+          <a class="btn" href="{page_link(pages)}">⏭️</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="muted">Top 50 (XP actif)</div>
+        <table>
+          <thead>
+            <tr><th>#</th><th>login</th><th>CM</th><th>stage</th><th>xp</th></tr>
+          </thead>
+          <tbody>
+            {''.join([
+              f"<tr>"
+              f"<td>{i+1}</td>"
+              f"<td><a href='/admin/user/{_admin_esc(r['twitch_login'])}'>{_admin_esc(r['twitch_login'])}</a></td>"
+              f"<td>{_admin_esc(r.get('cm_key') or '')}{(' · '+_admin_esc(r.get('lineage_key') or '')) if r.get('lineage_key') else ''}</td>"
+              f"<td>{r.get('stage') or 0}</td>"
+              f"<td>{r.get('xp_total') or 0}</td>"
+              f"</tr>"
+            for i, r in enumerate(top)]) if top else "<tr><td colspan='5' class='muted'>Aucun CM actif.</td></tr>"}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+# ================================
 # =============================================================================
 # PRESENCES
 # =============================================================================
