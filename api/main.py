@@ -1,3 +1,17 @@
+
+def column_exists(cur, table_name: str, column_name: str, schema: str = "public") -> bool:
+    """Retourne True si la colonne existe (information_schema)."""
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema=%s AND table_name=%s AND column_name=%s
+        LIMIT 1;
+        """,
+        (schema, table_name, column_name),
+    )
+    return cur.fetchone() is not None
+
 # IMPORTANT
 # Cette version est la version "stabilisée" basée sur TON fichier collé.
 # Objectif: ne changer que le nécessaire pour:
@@ -145,6 +159,307 @@ def verify_eventsub_signature(headers: dict, raw_body: bytes) -> bool:
     digest = hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
     expected = "sha256=" + digest
     return hmac.compare_digest(expected, msg_sig)
+
+
+
+def eventsub_dedup(msg_id: str, msg_type: str, sub_type: str) -> bool:
+    """Insère msg_id dans eventsub_deliveries. Retourne True si 1ère fois, False si déjà vu."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO eventsub_deliveries (msg_id, msg_type, sub_type, received_at)
+                    VALUES (%s,%s,%s, now())
+                    ON CONFLICT (msg_id) DO NOTHING;
+                    """,
+                    (msg_id, msg_type, sub_type),
+                )
+                inserted = (cur.rowcount == 1)
+            conn.commit()
+        return inserted
+    except Exception:
+        # en cas de souci DB, on ne bloque pas le webhook
+        return True
+
+
+def _announce(message: str) -> None:
+    """Enregistre un message à annoncer par le bot."""
+    if not message:
+        return
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO bot_announcements (message)
+                    VALUES (%s);
+                    """,
+                    (message,),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _grant_item_db(cur, login: str, item_key: str, qty: int) -> None:
+    login = (login or "").strip().lower()
+    item_key = (item_key or "").strip()
+    qty = int(qty or 0)
+    if not login or not item_key or qty == 0:
+        return
+
+    # s'assure que l'utilisateur existe
+    cur.execute("INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;", (login,))
+
+    # upsert inventaire
+    cur.execute(
+        """
+        INSERT INTO inventory (twitch_login, item_key, qty)
+        VALUES (%s,%s,%s)
+        ON CONFLICT (twitch_login, item_key)
+        DO UPDATE SET qty = inventory.qty + EXCLUDED.qty, updated_at=now();
+        """,
+        (login, item_key, qty),
+    )
+
+
+def _pick_item_db(cur, kind: str) -> dict:
+    kind = (kind or "any").strip().lower()
+    where = "TRUE"
+    if kind == "xp":
+        where = "xp_gain > 0"
+    elif kind == "candy":
+        where = "happiness_gain > 0"
+    elif kind == "egg":
+        where = "key LIKE 'egg_%'"
+
+    cur.execute(
+        f"""
+        SELECT key, name, COALESCE(icon_url,''), drop_weight, xp_gain, happiness_gain
+        FROM items
+        WHERE {where} AND COALESCE(drop_weight,0) > 0
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        raise HTTPException(status_code=400, detail="No items for this kind")
+
+    total = sum(int(r[3] or 0) for r in rows)
+    rnd = random.randint(1, max(1, total))
+    acc = 0
+    picked = rows[0]
+    for r in rows:
+        acc += int(r[3] or 0)
+        if rnd <= acc:
+            picked = r
+            break
+
+    key, name, icon_url, weight, xp_gain, happiness_gain = picked
+    return {
+        "item_key": key,
+        "item_name": name,
+        "icon_url": icon_url,
+        "xp_gain": int(xp_gain or 0),
+        "happiness_gain": int(happiness_gain or 0),
+        "drop_weight": int(weight or 0),
+    }
+
+
+def _spawn_drop_db(cur, mode: str, title: str, media_url: str, duration: int, ticket_key: str, ticket_qty: int, target_hits: int | None = None, xp_bonus: int = 0) -> int:
+    mode = (mode or "").strip().lower()
+    title = (title or "").strip()
+    media_url = (media_url or "").strip()
+    duration = int(duration or 15)
+    ticket_key = (ticket_key or "ticket_basic").strip()
+    ticket_qty = int(ticket_qty or 1)
+    xp_bonus = int(xp_bonus or 0)
+
+    if mode not in ("first", "random", "coop"):
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    if not title or not media_url:
+        raise HTTPException(status_code=400, detail="Missing title/media_url")
+
+    duration = max(5, min(duration, 30))
+    ticket_qty = max(1, min(ticket_qty, 50))
+    xp_bonus = max(0, min(xp_bonus, 1000))
+
+    if mode == "coop":
+        target_hits = int(target_hits or 10)
+        target_hits = max(2, min(target_hits, 999))
+    else:
+        target_hits = None
+
+    # expire l'ancien
+    cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+    cur.execute(
+        """
+        INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
+        RETURNING id;
+        """,
+        (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration),
+    )
+    return int(cur.fetchone()[0])
+
+
+def handle_channel_points_redemption(ev: dict) -> None:
+    """Traite un achat via points de chaîne (EventSub redemption.add)."""
+    redemption_id = str(ev.get("id", "") or "").strip()
+    user_login = str(ev.get("user_login", "") or "").strip().lower()
+    user_name = str(ev.get("user_name", "") or "").strip()
+    reward = ev.get("reward", {}) or {}
+    reward_id = str(reward.get("id", "") or "").strip()
+    reward_title = str(reward.get("title", "") or "").strip()
+    cost = int(reward.get("cost") or 0)
+
+    if not redemption_id or not reward_id:
+        return
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # activé ?
+            cp_enabled = (kv_get(cur, "cp_enabled", "false") == "true")
+            if not cp_enabled:
+                cur.execute(
+                    """
+                    INSERT INTO cp_redemptions (redemption_id, user_login, reward_id, reward_title, cost, status, detail, created_at)
+                    VALUES (%s,%s,%s,%s,%s,'ignored','cp_disabled', now())
+                    ON CONFLICT (redemption_id) DO NOTHING;
+                    """,
+                    (redemption_id, user_login, reward_id, reward_title, cost),
+                )
+                conn.commit()
+                return
+
+            # dédup redemption id
+            cur.execute("SELECT 1 FROM cp_redemptions WHERE redemption_id=%s;", (redemption_id,))
+            if cur.fetchone():
+                conn.commit()
+                return
+
+            # mapping
+            drop_reward_id = (kv_get(cur, "cp_reward_drop_coop_id", "") or "").strip()
+            capsule_reward_id = (kv_get(cur, "cp_reward_capsule_id", "") or "").strip()
+            candy_reward_id = (kv_get(cur, "cp_reward_candy_id", "") or "").strip()
+            egg_reward_id = (kv_get(cur, "cp_reward_egg_id", "") or "").strip()
+
+            action = None
+            if drop_reward_id and reward_id == drop_reward_id:
+                action = {"type": "drop_coop"}
+            elif capsule_reward_id and reward_id == capsule_reward_id:
+                action = {"type": "grant_capsule"}
+            elif candy_reward_id and reward_id == candy_reward_id:
+                action = {"type": "grant_candy"}
+            elif egg_reward_id and reward_id == egg_reward_id:
+                action = {"type": "grant_egg"}
+
+            if not action:
+                # non mappé -> on log seulement
+                cur.execute(
+                    """
+                    INSERT INTO cp_redemptions (redemption_id, user_login, reward_id, reward_title, cost, status, detail, created_at)
+                    VALUES (%s,%s,%s,%s,%s,'ignored','unmapped_reward', now())
+                    ON CONFLICT (redemption_id) DO NOTHING;
+                    """,
+                    (redemption_id, user_login, reward_id, reward_title, cost),
+                )
+                conn.commit()
+                return
+
+            # Marque "processing" dès le départ pour éviter double traitement en cas de retry
+            cur.execute(
+                """
+                INSERT INTO cp_redemptions (redemption_id, user_login, reward_id, reward_title, cost, status, detail, action, created_at)
+                VALUES (%s,%s,%s,%s,%s,'processing','', %s::jsonb, now())
+                ON CONFLICT (redemption_id) DO NOTHING;
+                """,
+                (redemption_id, user_login, reward_id, reward_title, cost, json.dumps(action)),
+            )
+
+            # Exécute action
+            try:
+                if action["type"] == "drop_coop":
+                    pick_kind = (kv_get(cur, "cp_drop_pick_kind", kv_get(cur, "auto_drop_pick_kind", "any") or "any") or "any").strip().lower()
+                    duration = int(kv_get(cur, "cp_drop_duration_seconds", kv_get(cur, "auto_drop_duration_seconds", "20") or "20") or 20)
+                    target_hits = int(kv_get(cur, "cp_drop_target_hits", kv_get(cur, "auto_drop_target_hits", "10") or "10") or 10)
+                    ticket_qty = int(kv_get(cur, "cp_drop_ticket_qty", kv_get(cur, "auto_drop_ticket_qty", "1") or "1") or 1)
+
+                    picked = _pick_item_db(cur, pick_kind)
+                    title = f"{reward_title or 'Achat drop'} — sponsorisé par {user_name or user_login}"
+                    media_url = picked.get("icon_url") or ""
+                    if not media_url:
+                        # fallback: une icône générique si tu en as une
+                        media_url = (kv_get(cur, "cp_drop_fallback_icon_url", "") or "").strip()
+                    if not media_url:
+                        raise HTTPException(status_code=500, detail="Missing icon_url for picked item")
+
+                    drop_id = _spawn_drop_db(
+                        cur,
+                        mode="coop",
+                        title=title,
+                        media_url=media_url,
+                        duration=duration,
+                        ticket_key=picked["item_key"],
+                        ticket_qty=ticket_qty,
+                        target_hits=target_hits,
+                        xp_bonus=0,
+                    )
+                    _announce(f"🪙 {user_name or user_login} a acheté un drop COOP ! (récompense: {picked['item_name']})")
+
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ok', detail=%s, drop_id=%s, processed_at=now() WHERE redemption_id=%s;",
+                        (f"drop_id={drop_id}", drop_id, redemption_id),
+                    )
+
+                elif action["type"] == "grant_capsule":
+                    item_key = (kv_get(cur, "cp_capsule_item_key", "grande_capsule") or "grande_capsule").strip()
+                    _grant_item_db(cur, user_login, item_key, 1)
+                    _announce(f"🪙 {user_name or user_login} a acheté {item_key} !")
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ok', detail=%s, processed_at=now() WHERE redemption_id=%s;",
+                        (f"granted:{item_key}", redemption_id),
+                    )
+
+                elif action["type"] == "grant_candy":
+                    item_key = (kv_get(cur, "cp_candy_item_key", "bonbon_2") or "bonbon_2").strip()
+                    _grant_item_db(cur, user_login, item_key, 1)
+                    _announce(f"🪙 {user_name or user_login} a acheté {item_key} !")
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ok', detail=%s, processed_at=now() WHERE redemption_id=%s;",
+                        (f"granted:{item_key}", redemption_id),
+                    )
+
+                elif action["type"] == "grant_egg":
+                    forced = (kv_get(cur, "cp_egg_item_key", "") or "").strip()
+                    if forced:
+                        item_key = forced
+                    else:
+                        picked = _pick_item_db(cur, "egg")
+                        item_key = picked["item_key"]
+                    _grant_item_db(cur, user_login, item_key, 1)
+                    _announce(f"🪙 {user_name or user_login} a acheté un œuf ({item_key}) !")
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ok', detail=%s, processed_at=now() WHERE redemption_id=%s;",
+                        (f"granted:{item_key}", redemption_id),
+                    )
+
+                else:
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ignored', detail='unknown_action', processed_at=now() WHERE redemption_id=%s;",
+                        (redemption_id,),
+                    )
+
+            except Exception as e:
+                cur.execute(
+                    "UPDATE cp_redemptions SET status='error', detail=%s, processed_at=now() WHERE redemption_id=%s;",
+                    (str(e)[:400], redemption_id),
+                )
+                # En cas d'erreur, on renvoie une exception -> Twitch retry le webhook.
+                raise
+
+        conn.commit()
+
 
 def pick_random_lineage(conn) -> str | None:
     with conn.cursor() as cur:
@@ -417,11 +732,17 @@ def _stream_online_db(user_id: str | None = None, login: str | None = None, name
 
 
 def _stream_offline_db() -> None:
-    """Passe offline en DB + clôture session + streak/bonus (idempotent)."""
+    """Passe offline en DB + clôture session + streak/bonus (idempotent).
+    Compatibilité: si la colonne streaks.last_session_id n'existe pas, on n'y touche pas.
+    """
     with get_db() as conn:
         with conn.cursor() as cur:
+            has_last_session_id = column_exists(cur, "streaks", "last_session_id")
+
+            # 1) flag offline
             kv_set(cur, "is_live", "false")
 
+            # 2) session courante
             cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
             row = cur.fetchone()
             if not row or not row[0]:
@@ -429,28 +750,42 @@ def _stream_offline_db() -> None:
                 return
             sid = int(row[0])
 
-            # clôture session (idempotent)
+            # 3) clôture session (idempotent)
             cur.execute("UPDATE stream_sessions SET ended_at=now() WHERE id=%s AND ended_at IS NULL;", (sid,))
             just_closed = (cur.rowcount == 1)
-
-            # si pas clôturée maintenant => on évite double streak/bonus
             if not just_closed:
+                # évite boucle infinie: on nettoie quand même
                 kv_set(cur, "current_session_id", "")
                 conn.commit()
                 return
 
-            # participants de cette session
+            # 4) participants
             cur.execute("SELECT twitch_login FROM stream_participants WHERE session_id=%s;", (sid,))
             participants = [r[0] for r in cur.fetchall()]
 
             for login in participants:
-                cur.execute("SELECT streak_count, last_session_id FROM streaks WHERE twitch_login=%s;", (login,))
-                srow = cur.fetchone()
-                prev_count = int(srow[0]) if srow else 0
-                prev_sid = int(srow[1]) if (srow and srow[1] is not None) else None
+                login = (login or "").strip().lower()
+                if not login:
+                    continue
 
-                new_count = (prev_count + 1) if (prev_sid == sid - 1) else 1
+                # --- streak ---
+                prev_count = 0
+                prev_sid = None
 
+                if has_last_session_id:
+                    cur.execute("SELECT streak_count, last_session_id FROM streaks WHERE twitch_login=%s;", (login,))
+                    srow = cur.fetchone()
+                    prev_count = int(srow[0]) if srow else 0
+                    prev_sid = int(srow[1]) if (srow and srow[1] is not None) else None
+                    new_count = (prev_count + 1) if (prev_sid == sid - 1) else 1
+                else:
+                    # Pas d'info de consécutivité: on repart à 1 (safe)
+                    cur.execute("SELECT streak_count FROM streaks WHERE twitch_login=%s;", (login,))
+                    srow = cur.fetchone()
+                    prev_count = int(srow[0]) if srow else 0
+                    new_count = 1
+
+                # bonus bonheur par paliers
                 bonus = 0
                 if new_count == 1:
                     bonus = 2
@@ -461,18 +796,32 @@ def _stream_offline_db() -> None:
                 elif new_count == 10:
                     bonus = 20
 
-                cur.execute(
-                    """
-                    INSERT INTO streaks (twitch_login, streak_count, last_session_id)
-                    VALUES (%s,%s,%s)
-                    ON CONFLICT (twitch_login) DO UPDATE
-                    SET streak_count=EXCLUDED.streak_count,
-                        last_session_id=EXCLUDED.last_session_id,
-                        updated_at=now();
-                    """,
-                    (login, new_count, sid),
-                )
+                # upsert streak (schema-safe)
+                if has_last_session_id:
+                    cur.execute(
+                        """
+                        INSERT INTO streaks (twitch_login, streak_count, last_session_id)
+                        VALUES (%s,%s,%s)
+                        ON CONFLICT (twitch_login) DO UPDATE
+                        SET streak_count=EXCLUDED.streak_count,
+                            last_session_id=EXCLUDED.last_session_id,
+                            updated_at=now();
+                        """,
+                        (login, new_count, sid),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO streaks (twitch_login, streak_count)
+                        VALUES (%s,%s)
+                        ON CONFLICT (twitch_login) DO UPDATE
+                        SET streak_count=EXCLUDED.streak_count,
+                            updated_at=now();
+                        """,
+                        (login, new_count),
+                    )
 
+                # appliquer bonus bonheur (cap 100) sur CM actif
                 if bonus > 0:
                     cur.execute(
                         """
@@ -484,8 +833,11 @@ def _stream_offline_db() -> None:
                         (bonus, login),
                     )
 
+            # 5) clear session
             kv_set(cur, "current_session_id", "")
+
         conn.commit()
+
 
 
 @app.on_event("startup")
@@ -1288,6 +1640,41 @@ def init_db():
                 """
             )
 
+
+            # --- Channel Points shop + EventSub dedup + annonces bot ---
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_announcements (
+              id BIGSERIAL PRIMARY KEY,
+              message TEXT NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              delivered_at TIMESTAMPTZ
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS cp_redemptions (
+              redemption_id TEXT PRIMARY KEY,
+              user_login TEXT,
+              reward_id TEXT,
+              reward_title TEXT,
+              cost INT NOT NULL DEFAULT 0,
+              status TEXT NOT NULL DEFAULT 'processing',
+              detail TEXT NOT NULL DEFAULT '',
+              action JSONB,
+              drop_id INT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              processed_at TIMESTAMPTZ
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS eventsub_deliveries (
+              msg_id TEXT PRIMARY KEY,
+              msg_type TEXT,
+              sub_type TEXT,
+              received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """)
+
+
         conn.commit()
 
 @app.post("/eventsub", response_class=PlainTextResponse)
@@ -1305,135 +1692,39 @@ async def eventsub_handler(request: Request):
     if msg_type == "webhook_callback_verification":
         return payload.get("challenge", "")
 
+
     # 2) Notification
     if msg_type == "notification":
-        sub_type = payload.get("subscription", {}).get("type", "")
+        sub = payload.get("subscription", {}) or {}
+        sub_type = str(sub.get("type", "") or "")
         ev = payload.get("event", {}) or {}
+
         broadcaster_user_id = str(ev.get("broadcaster_user_id", "") or "").strip()
         broadcaster_user_login = str(ev.get("broadcaster_user_login", "") or "").strip().lower()
         broadcaster_user_name = str(ev.get("broadcaster_user_name", "") or "").strip()
 
+        # Déduplication (message id)
+        msg_id = headers.get("twitch-eventsub-message-id", "")
+        if msg_id and not eventsub_dedup(msg_id, "notification", sub_type):
+            return "ok"
 
         if sub_type == "stream.online":
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    # a) is_live = true
-                    cur.execute("""
-                        INSERT INTO kv (key, value)
-                        VALUES ('is_live', 'true')
-                        ON CONFLICT (key) DO UPDATE
-                        SET value='true', updated_at=now();
-                    """)
-
-                    
-
-                    _store_broadcaster_meta(cur, broadcaster_user_id, broadcaster_user_login, broadcaster_user_name)
-# b) créer une session
-                    cur.execute("INSERT INTO stream_sessions DEFAULT VALUES RETURNING id;")
-                    sid = int(cur.fetchone()[0])
-
-                    # c) stocker current_session_id
-                    cur.execute("""
-                        INSERT INTO kv (key, value)
-                        VALUES ('current_session_id', %s)
-                        ON CONFLICT (key) DO UPDATE
-                        SET value=EXCLUDED.value, updated_at=now();
-                    """, (str(sid),))
-
-                conn.commit()
-
+            _stream_online_db(broadcaster_user_id, broadcaster_user_login, broadcaster_user_name)
             return "ok"
 
         if sub_type == "stream.offline":
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    # a) is_live = false
-                    cur.execute("""
-                        INSERT INTO kv (key, value)
-                        VALUES ('is_live', 'false')
-                        ON CONFLICT (key) DO UPDATE
-                        SET value='false', updated_at=now();
-                    """)
+            _stream_offline_db()
+            return "ok"
 
-                    
-
-                    _store_broadcaster_meta(cur, broadcaster_user_id, broadcaster_user_login, broadcaster_user_name)
-# b) récupérer session courante
-                    cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
-                    row = cur.fetchone()
-                    if not row or not row[0]:
-                        conn.commit()
-                        return "ok"
-
-                    sid = int(row[0])
-
-                    # c) fermer session
-                    cur.execute("UPDATE stream_sessions SET ended_at=now() WHERE id=%s AND ended_at IS NULL;", (sid,))
-
-                    # d) participants de cette session
-                    cur.execute("SELECT twitch_login FROM stream_participants WHERE session_id=%s;", (sid,))
-                    participants = [r[0] for r in cur.fetchall()]
-
-                    for login in participants:
-                        # lire streak existant
-                        cur.execute("SELECT streak_count, last_session_id FROM streaks WHERE twitch_login=%s;", (login,))
-                        srow = cur.fetchone()
-                        prev_count = int(srow[0]) if srow else 0
-                        prev_sid = int(srow[1]) if (srow and srow[1] is not None) else None
-
-                        # consécutif si dernière session == sid-1
-                        new_count = (prev_count + 1) if (prev_sid == sid - 1) else 1
-
-                        # bonus bonheur par paliers (bonheur uniquement)
-                        bonus = 0
-                        if new_count == 1:
-                            bonus = 2
-                        elif new_count == 3:
-                            bonus = 5
-                        elif new_count == 5:
-                            bonus = 10
-                        elif new_count == 10:
-                            bonus = 20
-
-                        # upsert streak
-                        cur.execute("""
-                            INSERT INTO streaks (twitch_login, streak_count, last_session_id)
-                            VALUES (%s,%s,%s)
-                            ON CONFLICT (twitch_login) DO UPDATE
-                            SET streak_count=EXCLUDED.streak_count,
-                                last_session_id=EXCLUDED.last_session_id,
-                                updated_at=now();
-                        """, (login, new_count, sid))
-
-                        # appliquer bonus bonheur (cap 100)
-                        if bonus > 0:
-                            cur.execute("""
-                                UPDATE creatures_v2
-                                SET happiness = LEAST(100, GREATEST(0, COALESCE(happiness,50) + %s)),
-                                    updated_at = now()
-                                WHERE twitch_login=%s AND is_active=true;
-                            """, (bonus, login))
-
-                            cur.execute("SELECT happiness FROM creatures WHERE twitch_login=%s;", (login,))
-                            hcur = int(cur.fetchone()[0] or 0)
-                            hnew = min(100, hcur + bonus)
-                            cur.execute("UPDATE creatures SET happiness=%s, updated_at=now() WHERE twitch_login=%s;", (hnew, login))
-
-                    # e) vider current_session_id
-                    cur.execute("""
-                        INSERT INTO kv (key, value)
-                        VALUES ('current_session_id', '')
-                        ON CONFLICT (key) DO UPDATE
-                        SET value='', updated_at=now();
-                    """)
-
-                conn.commit()
-
+        if sub_type == "channel.channel_points_custom_reward_redemption.add":
+            # achat via points de chaîne (boutique)
+            handle_channel_points_redemption(ev)
             return "ok"
 
         return "ok"
 
     # 3) Revocation
+
     if msg_type == "revocation":
         return "ok"
 
@@ -3024,6 +3315,63 @@ def internal_inventory(login: str, x_api_key: str | None = Header(default=None))
     items = [{"item_key": r[0], "qty": int(r[1])} for r in rows]
     return {"ok": True, "twitch_login": login, "items": items}
 
+
+
+@app.post("/internal/inventory/grant")
+def internal_inventory_grant(payload: dict, x_api_key: str | None = Header(default=None)):
+    """Ajoute un item à l'inventaire d'un viewer (utilisable par le bot/admin)."""
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "") or "").strip().lower()
+    item_key = str(payload.get("item_key", "") or "").strip()
+    qty = int(payload.get("qty") or 1)
+
+    if not login or not item_key:
+        raise HTTPException(status_code=400, detail="Missing twitch_login or item_key")
+    qty = max(1, min(qty, 9999))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # vérifie item
+            cur.execute("SELECT 1 FROM items WHERE key=%s;", (item_key,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=400, detail="Unknown item_key")
+
+            _grant_item_db(cur, login, item_key, qty)
+        conn.commit()
+
+    return {"ok": True, "twitch_login": login, "item_key": item_key, "qty": qty}
+
+
+@app.get("/internal/announcements/poll")
+def internal_announcements_poll(limit: int = 5, x_api_key: str | None = Header(default=None)):
+    """Le bot peut poll cette route pour annoncer des événements (points de chaîne, etc.)."""
+    require_internal_key(x_api_key)
+
+    limit = max(1, min(int(limit or 5), 20))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, message
+                FROM bot_announcements
+                WHERE delivered_at IS NULL
+                ORDER BY id ASC
+                LIMIT %s;
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            ids = [int(r[0]) for r in rows]
+            msgs = [str(r[1]) for r in rows]
+            if ids:
+                cur.execute(
+                    "UPDATE bot_announcements SET delivered_at=now() WHERE id = ANY(%s);",
+                    (ids,),
+                )
+        conn.commit()
+
+    return {"messages": msgs}
 
 
 @app.post('/internal/drop/join')
@@ -5807,4 +6155,241 @@ def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(
         conn.commit()
 
     return {"ok": True, "drop_id": drop_id}
+
+
+
+# =============================================================================
+# Admin: Boutique points de chaîne
+# =============================================================================
+@app.get("/admin/points", response_class=HTMLResponse)
+def admin_points(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cfg = {
+                "cp_enabled": kv_get(cur, "cp_enabled", "false") or "false",
+                "broadcaster_user_id": kv_get(cur, "broadcaster_user_id", "") or "",
+                "cp_reward_drop_coop_id": kv_get(cur, "cp_reward_drop_coop_id", "") or "",
+                "cp_reward_capsule_id": kv_get(cur, "cp_reward_capsule_id", "") or "",
+                "cp_reward_candy_id": kv_get(cur, "cp_reward_candy_id", "") or "",
+                "cp_reward_egg_id": kv_get(cur, "cp_reward_egg_id", "") or "",
+                "cp_capsule_item_key": kv_get(cur, "cp_capsule_item_key", "grande_capsule") or "grande_capsule",
+                "cp_candy_item_key": kv_get(cur, "cp_candy_item_key", "bonbon_2") or "bonbon_2",
+                "cp_egg_item_key": kv_get(cur, "cp_egg_item_key", "") or "",
+                "cp_drop_pick_kind": kv_get(cur, "cp_drop_pick_kind", kv_get(cur, "auto_drop_pick_kind", "any") or "any") or "any",
+                "cp_drop_duration_seconds": kv_get(cur, "cp_drop_duration_seconds", kv_get(cur, "auto_drop_duration_seconds", "20") or "20") or "20",
+                "cp_drop_target_hits": kv_get(cur, "cp_drop_target_hits", kv_get(cur, "auto_drop_target_hits", "10") or "10") or "10",
+                "cp_drop_ticket_qty": kv_get(cur, "cp_drop_ticket_qty", kv_get(cur, "auto_drop_ticket_qty", "1") or "1") or "1",
+                "cp_drop_fallback_icon_url": kv_get(cur, "cp_drop_fallback_icon_url", "") or "",
+            }
+        conn.commit()
+
+    checked = "checked" if cfg["cp_enabled"] == "true" else ""
+    msg = str(request.query_params.get("msg", "") or "")
+    msg_html = f"<p style='color: #6bff6b; font-weight: 700;'>{msg}</p>" if msg else ""
+
+    html = f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CapsMons — Boutique Points</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background: #0f1115; color: #e7e7e7; margin: 0; }}
+    .wrap {{ max-width: 980px; margin: 0 auto; padding: 24px; }}
+    .card {{ background: #151a22; border: 1px solid #242b36; border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
+    label {{ display:block; margin: 10px 0 6px; opacity: .9; }}
+    input[type=text], input[type=number], select {{ width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #2a3442; background:#0f1115; color:#e7e7e7; }}
+    .row {{ display:flex; gap: 12px; }}
+    .row > div {{ flex: 1; }}
+    .btn {{ display:inline-block; padding: 10px 14px; border-radius: 10px; border: 1px solid #2a3442; background:#0f1115; color:#e7e7e7; cursor:pointer; }}
+    .btn-primary {{ background:#1d2a3a; }}
+    code {{ background:#0f1115; padding: 2px 6px; border-radius: 6px; border: 1px solid #2a3442; }}
+    a {{ color: #7ab8ff; }}
+    .muted {{ opacity: .75; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>🪙 Boutique (points de chaîne)</h2>
+      {msg_html}
+      <p class="muted">Cette page mappe des Reward IDs (Twitch) vers des actions CapsMons. Les événements arrivent via EventSub (<code>/eventsub</code>).</p>
+      <p class="muted">Doc EventSub: le type <code>channel.channel_points_custom_reward_redemption.add</code> nécessite <code>channel:read:redemptions</code> ou <code>channel:manage:redemptions</code>.</p>
+    </div>
+
+    <form class="card" method="post" action="/admin/points/save">
+      <h3>Activation</h3>
+      <label><input type="checkbox" name="cp_enabled" value="true" {checked}/> Activer la boutique points de chaîne</label>
+
+      <h3>Reward IDs (Twitch)</h3>
+      <div class="row">
+        <div>
+          <label>Drop COOP (reward_id)</label>
+          <input type="text" name="cp_reward_drop_coop_id" value="{cfg['cp_reward_drop_coop_id']}" />
+        </div>
+        <div>
+          <label>Capsule XP (reward_id)</label>
+          <input type="text" name="cp_reward_capsule_id" value="{cfg['cp_reward_capsule_id']}" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Bonbon (reward_id)</label>
+          <input type="text" name="cp_reward_candy_id" value="{cfg['cp_reward_candy_id']}" />
+        </div>
+        <div>
+          <label>Œuf (reward_id)</label>
+          <input type="text" name="cp_reward_egg_id" value="{cfg['cp_reward_egg_id']}" />
+        </div>
+      </div>
+
+      <h3>Items offerts</h3>
+      <div class="row">
+        <div>
+          <label>Item key capsule</label>
+          <input type="text" name="cp_capsule_item_key" value="{cfg['cp_capsule_item_key']}" />
+        </div>
+        <div>
+          <label>Item key bonbon</label>
+          <input type="text" name="cp_candy_item_key" value="{cfg['cp_candy_item_key']}" />
+        </div>
+      </div>
+      <label>Item key œuf (optionnel — si vide: pick pondéré parmi <code>egg_*</code>)</label>
+      <input type="text" name="cp_egg_item_key" value="{cfg['cp_egg_item_key']}" />
+
+      <h3>Paramètres Drop COOP (achat)</h3>
+      <div class="row">
+        <div>
+          <label>Pick kind (any/xp/candy/egg)</label>
+          <input type="text" name="cp_drop_pick_kind" value="{cfg['cp_drop_pick_kind']}" />
+        </div>
+        <div>
+          <label>Durée (secondes)</label>
+          <input type="number" name="cp_drop_duration_seconds" value="{cfg['cp_drop_duration_seconds']}" />
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Target hits (coop)</label>
+          <input type="number" name="cp_drop_target_hits" value="{cfg['cp_drop_target_hits']}" />
+        </div>
+        <div>
+          <label>Ticket qty</label>
+          <input type="number" name="cp_drop_ticket_qty" value="{cfg['cp_drop_ticket_qty']}" />
+        </div>
+      </div>
+      <label>Fallback icon_url (si l'item tiré n'a pas d'icône)</label>
+      <input type="text" name="cp_drop_fallback_icon_url" value="{cfg['cp_drop_fallback_icon_url']}" />
+
+      <div style="margin-top: 12px;">
+        <button class="btn btn-primary" type="submit">💾 Sauvegarder</button>
+        <a class="btn" href="/admin">↩️ Retour admin</a>
+      </div>
+    </form>
+
+    <form class="card" method="post" action="/admin/eventsub/subscribe_channel_points">
+      <h3>EventSub — souscription</h3>
+      <p class="muted">Crée la souscription <code>channel.channel_points_custom_reward_redemption.add</code> (webhook). La création d'une souscription webhook utilise un app access token.</p>
+      <p class="muted">Broadcaster user id détecté: <code>{cfg['broadcaster_user_id'] or '—'}</code></p>
+      <button class="btn btn-primary" type="submit">🔔 (Re)créer la souscription Channel Points</button>
+    </form>
+
+    <div class="card">
+      <h3>Annonce en chat (bot)</h3>
+      <p class="muted">Le bot peut poll <code>/internal/announcements/poll</code> pour annoncer les achats. (Côté bot: une boucle toutes les ~2s suffit.)</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    return HTMLResponse(html)
+
+
+@app.post("/admin/points/save")
+def admin_points_save(
+    cp_enabled: str | None = Form(None),
+    cp_reward_drop_coop_id: str | None = Form(None),
+    cp_reward_capsule_id: str | None = Form(None),
+    cp_reward_candy_id: str | None = Form(None),
+    cp_reward_egg_id: str | None = Form(None),
+    cp_capsule_item_key: str | None = Form(None),
+    cp_candy_item_key: str | None = Form(None),
+    cp_egg_item_key: str | None = Form(None),
+    cp_drop_pick_kind: str | None = Form(None),
+    cp_drop_duration_seconds: str | None = Form(None),
+    cp_drop_target_hits: str | None = Form(None),
+    cp_drop_ticket_qty: str | None = Form(None),
+    cp_drop_fallback_icon_url: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    enabled = "true" if (cp_enabled == "true") else "false"
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "cp_enabled", enabled)
+            kv_set(cur, "cp_reward_drop_coop_id", (cp_reward_drop_coop_id or "").strip())
+            kv_set(cur, "cp_reward_capsule_id", (cp_reward_capsule_id or "").strip())
+            kv_set(cur, "cp_reward_candy_id", (cp_reward_candy_id or "").strip())
+            kv_set(cur, "cp_reward_egg_id", (cp_reward_egg_id or "").strip())
+            kv_set(cur, "cp_capsule_item_key", (cp_capsule_item_key or "grande_capsule").strip())
+            kv_set(cur, "cp_candy_item_key", (cp_candy_item_key or "bonbon_2").strip())
+            kv_set(cur, "cp_egg_item_key", (cp_egg_item_key or "").strip())
+            kv_set(cur, "cp_drop_pick_kind", (cp_drop_pick_kind or "any").strip().lower())
+            kv_set(cur, "cp_drop_duration_seconds", str(int(cp_drop_duration_seconds or 20)))
+            kv_set(cur, "cp_drop_target_hits", str(int(cp_drop_target_hits or 10)))
+            kv_set(cur, "cp_drop_ticket_qty", str(int(cp_drop_ticket_qty or 1)))
+            kv_set(cur, "cp_drop_fallback_icon_url", (cp_drop_fallback_icon_url or "").strip())
+        conn.commit()
+
+    return RedirectResponse(url="/admin/points?msg=Sauvegardé", status_code=302)
+
+
+@app.post("/admin/eventsub/subscribe_channel_points")
+def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    cid = os.environ.get("TWITCH_CLIENT_ID", "")
+    if not cid:
+        raise HTTPException(status_code=500, detail="Missing TWITCH_CLIENT_ID")
+
+    token = twitch_app_token()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            broadcaster_user_id = (kv_get(cur, "broadcaster_user_id", "") or "").strip()
+        conn.commit()
+
+    if not broadcaster_user_id:
+        raise HTTPException(status_code=400, detail="broadcaster_user_id manquant (va live une fois, ou renseigne-le en DB)")
+
+    # callback public
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    if not base:
+        base = "https://capsmons.devlooping.fr"  # fallback raisonnable
+
+    callback = f"{base}/eventsub"
+    secret = os.environ.get("EVENTSUB_SECRET", "")
+
+    body = {
+        "type": "channel.channel_points_custom_reward_redemption.add",
+        "version": "1",
+        "condition": {"broadcaster_user_id": broadcaster_user_id},
+        "transport": {"method": "webhook", "callback": callback, "secret": secret},
+    }
+
+    r = requests.post(
+        "https://api.twitch.tv/helix/eventsub/subscriptions",
+        json=body,
+        headers={"Authorization": f"Bearer {token}", "Client-Id": cid, "Content-Type": "application/json"},
+        timeout=10,
+    )
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=500, detail=f"Twitch error {r.status_code}: {r.text[:500]}")
+
+    return RedirectResponse(url="/admin/points?msg=Souscription créée", status_code=302)
 

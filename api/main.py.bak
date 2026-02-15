@@ -1,3 +1,17 @@
+
+def column_exists(cur, table_name: str, column_name: str, schema: str = "public") -> bool:
+    """Retourne True si la colonne existe (information_schema)."""
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema=%s AND table_name=%s AND column_name=%s
+        LIMIT 1;
+        """,
+        (schema, table_name, column_name),
+    )
+    return cur.fetchone() is not None
+
 # IMPORTANT
 # Cette version est la version "stabilisée" basée sur TON fichier collé.
 # Objectif: ne changer que le nécessaire pour:
@@ -17,6 +31,7 @@
 import os
 import json
 import time
+import asyncio
 import random
 import secrets
 import hmac
@@ -25,7 +40,7 @@ import hashlib
 import requests
 import psycopg
 
-from fastapi import FastAPI, Header, HTTPException, Request, Form, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -269,23 +284,36 @@ def _admin_flash_html(flash: str | None, kind: str | None) -> str:
     return f"<div class='flash {cls}'>" + _admin_esc(flash) + "</div>"
 
 @app.post("/admin/set_live")
-def admin_set_live(payload: dict, request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_set_live(
+    request: Request,
+    value: str | None = Form(default=None),
+    payload: dict | None = Body(default=None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    """
+    Supporte:
+    - Form: value=true/false (HTML form)
+    - JSON: {"value": true/false} (fetch)
+    """
     require_admin(credentials)
 
-    value = str(payload.get("value", "false")).strip().lower()
-    value = "true" if value in ("true", "1", "yes", "on") else "false"
+    v = value
+    if v is None and isinstance(payload, dict):
+        v = payload.get("value")
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO kv (key, value)
-                VALUES ('is_live', %s)
-                ON CONFLICT (key) DO UPDATE
-                SET value = EXCLUDED.value, updated_at = now();
-            """, (value,))
-        conn.commit()
+    if v is None:
+        # fallback query param
+        v = request.query_params.get("value")
 
-    return {"ok": True, "is_live": (value == "true")}
+    v_str = str(v or "false").strip().lower()
+    is_live = v_str in ("true", "1", "yes", "on")
+
+    if is_live:
+        _stream_online_db()
+    else:
+        _stream_offline_db()
+
+    return {"ok": True, "is_live": is_live}
 
 
 
@@ -337,6 +365,198 @@ def twitch_user_profile(login: str) -> tuple[str, str]:
         return login, ""
     u = data[0]
     return u.get("display_name", login), u.get("profile_image_url", "")
+
+
+# =============================================================================
+# Live sync fallback (Helix) - si EventSub 'stream.offline' n'arrive pas
+# =============================================================================
+def twitch_is_live(broadcaster_user_id: str | None = None, broadcaster_login: str | None = None) -> bool:
+    """Retourne True si le streamer est live (Helix /streams)."""
+    cid = os.environ["TWITCH_CLIENT_ID"]
+    token = twitch_app_token()
+
+    params = {}
+    if broadcaster_user_id:
+        params["user_id"] = str(broadcaster_user_id).strip()
+    elif broadcaster_login:
+        params["user_login"] = str(broadcaster_login).strip().lower()
+    else:
+        return False
+
+    r = requests.get(
+        "https://api.twitch.tv/helix/streams",
+        params=params,
+        headers={"Authorization": f"Bearer {token}", "Client-Id": cid},
+        timeout=5,
+    )
+    r.raise_for_status()
+    data = r.json().get("data", [])
+    return bool(data)
+
+
+def _store_broadcaster_meta(cur, user_id: str | None, login: str | None, name: str | None) -> None:
+    # best-effort
+    try:
+        if user_id:
+            kv_set(cur, "broadcaster_user_id", str(user_id).strip())
+        if login:
+            kv_set(cur, "broadcaster_user_login", str(login).strip().lower())
+        if name:
+            kv_set(cur, "broadcaster_user_name", str(name).strip())
+    except Exception:
+        pass
+
+
+def _stream_online_db(user_id: str | None = None, login: str | None = None, name: str | None = None) -> None:
+    """Passe live en DB + crée une session si nécessaire (idempotent)."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # déjà live ?
+            cur.execute("SELECT value FROM kv WHERE key='is_live';")
+            row = cur.fetchone()
+            if row and row[0] == "true":
+                _store_broadcaster_meta(cur, user_id, login, name)
+                conn.commit()
+                return
+
+            kv_set(cur, "is_live", "true")
+            _store_broadcaster_meta(cur, user_id, login, name)
+
+            # créer une session
+            cur.execute("INSERT INTO stream_sessions DEFAULT VALUES RETURNING id;")
+            sid = int(cur.fetchone()[0])
+
+            kv_set(cur, "current_session_id", str(sid))
+        conn.commit()
+
+
+def _stream_offline_db() -> None:
+    """Passe offline en DB + clôture session + streak/bonus (idempotent)."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            has_last_session_id = column_exists(cur, "streaks", "last_session_id")
+            kv_set(cur, "is_live", "false")
+
+            cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
+            row = cur.fetchone()
+            if not row or not row[0]:
+                conn.commit()
+                return
+            sid = int(row[0])
+
+            # clôture session (idempotent)
+            cur.execute("UPDATE stream_sessions SET ended_at=now() WHERE id=%s AND ended_at IS NULL;", (sid,))
+            just_closed = (cur.rowcount == 1)
+
+            # si pas clôturée maintenant => on évite double streak/bonus
+            if not just_closed:
+                kv_set(cur, "current_session_id", "")
+                conn.commit()
+                return
+
+            # participants de cette session
+            cur.execute("SELECT twitch_login FROM stream_participants WHERE session_id=%s;", (sid,))
+            participants = [r[0] for r in cur.fetchall()]
+
+            for login in participants:
+                if has_last_session_id:
+                    cur.execute("SELECT streak_count, last_session_id FROM streaks WHERE twitch_login=%s;", (login,))
+                else:
+                    cur.execute("SELECT streak_count FROM streaks WHERE twitch_login=%s;", (login,))
+                srow = cur.fetchone()
+                prev_count = int(srow[0]) if srow else 0
+                prev_sid = (int(srow[1]) if (has_last_session_id and srow and len(srow) > 1 and srow[1] is not None) else None)
+
+                new_count = (prev_count + 1) if (prev_sid == sid - 1) else 1
+
+                if not has_last_session_id:
+                    # Pas de colonne last_session_id -> streak non-consécutif (safe)
+                    new_count = 1
+
+                bonus = 0
+                if new_count == 1:
+                    bonus = 2
+                elif new_count == 3:
+                    bonus = 5
+                elif new_count == 5:
+                    bonus = 10
+                elif new_count == 10:
+                    bonus = 20
+
+                cur.execute(
+                    """
+                    INSERT INTO streaks (twitch_login, streak_count, last_session_id)
+                    VALUES (%s,%s,%s)
+                    ON CONFLICT (twitch_login) DO UPDATE
+                    SET streak_count=EXCLUDED.streak_count,
+                        last_session_id=EXCLUDED.last_session_id,
+                        updated_at=now();
+                    """,
+                    (login, new_count, sid),
+                )
+
+                if bonus > 0:
+                    cur.execute(
+                        """
+                        UPDATE creatures_v2
+                        SET happiness = LEAST(100, GREATEST(0, COALESCE(happiness,50) + %s)),
+                            updated_at=now()
+                        WHERE twitch_login=%s AND is_active=true;
+                        """,
+                        (bonus, login),
+                    )
+
+            kv_set(cur, "current_session_id", "")
+        conn.commit()
+
+
+@app.on_event("startup")
+async def _startup_live_sync():
+    async def loop():
+        # interval configurable
+        try:
+            interval = int(os.environ.get("LIVE_SYNC_SECONDS", "30"))
+        except Exception:
+            interval = 30
+        interval = max(10, min(interval, 300))
+
+        while True:
+            await asyncio.sleep(interval)
+
+            # lire état DB + meta
+            try:
+                with get_db() as conn:
+                    with conn.cursor() as cur:
+                        db_live = (kv_get(cur, "is_live", "false") == "true")
+                        uid = (kv_get(cur, "broadcaster_user_id", "") or "").strip() or None
+                        login = (kv_get(cur, "broadcaster_user_login", "") or "").strip().lower() or None
+            except Exception:
+                continue
+
+            # fallback env si jamais (optionnel)
+            if not uid:
+                uid_env = (os.environ.get("TWITCH_BROADCASTER_USER_ID", "") or "").strip()
+                uid = uid_env or None
+            if not login:
+                login_env = (os.environ.get("TWITCH_BROADCASTER_LOGIN", "") or "").strip().lower()
+                login = login_env or None
+
+            if not uid and not login:
+                continue
+
+            # Helix check (dans un thread pour ne pas bloquer l'event loop)
+            try:
+                helix_live = await asyncio.to_thread(twitch_is_live, uid, login)
+            except Exception:
+                continue
+
+            if helix_live and not db_live:
+                _stream_online_db(uid, login, None)
+            elif (not helix_live) and db_live:
+                _stream_offline_db()
+
+    asyncio.create_task(loop())
+
 
 # =============================================================================
 # CM helper
@@ -1110,6 +1330,11 @@ async def eventsub_handler(request: Request):
     # 2) Notification
     if msg_type == "notification":
         sub_type = payload.get("subscription", {}).get("type", "")
+        ev = payload.get("event", {}) or {}
+        broadcaster_user_id = str(ev.get("broadcaster_user_id", "") or "").strip()
+        broadcaster_user_login = str(ev.get("broadcaster_user_login", "") or "").strip().lower()
+        broadcaster_user_name = str(ev.get("broadcaster_user_name", "") or "").strip()
+
 
         if sub_type == "stream.online":
             with get_db() as conn:
@@ -1122,7 +1347,10 @@ async def eventsub_handler(request: Request):
                         SET value='true', updated_at=now();
                     """)
 
-                    # b) créer une session
+                    
+
+                    _store_broadcaster_meta(cur, broadcaster_user_id, broadcaster_user_login, broadcaster_user_name)
+# b) créer une session
                     cur.execute("INSERT INTO stream_sessions DEFAULT VALUES RETURNING id;")
                     sid = int(cur.fetchone()[0])
 
@@ -1149,7 +1377,10 @@ async def eventsub_handler(request: Request):
                         SET value='false', updated_at=now();
                     """)
 
-                    # b) récupérer session courante
+                    
+
+                    _store_broadcaster_meta(cur, broadcaster_user_id, broadcaster_user_login, broadcaster_user_name)
+# b) récupérer session courante
                     cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
                     row = cur.fetchone()
                     if not row or not row[0]:
