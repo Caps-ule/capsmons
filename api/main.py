@@ -39,7 +39,6 @@ import hashlib
 import urllib.parse
 import requests
 import psycopg
-import httpx
 
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
