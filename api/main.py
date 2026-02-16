@@ -36,9 +36,10 @@ import random
 import secrets
 import hmac
 import hashlib
-
+import urllib.parse
 import requests
 import psycopg
+import httpx
 
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
@@ -46,6 +47,13 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+TWITCH_CLIENT_ID = os.environ["TWITCH_CLIENT_ID"]
+TWITCH_CLIENT_SECRET = os.environ["TWITCH_CLIENT_SECRET"]
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr")
+TWITCH_REDIRECT_URI = os.environ.get("TWITCH_REDIRECT_URI", f"{PUBLIC_BASE_URL}/admin/twitch/callback")
+
+# minimum pour recevoir les redemptions; ajoute manage si tu veux pouvoir "FULFILL" ensuite
+TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
 
 # =============================================================================
 # App / Static / Templates
@@ -543,6 +551,71 @@ def ensure_active_egg(conn, login: str) -> None:
             """,
             (login,),
         )
+
+@app.get("/admin/twitch/connect")
+def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    state = secrets.token_urlsafe(16)
+    kv_set("twitch_oauth_state", state)
+
+    params = {
+        "client_id": TWITCH_CLIENT_ID,
+        "redirect_uri": TWITCH_REDIRECT_URI,
+        "response_type": "code",
+        "scope": TWITCH_CP_SCOPES,
+        "state": state,
+        "force_verify": "true",
+    }
+    url = "https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+@app.get("/admin/twitch/callback")
+async def admin_twitch_callback(
+    credentials: HTTPBasicCredentials = Depends(security),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    require_admin(credentials)
+
+    if error:
+        return HTMLResponse(f"OAuth error: {error}", status_code=400)
+
+    expected = kv_get("twitch_oauth_state", "")
+    if not code or not state or state != expected:
+        return HTMLResponse("Bad OAuth state/code", status_code=400)
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={
+                "client_id": TWITCH_CLIENT_ID,
+                "client_secret": TWITCH_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": TWITCH_REDIRECT_URI,
+            },
+        )
+    j = r.json()
+    if r.status_code != 200:
+        return HTMLResponse(f"Token exchange failed: {r.status_code} {j}", status_code=502)
+
+    kv_set("twitch_user_access_token", j["access_token"])
+    kv_set("twitch_user_refresh_token", j.get("refresh_token", ""))
+    kv_set("twitch_user_scopes", json.dumps(j.get("scope", [])))
+
+    # utile: récupérer user_id/login via validate
+    async with httpx.AsyncClient(timeout=20) as client:
+        vr = await client.get(
+            "https://id.twitch.tv/oauth2/validate",
+            headers={"Authorization": f"OAuth {j['access_token']}"},
+        )
+    vj = vr.json()
+    if vr.status_code == 200:
+        kv_set("twitch_broadcaster_user_id", vj.get("user_id", ""))
+        kv_set("twitch_broadcaster_login", vj.get("login", ""))
+
+    return RedirectResponse("/admin/points")
 
 
 # Live 
