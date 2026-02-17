@@ -550,12 +550,15 @@ def ensure_active_egg(conn, login: str) -> None:
             """,
             (login,),
         )
-
 @app.get("/admin/twitch/connect")
 def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     state = secrets.token_urlsafe(16)
-    kv_set("twitch_oauth_state", state)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "twitch_oauth_state", state)
+        conn.commit()
 
     params = {
         "client_id": TWITCH_CLIENT_ID,
@@ -567,6 +570,7 @@ def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
     }
     url = "https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url)
+
 
 @app.get("/admin/twitch/callback")
 async def admin_twitch_callback(
@@ -580,7 +584,11 @@ async def admin_twitch_callback(
     if error:
         return HTMLResponse(f"OAuth error: {error}", status_code=400)
 
-    expected = kv_get("twitch_oauth_state", "")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            expected = kv_get(cur, "twitch_oauth_state", "") or ""
+        conn.commit()
+
     if not code or not state or state != expected:
         return HTMLResponse("Bad OAuth state/code", status_code=400)
 
@@ -599,24 +607,16 @@ async def admin_twitch_callback(
     if r.status_code != 200:
         return HTMLResponse(f"Token exchange failed: {r.status_code} {j}", status_code=502)
 
-    kv_set("twitch_user_access_token", j["access_token"])
-    kv_set("twitch_user_refresh_token", j.get("refresh_token", ""))
-    kv_set("twitch_user_scopes", json.dumps(j.get("scope", [])))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "twitch_user_access_token", j["access_token"])
+            kv_set(cur, "twitch_user_refresh_token", j.get("refresh_token", ""))
+            kv_set(cur, "twitch_user_scopes", json.dumps(j.get("scope", [])))
+        conn.commit()
 
-    # utile: récupérer user_id/login via validate
-    async with httpx.AsyncClient(timeout=20) as client:
-        vr = await client.get(
-            "https://id.twitch.tv/oauth2/validate",
-            headers={"Authorization": f"OAuth {j['access_token']}"},
-        )
-    vj = vr.json()
-    if vr.status_code == 200:
-        uid = vj.get("user_id", "") or ""
-        kv_set("twitch_broadcaster_user_id", uid)
-        kv_set("broadcaster_user_id", uid)  # compat: utilisé ailleurs dans l'admin
-        kv_set("twitch_broadcaster_login", vj.get("login", ""))
+    # optionnel: redirige vers la page boutique
+    return RedirectResponse(url="/admin/points?msg=OAuth%20OK", status_code=303)
 
-    return RedirectResponse("/admin/points")
 
 
 # Live 
@@ -1141,60 +1141,19 @@ def resolve_drop(drop_id: int):
     }
 
 
-def _kv_get_with_cursor(cur, key: str, default: str | None = None) -> str | None:
+def kv_get(cur, key: str, default: str | None = None) -> str | None:
     cur.execute("SELECT value FROM kv WHERE key=%s;", (key,))
     row = cur.fetchone()
     return (row[0] if row and row[0] is not None else default)
 
-def _kv_set_with_cursor(cur, key: str, value: str) -> None:
-    cur.execute(
-        """
+def kv_set(cur, key: str, value: str) -> None:
+    cur.execute("""
         INSERT INTO kv (key, value)
         VALUES (%s, %s)
         ON CONFLICT (key) DO UPDATE
         SET value = EXCLUDED.value, updated_at = now();
-        """,
-        (key, value),
-    )
+    """, (key, value))
 
-def kv_get(cur_or_key, key: str | None = None, default: str | None = None) -> str | None:
-    """
-    Deux signatures supportées :
-      - kv_get(cur, key, default)
-      - kv_get(key, default)
-    """
-    # Signature 1: (cur, key, default)
-    if hasattr(cur_or_key, "execute"):
-        return _kv_get_with_cursor(cur_or_key, str(key), default)
-
-    # Signature 2: (key, default)
-    key_str = str(cur_or_key)
-    default_val = key  # ici "key" contient le default
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            val = _kv_get_with_cursor(cur, key_str, default_val)
-        conn.commit()
-    return val
-
-def kv_set(cur_or_key, key: str | None = None, value: str | None = None) -> None:
-    """
-    Deux signatures supportées :
-      - kv_set(cur, key, value)
-      - kv_set(key, value)
-    """
-    # Signature 1: (cur, key, value)
-    if hasattr(cur_or_key, "execute"):
-        _kv_set_with_cursor(cur_or_key, str(key), str(value))
-        return
-
-    # Signature 2: (key, value)
-    key_str = str(cur_or_key)
-    val_str = str(value if value is not None else key)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            _kv_set_with_cursor(cur, key_str, val_str)
-        conn.commit()
 def as_bool(v: str | None, default: bool = False) -> bool:
     if v is None:
         return default
@@ -6471,39 +6430,15 @@ def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = 
     if not cid:
         raise HTTPException(status_code=500, detail="Missing TWITCH_CLIENT_ID")
 
-    # Webhook subscriptions MUST use an app access token (Twitch requirement).
     token = twitch_app_token()
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Pour les types qui nécessitent une autorisation utilisateur (ex: channel points),
-            # Twitch vérifie que le broadcaster a bien accordé les scopes à notre client_id.
-            raw_scopes = (kv_get(cur, "twitch_user_scopes", "") or "").strip()
-            twitch_broadcaster_user_id = (kv_get(cur, "twitch_broadcaster_user_id", "") or "").strip()
-            legacy_broadcaster_user_id = (kv_get(cur, "broadcaster_user_id", "") or "").strip()
+            broadcaster_user_id = (kv_get(cur, "broadcaster_user_id", "") or "").strip()
         conn.commit()
 
-    # Parse scopes (on stocke parfois en JSON, parfois en texte)
-    scopes_set: set[str] = set()
-    if raw_scopes:
-        try:
-            parsed = json.loads(raw_scopes)
-            if isinstance(parsed, list):
-                scopes_set = {str(s).strip() for s in parsed if str(s).strip()}
-            elif isinstance(parsed, str):
-                scopes_set = {s.strip() for s in parsed.replace(",", " ").split() if s.strip()}
-        except Exception:
-            scopes_set = {s.strip() for s in raw_scopes.replace(",", " ").split() if s.strip()}
-
-    if not (("channel:read:redemptions" in scopes_set) or ("channel:manage:redemptions" in scopes_set)):
-        raise HTTPException(
-            status_code=400,
-            detail="Autorisation Twitch manquante. Va sur /admin/twitch/connect et accepte au moins le scope channel:read:redemptions (ou channel:manage:redemptions), puis réessaie.",
-        )
-
-    broadcaster_user_id = twitch_broadcaster_user_id or legacy_broadcaster_user_id
     if not broadcaster_user_id:
-        raise HTTPException(status_code=400, detail="broadcaster_user_id manquant (fais /admin/twitch/connect ou passe live une fois).")
+        raise HTTPException(status_code=400, detail="broadcaster_user_id manquant (va live une fois, ou renseigne-le en DB)")
 
     # callback public
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -6512,8 +6447,6 @@ def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = 
 
     callback = f"{base}/eventsub"
     secret = os.environ.get("EVENTSUB_SECRET", "")
-    if not secret:
-        raise HTTPException(status_code=500, detail="Missing EVENTSUB_SECRET (webhook signature secret)")
 
     body = {
         "type": "channel.channel_points_custom_reward_redemption.add",
@@ -6528,10 +6461,6 @@ def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = 
         headers={"Authorization": f"Bearer {token}", "Client-Id": cid, "Content-Type": "application/json"},
         timeout=10,
     )
-
-    # 409: existe déjà (ça arrive si tu recliques)
-    if r.status_code == 409:
-        return RedirectResponse(url="/admin/points?msg=Souscription déjà existante", status_code=302)
 
     if r.status_code >= 400:
         raise HTTPException(status_code=500, detail=f"Twitch error {r.status_code}: {r.text[:500]}")
