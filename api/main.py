@@ -550,12 +550,15 @@ def ensure_active_egg(conn, login: str) -> None:
             """,
             (login,),
         )
-
 @app.get("/admin/twitch/connect")
 def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     state = secrets.token_urlsafe(16)
-    kv_set("twitch_oauth_state", state)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "twitch_oauth_state", state)
+        conn.commit()
 
     params = {
         "client_id": TWITCH_CLIENT_ID,
@@ -567,6 +570,7 @@ def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
     }
     url = "https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params)
     return RedirectResponse(url)
+
 
 @app.get("/admin/twitch/callback")
 async def admin_twitch_callback(
@@ -580,7 +584,11 @@ async def admin_twitch_callback(
     if error:
         return HTMLResponse(f"OAuth error: {error}", status_code=400)
 
-    expected = kv_get("twitch_oauth_state", "")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            expected = kv_get(cur, "twitch_oauth_state", "") or ""
+        conn.commit()
+
     if not code or not state or state != expected:
         return HTMLResponse("Bad OAuth state/code", status_code=400)
 
@@ -599,22 +607,16 @@ async def admin_twitch_callback(
     if r.status_code != 200:
         return HTMLResponse(f"Token exchange failed: {r.status_code} {j}", status_code=502)
 
-    kv_set("twitch_user_access_token", j["access_token"])
-    kv_set("twitch_user_refresh_token", j.get("refresh_token", ""))
-    kv_set("twitch_user_scopes", json.dumps(j.get("scope", [])))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "twitch_user_access_token", j["access_token"])
+            kv_set(cur, "twitch_user_refresh_token", j.get("refresh_token", ""))
+            kv_set(cur, "twitch_user_scopes", json.dumps(j.get("scope", [])))
+        conn.commit()
 
-    # utile: récupérer user_id/login via validate
-    async with httpx.AsyncClient(timeout=20) as client:
-        vr = await client.get(
-            "https://id.twitch.tv/oauth2/validate",
-            headers={"Authorization": f"OAuth {j['access_token']}"},
-        )
-    vj = vr.json()
-    if vr.status_code == 200:
-        kv_set("twitch_broadcaster_user_id", vj.get("user_id", ""))
-        kv_set("twitch_broadcaster_login", vj.get("login", ""))
+    # optionnel: redirige vers la page boutique
+    return RedirectResponse(url="/admin/points?msg=OAuth%20OK", status_code=303)
 
-    return RedirectResponse("/admin/points")
 
 
 # Live 
@@ -1139,64 +1141,14 @@ def resolve_drop(drop_id: int):
     }
 
 
-def kv_get(cur_or_key, key: str | None = None, default: str | None = None) -> str | None:
-    """Get KV.
-    Backward-compatible:
-      - kv_get(cur, "k", "def")
-      - kv_get("k", "def")
-    """
-    if key is None:
-        # called as kv_get("k", default)
-        k = str(cur_or_key)
-        d = default
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT value FROM kv WHERE key=%s;", (k,))
-                row = cur.fetchone()
-            conn.commit()
-        return (row[0] if row and row[0] is not None else d)
-
-    # called as kv_get(cur, key, default)
-    cur = cur_or_key
+def kv_get(cur, key: str, default: str | None = None) -> str | None:
     cur.execute("SELECT value FROM kv WHERE key=%s;", (key,))
     row = cur.fetchone()
     return (row[0] if row and row[0] is not None else default)
 
-def kv_set(cur_or_key, key: str | None = None, value: str | None = None) -> None:
-    """Set KV.
-    Backward-compatible:
-      - kv_set(cur, "k", "v")
-      - kv_set("k", "v")
-    """
-    if value is None:
-        # called as kv_set("k", "v")
-        k = str(cur_or_key)
-        v = "" if key is None else str(key)
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO kv (key, value)
-                    VALUES (%s, %s)
-                    ON CONFLICT (key) DO UPDATE
-                    SET value = EXCLUDED.value, updated_at = now();
-                    """,
-                    (k, v),
-                )
-            conn.commit()
-        return
-
-    # called as kv_set(cur, key, value)
-    cur = cur_or_key
-    cur.execute(
-        """
+def kv_set(cur, key: str, value: str) -> None:
+    cur.execute("""
         INSERT INTO kv (key, value)
-        VALUES (%s, %s)
-        ON CONFLICT (key) DO UPDATE
-        SET value = EXCLUDED.value, updated_at = now();
-        """,
-        (key, value),
-    )
         VALUES (%s, %s)
         ON CONFLICT (key) DO UPDATE
         SET value = EXCLUDED.value, updated_at = now();
