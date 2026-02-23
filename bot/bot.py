@@ -1164,23 +1164,46 @@ class Bot(commands.Bot):
             else:
                 if mode == "first":
                     rp_key = "drop.win.first"
+                    line = await rp_get(rp_key) or "⚡ {viewer} remporte {title} !"
+                    viewer = f"@{winners[0]}" if winners else ""
+                    msg = rp_format(
+                        line,
+                        viewer=viewer,
+                        title=title,
+                        xp=xp_bonus,
+                        ticket_key=ticket_key,
+                        ticket_qty=ticket_qty,
+                        count=len(winners),
+                    )
+                
                 elif mode == "random":
                     rp_key = "drop.win.random"
+                    line = await rp_get(rp_key) or "🎲 {viewer} remporte {title} !"
+                    viewer = f"@{winners[0]}" if winners else ""
+                    msg = rp_format(
+                        line,
+                        viewer=viewer,
+                        title=title,
+                        xp=xp_bonus,
+                        ticket_key=ticket_key,
+                        ticket_qty=ticket_qty,
+                        count=len(winners),
+                    )
+                
                 else:
-                    rp_key = "drop.win.coop"
-
-                line = await rp_get(rp_key) or "🏆 {viewer} gagne {title} !"
-                viewer = f"@{winners[0]}" if winners else ""
-                msg = rp_format(
-                    line,
-                    viewer=viewer,
-                    title=title,
-                    xp=xp_bonus,
-                    ticket_key=ticket_key,
-                    ticket_qty=ticket_qty,
-                    count=len(winners),
-                )
-
+                    # COOP : annonce selon le nombre de participants
+                    count = len(winners)
+                    if count == 0:
+                        msg = f"⌛ Drop COOP '{title}' expiré sans participants."
+                    elif count == 1:
+                        msg = f"🤝 Drop COOP '{title}' — 1 participant, XP entre 20 et 30 !"
+                    elif count <= 3:
+                        msg = f"🤝 Drop COOP '{title}' — {count} participants, XP entre 30 et 50 chacun !"
+                    elif count <= 5:
+                        msg = f"🤝 Drop COOP '{title}' — {count} participants, XP entre 50 et 75 chacun !"
+                    else:
+                        msg = f"🔥 Drop COOP '{title}' — {count} participants, XP entre 100 et 250 chacun !"
+                
             try:
                 chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
                 if chan:

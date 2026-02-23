@@ -1089,6 +1089,16 @@ def get_active_drop(cur):
     )
     return cur.fetchone()
 
+def coop_xp_for_count(count: int) -> int:
+    """Retourne un montant d'XP aléatoire selon le nombre de participants."""
+    if count <= 1:
+        return random.randint(20, 30)
+    elif count <= 3:
+        return random.randint(30, 50)
+    elif count <= 5:
+        return random.randint(50, 75)
+    else:
+        return random.randint(100, 250)
 
 def resolve_drop(drop_id: int):
     with get_db() as conn:
@@ -1113,27 +1123,39 @@ def resolve_drop(drop_id: int):
             if not bool(cur.fetchone()[0]):
                 return None
 
-            cur.execute("SELECT twitch_login, created_at FROM drop_participants WHERE drop_id=%s ORDER BY created_at ASC;", (drop_id,))
+            cur.execute(
+                "SELECT twitch_login FROM drop_participants WHERE drop_id=%s ORDER BY created_at ASC;",
+                (drop_id,),
+            )
             participants = [r[0] for r in cur.fetchall()]
 
             winners = []
+
             if mode == 'first':
                 if participants:
                     winners = [participants[0]]
+
             elif mode == 'random':
                 if participants:
                     winners = [random.choice(participants)]
+
             elif mode == 'coop':
-                target = int(target_hits or 0)
-                if target > 0 and len(participants) >= target:
-                    winners = participants[:]
-                else:
-                    winners = []
+                # Nouveau système : tout le monde gagne, XP selon le nombre
+                winners = participants[:]
 
             if winners:
-                for w in winners:
-                    grant_xp(w, int(xp_bonus))
-                    inv_add(w, ticket_key, int(ticket_qty))
+                if mode == 'coop':
+                    # XP progressif : chaque gagnant reçoit un tirage indépendant
+                    count = len(winners)
+                    for w in winners:
+                        xp_amount = coop_xp_for_count(count)
+                        grant_xp(w, xp_amount)
+                        # On ne donne plus d'item en coop
+                else:
+                    # first / random : comportement inchangé
+                    for w in winners:
+                        grant_xp(w, int(xp_bonus))
+                        inv_add(w, ticket_key, int(ticket_qty))
 
                 winner_login = winners[0] if mode in ('first', 'random') else None
                 cur.execute(
@@ -1145,7 +1167,10 @@ def resolve_drop(drop_id: int):
                     (winner_login, drop_id),
                 )
             else:
-                cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE id=%s;", (drop_id,))
+                cur.execute(
+                    "UPDATE drops SET status='expired', resolved_at=now() WHERE id=%s;",
+                    (drop_id,),
+                )
 
         conn.commit()
 
@@ -1158,7 +1183,7 @@ def resolve_drop(drop_id: int):
         "ticket_qty": int(ticket_qty),
     }
 
-
+    
 def kv_get(cur_or_key, key: str | None = None, default: str | None = None) -> str | None:
     """Get KV.
     Backward-compatible:
