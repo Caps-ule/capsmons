@@ -31,6 +31,7 @@ API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_COMPANION_SET_BY_ID_URL = "http://api:8000/internal/companions/set_active"
 API_AUTODROP_SETTINGS_URL = "http://api:8000/internal/settings/autodrop"
+API_ANNOUNCEMENTS_URL = "http://api:8000/internal/announcements/poll"
 _autodrop_cache = {"ts": 0.0, "cfg": {}}
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
@@ -524,6 +525,8 @@ class Bot(commands.Bot):
         self.loop.create_task(self.auto_drop_loop())
         # Decay Happiness auto
         self.loop.create_task(self.happiness_decay_loop())
+        # Dropp coop
+        self.loop.create_task(self.announcements_loop())
 
     # ------------------------------------------------------------------------
     # Commande !drop
@@ -844,6 +847,42 @@ class Bot(commands.Bot):
             return
 
         await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+
+    # ------------------------------------------------------------------------
+    # Annonces générales (channel points, drops, etc.)
+    # ------------------------------------------------------------------------
+    async def announcements_loop(self):
+        await asyncio.sleep(3)
+    
+        while True:
+            await asyncio.sleep(2)
+    
+            try:
+                r = requests.get(
+                    API_ANNOUNCEMENTS_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=2,
+                )
+                if r.status_code != 200:
+                    continue
+    
+                data = r.json()
+                messages = data.get("messages", []) or []
+    
+                if not messages:
+                    continue
+    
+                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                if not chan:
+                    continue
+    
+                for msg in messages:
+                    if msg and str(msg).strip():
+                        await chan.send(str(msg).strip())
+                        await asyncio.sleep(1)  # petite pause entre chaque message
+    
+            except Exception as e:
+                print("[BOT] announcements_loop error:", e, flush=True)
 
     # ------------------------------------------------------------------------
     # Happiness decay loop
