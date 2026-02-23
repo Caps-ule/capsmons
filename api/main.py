@@ -413,7 +413,7 @@ def handle_channel_points_redemption(ev: dict) -> None:
                         target_hits=target_hits,
                         xp_bonus=0,
                     )
-                    _announce(f"🪙 {user_name or user_login} a acheté un drop COOP ! (récompense: {picked['item_name']})")
+                    _announce(f"🤝 Drop COOP lancé par {user_name or user_login} ! Tapez !grab pour participer — XP progressif selon le nombre de participants !")
 
                     cur.execute(
                         "UPDATE cp_redemptions SET status='ok', detail=%s, drop_id=%s, processed_at=now() WHERE redemption_id=%s;",
@@ -1145,19 +1145,36 @@ def resolve_drop(drop_id: int):
 
             if winners:
                 if mode == 'coop':
-                    # XP progressif : chaque gagnant reçoit un tirage indépendant
                     count = len(winners)
+                    xp_details = []
                     for w in winners:
                         xp_amount = coop_xp_for_count(count)
                         grant_xp(w, xp_amount)
-                        # On ne donne plus d'item en coop
+                        xp_details.append((w, xp_amount))
+
+                    # Construire le message d'annonce
+                    if len(xp_details) == 1:
+                        w, xp = xp_details[0]
+                        _announce(f"⏱️ Drop COOP '{title}' terminé ! @{w} gagne {xp} XP !")
+                    elif len(xp_details) <= 5:
+                        parts = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details])
+                        _announce(f"⏱️ Drop COOP '{title}' terminé ! {parts}")
+                    else:
+                        # Trop de monde pour tout lister : résumé
+                        total = sum(xp for _, xp in xp_details)
+                        best_w, best_xp = max(xp_details, key=lambda x: x[1])
+                        parts_short = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details[:5]])
+                        _announce(f"🔥 Drop COOP '{title}' terminé ! {len(xp_details)} participants ! {parts_short}... | Meilleur tirage : @{best_w} +{best_xp}XP !")
+
+                    winner_login = None  # pas de winner unique en coop
+
                 else:
                     # first / random : comportement inchangé
                     for w in winners:
                         grant_xp(w, int(xp_bonus))
                         inv_add(w, ticket_key, int(ticket_qty))
+                    winner_login = winners[0] if mode in ('first', 'random') else None
 
-                winner_login = winners[0] if mode in ('first', 'random') else None
                 cur.execute(
                     """
                     UPDATE drops
@@ -1167,6 +1184,9 @@ def resolve_drop(drop_id: int):
                     (winner_login, drop_id),
                 )
             else:
+                # Personne n'a participé
+                if mode == 'coop':
+                    _announce(f"⌛ Drop COOP '{title}' expiré sans participants.")
                 cur.execute(
                     "UPDATE drops SET status='expired', resolved_at=now() WHERE id=%s;",
                     (drop_id,),
