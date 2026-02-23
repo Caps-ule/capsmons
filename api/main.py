@@ -6062,22 +6062,32 @@ def admin_drops_page(
     body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
     a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
     .wrap{max-width:1100px;margin:0 auto;padding:22px}
-    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px;margin:14px 0}
+    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-    label{display:block;font-size:12px;color:var(--muted)}
-    input,select{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:220px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+    input,select{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:180px}
+    input:disabled,select:disabled{opacity:0.35;cursor:not-allowed}
     .btn{display:inline-block;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer}
     .btn:hover{border-color:#2f415c}
-    .muted{color:var(--muted)}
-    code{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px}
+    .muted{color:var(--muted);font-size:13px}
+    .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border)}
+    .badge.coop{border-color:rgba(43,213,118,.4);color:#2bd576}
+    .badge.first{border-color:rgba(255,209,102,.4);color:#ffd166}
+    .badge.random{border-color:rgba(122,162,255,.4);color:#7aa2ff}
+    .xp-table{width:100%;border-collapse:collapse;margin-top:8px}
+    .xp-table td,.xp-table th{padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px}
+    .xp-table th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase}
+    code{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px;font-size:12px}
+    .section-title{font-weight:800;font-size:15px;margin-bottom:10px}
+    .info-box{background:rgba(122,162,255,.08);border:1px solid rgba(122,162,255,.2);border-radius:10px;padding:12px 14px;margin-bottom:14px}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="row" style="justify-content:space-between;align-items:center">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
       <div>
-        <h1 style="margin:0 0 6px;">🎲 Lancer un drop</h1>
-        <div class="muted">Spawn direct en base (comme <code>/internal/drop/spawn</code>), mais via l’admin.</div>
+        <h1 style="margin:0 0 4px;">🎲 Lancer un drop</h1>
+        <div class="muted">Spawn direct depuis l'admin.</div>
       </div>
       <div class="row">
         <a class="btn" href="/admin">⬅️ Retour admin</a>
@@ -6085,104 +6095,183 @@ def admin_drops_page(
       </div>
     </div>
 
+    <!-- MODE COOP -->
     <div class="card">
-      <h2 style="margin:0 0 10px;">Drop manuel</h2>
+      <div class="section-title">🤝 Drop COOP <span class="badge coop">COOP</span></div>
+
+      <div class="info-box">
+        <div style="font-weight:700;margin-bottom:6px">XP progressif selon les participants</div>
+        <table class="xp-table">
+          <thead><tr><th>Participants</th><th>XP par personne</th></tr></thead>
+          <tbody>
+            <tr><td>1 seul</td><td>20 – 30 XP</td></tr>
+            <tr><td>2 – 3</td><td>30 – 50 XP</td></tr>
+            <tr><td>4 – 5</td><td>50 – 75 XP</td></tr>
+            <tr><td>6+</td><td>100 – 250 XP 🔥</td></tr>
+          </tbody>
+        </table>
+        <div class="muted" style="margin-top:8px">Chaque participant reçoit un tirage indépendant. Pas d'item donné en COOP. Tout le monde gagne à l'expiration du timer.</div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Titre (overlay)</label>
+          <input id="coop_title" type="text" placeholder="ex: Capsule Mystère" style="min-width:280px">
+        </div>
+        <div>
+          <label>Image (media_url)</label>
+          <input id="coop_media" type="text" placeholder="https://..." style="min-width:280px">
+        </div>
+        <div>
+          <label>Durée (secondes)</label>
+          <input id="coop_duration" type="number" min="5" max="60" value="20" style="min-width:100px">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:14px">
+        <button class="btn" onclick="spawnCoop()" style="border-color:rgba(43,213,118,.4);color:#2bd576">🚀 Lancer COOP</button>
+        <span id="coop_status" class="muted"></span>
+      </div>
+    </div>
+
+    <!-- MODE FIRST / RANDOM -->
+    <div class="card">
+      <div class="section-title">⚡ Drop FIRST / 🎲 RANDOM</div>
+      <div class="muted" style="margin-bottom:14px">Ces modes donnent un item + XP au(x) gagnant(s).</div>
 
       <div class="row">
         <div>
           <label>Mode</label>
           <select id="d_mode">
-            <option value="random">random</option>
-            <option value="first">first</option>
-            <option value="coop">coop</option>
+            <option value="first">⚡ first (premier arrivé)</option>
+            <option value="random">🎲 random (tirage au sort)</option>
           </select>
         </div>
         <div>
-          <label>Durée (sec)</label>
-          <input id="d_duration" type="number" min="5" max="60" value="15">
+          <label>Durée (secondes)</label>
+          <input id="d_duration" type="number" min="5" max="60" value="15" style="min-width:100px">
+        </div>
+        <div>
+          <label>XP bonus gagnant</label>
+          <input id="d_xp" type="number" min="0" max="1000" value="50" style="min-width:100px">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>Titre (overlay)</label>
+          <input id="d_title" type="text" placeholder="Titre overlay" style="min-width:280px">
+        </div>
+        <div>
+          <label>Image (media_url)</label>
+          <input id="d_media" type="text" placeholder="https://..." style="min-width:280px">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>ticket_key (item gagné)</label>
+          <input id="d_ticket" type="text" placeholder="ex: grande_capsule" style="min-width:220px">
         </div>
         <div>
           <label>ticket_qty</label>
-          <input id="d_qty" type="number" min="1" max="50" value="1">
-        </div>
-        <div>
-          <label>target_hits (coop)</label>
-          <input id="d_hits" type="number" min="2" max="999" value="10">
+          <input id="d_qty" type="number" min="1" max="50" value="1" style="min-width:100px">
         </div>
       </div>
 
-      <div class="row" style="margin-top:12px;">
-        <div style="flex:1;min-width:260px;">
-          <label>Title (overlay)</label>
-          <input id="d_title" type="text" placeholder="Titre overlay" style="width:100%">
-        </div>
-        <div style="flex:1;min-width:260px;">
-          <label>media_url (image)</label>
-          <input id="d_media" type="text" placeholder="https://..." style="width:100%">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:12px;">
-        <div style="flex:1;min-width:260px;">
-          <label>ticket_key (item gagné)</label>
-          <input id="d_ticket" type="text" placeholder="ex: grande_capsule, bonbon_2, egg_biolab" style="width:100%">
-          <div class="muted" style="margin-top:6px;">Doit exister dans <code>items.key</code>.</div>
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:14px;">
-        <button class="btn" onclick="spawnDrop()">🚀 Lancer le drop</button>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" onclick="spawnDrop()" style="border-color:rgba(122,162,255,.4);color:#7aa2ff">🚀 Lancer</button>
         <span id="d_status" class="muted"></span>
       </div>
     </div>
 
+    <!-- TEST AUTODROP -->
     <div class="card">
-      <h2 style="margin:0 0 10px;">Test AutoDrop</h2>
-      <div class="muted" style="margin-bottom:10px;">Déclenche un drop avec le tirage pondéré selon tes réglages AutoDrop.</div>
+      <div class="section-title">🧪 Test AutoDrop</div>
+      <div class="muted" style="margin-bottom:10px">Déclenche un drop avec le tirage pondéré selon tes réglages AutoDrop.</div>
       <button class="btn" onclick="testAutoDrop()">🧪 Test AutoDrop maintenant</button>
-      <span id="ad_status" class="muted" style="margin-left:10px;"></span>
+      <span id="ad_status" class="muted" style="margin-left:10px"></span>
     </div>
   </div>
 
 <script>
-async function spawnDrop(){
-  const el = (id)=>document.getElementById(id);
-  el('d_status').textContent = "Spawn...";
+async function spawnCoop() {
+  const el = id => document.getElementById(id);
+  const title = el('coop_title').value.trim();
+  const media_url = el('coop_media').value.trim();
+  const duration = parseInt(el('coop_duration').value) || 20;
 
-  const payload = {
-    mode: el('d_mode').value,
-    title: el('d_title').value,
-    media_url: el('d_media').value,
-    duration_seconds: el('d_duration').value,
-    ticket_key: el('d_ticket').value,
-    ticket_qty: el('d_qty').value,
-    target_hits: el('d_hits').value
-  };
+  if (!title || !media_url) {
+    el('coop_status').textContent = '⛔ Titre et image obligatoires.';
+    return;
+  }
+
+  el('coop_status').textContent = 'Spawn...';
 
   const r = await fetch('/admin/drop/spawn', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      mode: 'coop',
+      title,
+      media_url,
+      duration_seconds: duration,
+      ticket_key: 'none',
+      ticket_qty: 1,
+      xp_bonus: 0,
+    })
   });
 
   let j = null;
-  try{ j = await r.json(); }catch(e){ j = {detail:'bad json'}; }
-
-  el('d_status').textContent = r.ok ? ("✅ Drop lancé (id " + j.drop_id + ")") : ("⛔ " + JSON.stringify(j));
+  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
+  el('coop_status').textContent = r.ok
+    ? `✅ Drop COOP lancé (id ${j.drop_id}) — les participants tapent !grab`
+    : `⛔ ${JSON.stringify(j)}`;
 }
 
-async function testAutoDrop(){
-  const el = (id)=>document.getElementById(id);
-  el('ad_status').textContent = "Test...";
-  const r = await fetch('/admin/autodrop/test', {method:'POST'});
-  let j = null;
-  try{ j = await r.json(); }catch(e){ j = {detail:'bad json'}; }
-  if(!r.ok){
-    el('ad_status').textContent = "⛔ " + JSON.stringify(j);
+async function spawnDrop() {
+  const el = id => document.getElementById(id);
+  const title = el('d_title').value.trim();
+  const media_url = el('d_media').value.trim();
+  const ticket_key = el('d_ticket').value.trim();
+
+  if (!title || !media_url || !ticket_key) {
+    el('d_status').textContent = '⛔ Titre, image et ticket_key obligatoires.';
     return;
   }
+
+  el('d_status').textContent = 'Spawn...';
+
+  const r = await fetch('/admin/drop/spawn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      mode: el('d_mode').value,
+      title,
+      media_url,
+      duration_seconds: parseInt(el('d_duration').value) || 15,
+      xp_bonus: parseInt(el('d_xp').value) || 50,
+      ticket_key,
+      ticket_qty: parseInt(el('d_qty').value) || 1,
+    })
+  });
+
+  let j = null;
+  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
+  el('d_status').textContent = r.ok
+    ? `✅ Drop lancé (id ${j.drop_id})`
+    : `⛔ ${JSON.stringify(j)}`;
+}
+
+async function testAutoDrop() {
+  const el = id => document.getElementById(id);
+  el('ad_status').textContent = 'Test...';
+  const r = await fetch('/admin/autodrop/test', {method: 'POST'});
+  let j = null;
+  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
+  if (!r.ok) { el('ad_status').textContent = '⛔ ' + JSON.stringify(j); return; }
   const p = j.picked || {};
-  el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || "?"}`;
+  el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || '?'}`;
 }
 </script>
 
