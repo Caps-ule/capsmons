@@ -581,9 +581,18 @@ async def admin_twitch_callback(
     if error:
         return HTMLResponse(f"OAuth error: {error}", status_code=400)
 
-    expected = kv_get("twitch_oauth_state", "")
-    if not code or not state or state != expected:
-        return HTMLResponse("Bad OAuth state/code", status_code=400)
+    # Lire le state attendu directement depuis la DB (connexion fraîche)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM kv WHERE key='twitch_oauth_state';")
+            row = cur.fetchone()
+            expected = row[0] if row else None
+
+    if not code or not state or not expected or state != expected:
+        return HTMLResponse(
+            f"Bad OAuth state/code (state={state!r}, expected={expected!r})",
+            status_code=400
+        )
 
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(
@@ -600,11 +609,15 @@ async def admin_twitch_callback(
     if r.status_code != 200:
         return HTMLResponse(f"Token exchange failed: {r.status_code} {j}", status_code=502)
 
-    kv_set("twitch_user_access_token", j["access_token"])
-    kv_set("twitch_user_refresh_token", j.get("refresh_token", ""))
-    kv_set("twitch_user_scopes", json.dumps(j.get("scope", [])))
+    # Sauvegarder les tokens en DB (une seule connexion)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "twitch_user_access_token", j["access_token"])
+            kv_set(cur, "twitch_user_refresh_token", j.get("refresh_token", ""))
+            kv_set(cur, "twitch_user_scopes", json.dumps(j.get("scope", [])))
+        conn.commit()
 
-    # utile: récupérer user_id/login via validate
+    # Récupérer user_id/login via validate
     async with httpx.AsyncClient(timeout=20) as client:
         vr = await client.get(
             "https://id.twitch.tv/oauth2/validate",
@@ -612,10 +625,16 @@ async def admin_twitch_callback(
         )
     vj = vr.json()
     if vr.status_code == 200:
-        kv_set("twitch_broadcaster_user_id", vj.get("user_id", ""))
-        kv_set("twitch_broadcaster_login", vj.get("login", ""))
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                kv_set(cur, "twitch_broadcaster_user_id", vj.get("user_id", ""))
+                kv_set(cur, "twitch_broadcaster_login", vj.get("login", ""))
+                # Aussi stocker dans broadcaster_user_id (utilisé par /admin/points)
+                kv_set(cur, "broadcaster_user_id", vj.get("user_id", ""))
+                kv_set(cur, "broadcaster_user_login", vj.get("login", ""))
+            conn.commit()
 
-    return RedirectResponse("/admin/points")
+    return RedirectResponse("/admin/points"))
 
 
 # Live 
