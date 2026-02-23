@@ -1203,7 +1203,7 @@ def resolve_drop(drop_id: int):
         "ticket_qty": int(ticket_qty),
     }
 
-    
+
 def kv_get(cur_or_key, key: str | None = None, default: str | None = None) -> str | None:
     """Get KV.
     Backward-compatible:
@@ -3270,7 +3270,7 @@ def admin_forms(
             stages.append({"stage": st, **f})
         items.append({**cm, "stages": stages})
 
-    return templates.TemplateResponse("forms.html", {
+    return templates.TemplateResponse("admin_spa.html", {
         "request": request,
         "items": items,
         "flash": flash,
@@ -4620,7 +4620,7 @@ def admin_cms(
                 "media_url": r[5],
             } for r in cur.fetchall()]
 
-    return templates.TemplateResponse("cms.html", {
+    return templates.TemplateResponse("admin_spa.html", {
         "request": request,
         "lineages": lineages,
         "cms": cms,
@@ -4747,7 +4747,7 @@ def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicC
         text = "\n".join([str(x) for x in lines if str(x).strip()])
         items.append({"key": k, "count": len(lines), "text": text})
 
-    return templates.TemplateResponse("rp.html", {"request": request, "items": items, "flash": flash})
+    return templates.TemplateResponse("admin_spa.html", {"request": request, "items": items, "flash": flash})
 
 # =============================================================================
 # ADMIN: admin Stats
@@ -4825,7 +4825,7 @@ def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(se
             """)
             active_users_15m = int(cur.fetchone()[0])
 
-    return templates.TemplateResponse("stats.html", {
+    return templates.TemplateResponse("admin_spa.html", {
         "request": request,
         "xp_today": xp_today,
         "xp_7d": xp_7d,
