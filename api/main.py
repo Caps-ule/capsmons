@@ -634,7 +634,7 @@ async def admin_twitch_callback(
                 kv_set(cur, "broadcaster_user_login", vj.get("login", ""))
             conn.commit()
 
-    return RedirectResponse("/admin/points"))
+    return RedirectResponse("/admin/points")
 
 
 # Live 
