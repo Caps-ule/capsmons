@@ -1280,286 +1280,7 @@ def kv_get_many(cur, keys: list[str]) -> dict:
     rows = cur.fetchall()
     return {k: v for (k, v) in rows}
 
-@app.get("/admin/autodrop", response_class=HTMLResponse)
-def admin_autodrop_page(
-    request: Request,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
 
-    keys = [
-        "auto_drop_enabled",
-        "auto_drop_min_seconds",
-        "auto_drop_max_seconds",
-        "auto_drop_duration_min_seconds",
-        "auto_drop_duration_max_seconds",
-        "auto_drop_pick_kind",
-        "auto_drop_mode",
-        "auto_drop_ticket_qty",
-        "auto_drop_fallback_media_url",
-    ]
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cfg = kv_get_many(cur, keys)
-
-    # defaults
-    def g(k: str, default: str):
-        v = cfg.get(k)
-        return default if v is None or str(v).strip() == "" else str(v)
-
-    enabled = g("auto_drop_enabled", "false").lower() in ("1", "true", "yes", "on")
-    min_s = int(g("auto_drop_min_seconds", "900"))
-    max_s = int(g("auto_drop_max_seconds", "1500"))
-    dmin = int(g("auto_drop_duration_min_seconds", "10"))
-    dmax = int(g("auto_drop_duration_max_seconds", "20"))
-    kind = g("auto_drop_pick_kind", "any").lower()
-    mode = g("auto_drop_mode", "random").lower()
-    qty = int(g("auto_drop_ticket_qty", "1"))
-    fallback = g("auto_drop_fallback_media_url", "").strip()
-
-    # clamp
-    min_s = max(60, min_s)
-    max_s = max(min_s, max_s)
-    dmin = max(5, dmin)
-    dmax = max(dmin, dmax)
-    if kind not in ("any", "xp", "candy", "egg"):
-        kind = "any"
-    if mode not in ("random", "first"):
-        mode = "random"
-    qty = max(1, min(50, qty))
-
-    html = f"""<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CapsMons — AutoDrop</title>
-  <style>
-    :root {{
-      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
-      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
-      --radius:14px;
-    }}
-    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
-    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
-    .wrap{{max-width:1100px;margin:0 auto;padding:22px}}
-    .card{{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px 16px;margin:14px 0}}
-    .row{{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}}
-    label{{display:block;font-size:12px;color:var(--muted)}}
-    input,select{{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:220px}}
-    input[type="checkbox"]{{min-width:auto}}
-    .btn{{display:inline-block;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer}}
-    .btn:hover{{border-color:#2f415c}}
-    .muted{{color:var(--muted)}}
-    .ok{{color:var(--ok)}} .err{{color:var(--err)}} .warn{{color:var(--warn)}}
-    code{{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <div>
-        <h1 style="margin:0 0 6px;">🎁 AutoDrop</h1>
-        <div class="muted">Réglages stockés en BDD (table <code>kv</code>) et lus par le bot via <code>/internal/settings/autodrop</code>.</div>
-      </div>
-      <div class="row">
-        <a class="btn" href="/admin">⬅️ Retour admin</a>
-        <a class="btn" href="/admin/drops">🎲 Lancer un drop</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <label style="display:flex;gap:10px;align-items:center">
-          <input type="checkbox" id="ad_enabled" {"checked" if enabled else ""}>
-          <span>Activer les drops automatiques</span>
-        </label>
-      </div>
-
-      <div class="row" style="margin-top:12px;">
-        <div>
-          <label>Fréquence min (sec)</label>
-          <input id="ad_min" type="number" min="60" value="{min_s}">
-        </div>
-        <div>
-          <label>Fréquence max (sec)</label>
-          <input id="ad_max" type="number" min="60" value="{max_s}">
-        </div>
-        <div>
-          <label>Durée drop min (sec)</label>
-          <input id="ad_dmin" type="number" min="5" value="{dmin}">
-        </div>
-        <div>
-          <label>Durée drop max (sec)</label>
-          <input id="ad_dmax" type="number" min="5" value="{dmax}">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:12px;">
-        <div>
-          <label>Type item (pondéré)</label>
-          <select id="ad_kind">
-            <option value="any" {"selected" if kind=="any" else ""}>any</option>
-            <option value="xp" {"selected" if kind=="xp" else ""}>xp</option>
-            <option value="candy" {"selected" if kind=="candy" else ""}>candy</option>
-            <option value="egg" {"selected" if kind=="egg" else ""}>egg</option>
-          </select>
-        </div>
-        <div>
-          <label>Mode</label>
-          <select id="ad_mode">
-            <option value="random" {"selected" if mode=="random" else ""}>random</option>
-            <option value="first" {"selected" if mode=="first" else ""}>first</option>
-          </select>
-        </div>
-        <div>
-          <label>Quantité item (ticket_qty)</label>
-          <input id="ad_qty" type="number" min="1" max="50" value="{qty}">
-        </div>
-      </div>
-
-      <div style="margin-top:12px;">
-        <label>Fallback media_url (si icon_url vide)</label>
-        <input id="ad_fallback" type="text" placeholder="https://..." style="width:100%;max-width:900px" value="{fallback}">
-        <div class="muted" style="margin-top:6px;">Si l'item tiré n'a pas d'icon_url, on utilise ce fallback pour l'overlay.</div>
-      </div>
-
-      <div class="row" style="margin-top:14px;">
-        <button class="btn" onclick="saveAutoDrop()">💾 Enregistrer</button>
-        <button class="btn" onclick="testAutoDrop()">🧪 Test drop maintenant</button>
-        <span id="ad_status" class="muted"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2 style="margin:0 0 8px;">🧩 Dépannage</h2>
-      <ul class="muted" style="margin:0;padding-left:18px;">
-        <li>Le test utilise la table <code>items</code> et <code>drop_weight</code> (et filtre selon le type).</li>
-        <li>Si tu as <code>⛔ No items for this kind</code>, c’est que tes <code>drop_weight</code> sont à 0 pour ce filtre.</li>
-        <li>Si tu as <code>⛔ Picked item has no icon_url ...</code>, mets un <code>icon_url</code> sur les items ou un fallback.</li>
-      </ul>
-    </div>
-  </div>
-
-<script>
-async function saveAutoDrop(){{
-  const el = (id)=>document.getElementById(id);
-  const payload = {{
-    enabled: el('ad_enabled').checked,
-    min_seconds: el('ad_min').value,
-    max_seconds: el('ad_max').value,
-    duration_min: el('ad_dmin').value,
-    duration_max: el('ad_dmax').value,
-    pick_kind: el('ad_kind').value,
-    mode: el('ad_mode').value,
-    ticket_qty: el('ad_qty').value,
-    fallback_media_url: el('ad_fallback').value
-  }};
-  el('ad_status').textContent = "Enregistrement...";
-  const r = await fetch('/admin/autodrop/save', {{
-    method:'POST',
-    headers:{{'Content-Type':'application/json'}},
-    body: JSON.stringify(payload)
-  }});
-  let j = null;
-  try{{ j = await r.json(); }}catch(e){{ j = {{detail:'bad json'}}; }}
-  el('ad_status').textContent = r.ok ? "✅ Enregistré" : ("⛔ " + JSON.stringify(j));
-}}
-
-async function testAutoDrop(){{
-  const el = (id)=>document.getElementById(id);
-  el('ad_status').textContent = "Test...";
-  const r = await fetch('/admin/autodrop/test', {{method:'POST'}});
-  let j = null;
-  try{{ j = await r.json(); }}catch(e){{ j = {{detail:'bad json'}}; }}
-  if(!r.ok){{
-    el('ad_status').textContent = "⛔ " + JSON.stringify(j);
-    return;
-  }}
-  const p = j.picked || {{}};
-  el('ad_status').textContent = `✅ Drop lancé: ${{p.item_name || p.item_key || "?"}}`;
-}}
-</script>
-
-</body>
-</html>"""
-    return HTMLResponse(html)
-
-# JSON (si tu veux l'utiliser côté JS ailleurs)
-@app.get("/admin/autodrop.json")
-def admin_autodrop_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    keys = [
-        "auto_drop_enabled",
-        "auto_drop_min_seconds",
-        "auto_drop_max_seconds",
-        "auto_drop_duration_min_seconds",
-        "auto_drop_duration_max_seconds",
-        "auto_drop_pick_kind",
-        "auto_drop_mode",
-        "auto_drop_ticket_qty",
-        "auto_drop_fallback_media_url",
-    ]
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cfg = kv_get_many(cur, keys)
-    return {"ok": True, "settings": cfg}
-
-@app.post("/admin/autodrop/save")
-
-def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    def s(k, default=""):
-        return str(payload.get(k, default)).strip()
-
-    enabled = "true" if s("enabled","false").lower() in ("1","true","yes","on") else "false"
-
-    def to_int(name, default):
-        try: return int(s(name, str(default)))
-        except: return default
-
-    min_s = max(60, to_int("min_seconds", 900))
-    max_s = max(min_s, to_int("max_seconds", 1500))
-
-    dmin = max(5, to_int("duration_min", 10))
-    dmax = max(dmin, to_int("duration_max", 20))
-
-    kind = s("pick_kind","any").lower()
-    if kind not in ("any","xp","candy","egg"):
-        kind = "any"
-
-    mode = s("mode","random").lower()
-    if mode not in ("random","first"):
-        mode = "random"
-
-    qty = max(1, min(50, to_int("ticket_qty", 1)))
-    fallback = s("fallback_media_url","")
-
-    pairs = [
-        ("auto_drop_enabled", enabled),
-        ("auto_drop_min_seconds", str(min_s)),
-        ("auto_drop_max_seconds", str(max_s)),
-        ("auto_drop_duration_min_seconds", str(dmin)),
-        ("auto_drop_duration_max_seconds", str(dmax)),
-        ("auto_drop_pick_kind", kind),
-        ("auto_drop_mode", mode),
-        ("auto_drop_ticket_qty", str(qty)),
-        ("auto_drop_fallback_media_url", fallback),
-    ]
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.executemany("""
-                INSERT INTO kv(key, value) VALUES (%s, %s)
-                ON CONFLICT (key) DO UPDATE
-                SET value=EXCLUDED.value, updated_at=now();
-            """, pairs)
-        conn.commit()
-
-    return {"ok": True}
 
 @app.get("/internal/settings/autodrop")
 def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
@@ -3225,57 +2946,6 @@ def admin_user(
 </html>"""
     return HTMLResponse(html)
 
-@app.get("/admin/forms", response_class=HTMLResponse)
-def admin_forms(
-    request: Request,
-    flash: str | None = None,
-    flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # Liste des CM (pour afficher chaque cm_key)
-            cur.execute("""
-                SELECT key, name, lineage_key
-                FROM cms
-                ORDER BY lineage_key, key;
-            """)
-            cms = [{"key": r[0], "cm_name": r[1], "lineage_key": r[2]} for r in cur.fetchall()]
-
-            # Toutes les forms existantes
-            cur.execute("""
-                SELECT cm_key, stage, name, image_url, COALESCE(sound_url,'')
-                FROM cm_forms
-                ORDER BY cm_key, stage;
-            """)
-            rows = cur.fetchall()
-
-    forms_map: dict[tuple[str, int], dict] = {}
-    for cm_key, stage, name, image_url, sound_url in rows:
-        forms_map[(cm_key, int(stage))] = {
-            "name": name,
-            "image_url": image_url,
-            "sound_url": sound_url,
-        }
-
-    # Pour le template : on prépare 3 entrées (stage 1/2/3) par CM
-    items = []
-    for cm in cms:
-        cm_key = cm["key"]
-        stages = []
-        for st in (1, 2, 3):
-            f = forms_map.get((cm_key, st), {"name": "", "image_url": "", "sound_url": ""})
-            stages.append({"stage": st, **f})
-        items.append({**cm, "stages": stages})
-
-    return templates.TemplateResponse("admin_spa.html", {
-        "request": request,
-        "items": items,
-        "flash": flash,
-        "flash_kind": flash_kind,
-    })
 
 @app.post("/admin/forms/save")
 def admin_forms_save(
@@ -4582,51 +4252,7 @@ tick();
 """)
 
 
-@app.get("/admin/cms", response_class=HTMLResponse)
-def admin_cms(
-    request: Request,
-    flash: str | None = None,
-    flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # ✅ lineages + choose_enabled (défaut true si colonne NULL / pas encore backfill)
-            cur.execute("""
-                SELECT key, name, is_enabled, COALESCE(choose_enabled, true) AS choose_enabled
-                FROM lineages
-                ORDER BY key;
-            """)
-            lineages = [{
-                "key": r[0],
-                "name": r[1],
-                "is_enabled": bool(r[2]),
-                "choose_enabled": bool(r[3]),
-            } for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
-                FROM cms
-                ORDER BY lineage_key, key;
-            """)
-            cms = [{
-                "key": r[0],
-                "name": r[1],
-                "lineage_key": r[2],
-                "is_enabled": bool(r[3]),
-                "in_hatch_pool": bool(r[4]),
-                "media_url": r[5],
-            } for r in cur.fetchall()]
-
-    return templates.TemplateResponse("admin_spa.html", {
-        "request": request,
-        "lineages": lineages,
-        "cms": cms,
-        "flash": flash,
-        "flash_kind": flash_kind,
-    })
 # =============================================================================
 # ADMIN: CMS ACTION 
 # =============================================================================
@@ -4723,119 +4349,9 @@ def admin_cms_action(
     return go("Action inconnue", "err")
 
 # =============================================================================
-# ADMIN: RP
-# =============================================================================
-
-@app.get("/admin/rp", response_class=HTMLResponse)
-def admin_rp(request: Request, flash: str | None = None, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
-            rows = cur.fetchall()
-
-    items = []
-    for k, lines in rows:
-        if isinstance(lines, str):
-            try:
-                lines = json.loads(lines)
-            except Exception:
-                lines = []
-        if not isinstance(lines, list):
-            lines = []
-        text = "\n".join([str(x) for x in lines if str(x).strip()])
-        items.append({"key": k, "count": len(lines), "text": text})
-
-    return templates.TemplateResponse("admin_spa.html", {"request": request, "items": items, "flash": flash})
-
-# =============================================================================
 # ADMIN: admin Stats
 # =============================================================================
 
-@app.get("/admin/stats", response_class=HTMLResponse)
-def admin_stats(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
-            start_of_today_paris = cur.fetchone()[0]
-
-            cur.execute("""
-                SELECT COALESCE(SUM(amount), 0)
-                FROM xp_events
-                WHERE created_at >= %s;
-            """, (start_of_today_paris,))
-            xp_today = int(cur.fetchone()[0])
-
-            cur.execute("""
-                SELECT COALESCE(SUM(amount), 0)
-                FROM xp_events
-                WHERE created_at >= now() - interval '7 days';
-            """)
-            xp_7d = int(cur.fetchone()[0])
-
-            cur.execute("""
-                SELECT COUNT(*) AS events, COUNT(DISTINCT twitch_login) AS users
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours';
-            """)
-            events_24h, active_users_24h = cur.fetchone()
-            events_24h = int(events_24h)
-            active_users_24h = int(active_users_24h)
-
-            cur.execute("""
-                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD') AS day,
-                       SUM(amount) AS xp
-                FROM xp_events
-                WHERE created_at >= now() - interval '7 days'
-                GROUP BY 1
-                ORDER BY 1 DESC;
-            """)
-            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
-            max_xp = max([r["xp"] for r in xp_by_day], default=0) or 1
-            for r in xp_by_day:
-                r["pct"] = int((r["xp"] / max_xp) * 100)
-
-            cur.execute("""
-                SELECT twitch_login, SUM(amount) AS xp
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours'
-                GROUP BY 1
-                ORDER BY 2 DESC
-                LIMIT 20;
-            """)
-            top_xp_24h = [{"twitch_login": r[0], "xp": int(r[1])} for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT twitch_login, COUNT(*) AS events
-                FROM xp_events
-                WHERE created_at >= now() - interval '24 hours'
-                GROUP BY 1
-                ORDER BY 2 DESC
-                LIMIT 20;
-            """)
-            top_events_24h = [{"twitch_login": r[0], "events": int(r[1])} for r in cur.fetchall()]
-
-            cur.execute("""
-                SELECT COUNT(DISTINCT twitch_login)
-                FROM xp_events
-                WHERE created_at >= now() - interval '15 minutes';
-            """)
-            active_users_15m = int(cur.fetchone()[0])
-
-    return templates.TemplateResponse("admin_spa.html", {
-        "request": request,
-        "xp_today": xp_today,
-        "xp_7d": xp_7d,
-        "events_24h": events_24h,
-        "active_users_24h": active_users_24h,
-        "active_users_15m": active_users_15m,
-        "xp_by_day": xp_by_day,
-        "top_xp_24h": top_xp_24h,
-        "top_events_24h": top_events_24h,
-    })
 
 @app.get("/overlay/state")
 def overlay_state():
@@ -5584,276 +5100,6 @@ def overlay_drop_state():
 
 
 
-
-# =============================================================================
-# ADMIN: accueil /admin (liste users + recherche + pagination)
-# =============================================================================
-@app.get("/admin", response_class=HTMLResponse)
-def admin_home(
-    request: Request,
-    q: str | None = None,
-    page: int = 1,
-    per: int = 50,
-    flash: str | None = None,
-    flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    import math
-    from urllib.parse import urlencode
-
-    q_clean = (q or "").strip().lower()
-
-    try:
-        page = int(page or 1)
-    except Exception:
-        page = 1
-    page = max(1, page)
-
-    try:
-        per = int(per or 50)
-    except Exception:
-        per = 50
-    per = max(10, min(200, per))
-
-    is_live = False
-    top: list[dict] = []
-    users: list[dict] = []
-    total = 0
-    pages = 1
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            # état live
-            cur.execute("SELECT value FROM kv WHERE key='is_live';")
-            row = cur.fetchone()
-            is_live = bool(row and str(row[0]).lower() == "true")
-
-            # top XP (CM actifs)
-            cur.execute("""
-                SELECT twitch_login, xp_total, stage, cm_key, COALESCE(lineage_key,'')
-                FROM creatures_v2
-                WHERE is_active=true
-                ORDER BY xp_total DESC
-                LIMIT 50;
-            """)
-            for r in cur.fetchall():
-                top.append({
-                    "twitch_login": r[0],
-                    "xp_total": int(r[1] or 0),
-                    "stage": int(r[2] or 0),
-                    "cm_key": r[3],
-                    "lineage_key": r[4] or "",
-                })
-
-            # pagination users
-            where = ""
-            params: list = []
-            if q_clean:
-                where = "WHERE u.twitch_login ILIKE %s"
-                params.append(f"%{q_clean}%")
-
-            cur.execute(f"SELECT COUNT(*) FROM users u {where};", params)
-            total = int(cur.fetchone()[0] or 0)
-            pages = max(1, int(math.ceil(total / per))) if total else 1
-            if page > pages:
-                page = pages
-
-            offset = (page - 1) * per
-
-            cur.execute(
-                f"""
-                SELECT
-                    u.twitch_login,
-                    COALESCE(SUM(c.xp_total), 0) AS xp_total_sum,
-                    COALESCE(MAX(c.stage), 0) AS stage_max,
-                    COUNT(c.id) AS cm_count,
-                    MAX(c.acquired_at) AS last_acquired_at,
-                    MAX(c.id) FILTER (WHERE c.is_active=true) AS active_id,
-                    MAX(c.cm_key) FILTER (WHERE c.is_active=true) AS active_cm_key,
-                    MAX(COALESCE(c.lineage_key,'')) FILTER (WHERE c.is_active=true) AS active_lineage_key,
-                    MAX(c.stage) FILTER (WHERE c.is_active=true) AS active_stage,
-                    MAX(c.xp_total) FILTER (WHERE c.is_active=true) AS active_xp_total
-                FROM users u
-                LEFT JOIN creatures_v2 c ON c.twitch_login = u.twitch_login
-                {where}
-                GROUP BY u.twitch_login
-                ORDER BY last_acquired_at DESC NULLS LAST, u.twitch_login ASC
-                LIMIT %s OFFSET %s;
-                """,
-                params + [per, offset],
-            )
-            for r in cur.fetchall():
-                users.append({
-                    "twitch_login": r[0],
-                    "xp_total_sum": int(r[1] or 0),
-                    "stage_max": int(r[2] or 0),
-                    "cm_count": int(r[3] or 0),
-                    "last_acquired_at": r[4].isoformat() if r[4] else None,
-                    "active_id": int(r[5]) if r[5] is not None else None,
-                    "active_cm_key": r[6],
-                    "active_lineage_key": r[7] or "",
-                    "active_stage": int(r[8] or 0),
-                    "active_xp_total": int(r[9] or 0),
-                })
-
-    base_params = {}
-    if q_clean:
-        base_params["q"] = q_clean
-    if per != 50:
-        base_params["per"] = str(per)
-
-    base = "/admin"
-    if base_params:
-        base = base + "?" + urlencode(base_params)
-
-    def page_link(p: int) -> str:
-        if "?" in base:
-            return base + f"&page={p}"
-        return base + f"?page={p}"
-
-    html = f"""<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CapsMons — Admin</title>
-  <style>
-    :root {{
-      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
-      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
-      --radius:14px;
-    }}
-    body{{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}}
-    a{{color:var(--link);text-decoration:none}} a:hover{{text-decoration:underline}}
-    .wrap{{max-width:1300px;margin:0 auto;padding:20px}}
-    .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}}
-    .card{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:var(--radius);padding:14px}}
-    .grid{{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}}
-    @media (min-width: 980px){{ .grid{{grid-template-columns: 1.15fr .85fr;}} }}
-    table{{width:100%;border-collapse:collapse;margin-top:10px}}
-    th,td{{border-bottom:1px solid rgba(255,255,255,.10);padding:10px 8px;text-align:left;font-size:14px;vertical-align:top}}
-    th{{color:var(--muted);font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.08em}}
-    .muted{{color:var(--muted)}}
-    .pill{{display:inline-block;padding:3px 9px;border:1px solid rgba(255,255,255,.16);border-radius:999px;font-size:12px}}
-    .pill.ok{{border-color:rgba(43,213,118,.45);color:var(--ok)}}
-    .pill.off{{border-color:rgba(154,164,178,.35);color:var(--muted)}}
-    .btn{{cursor:pointer;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);border-radius:12px;padding:8px 10px}}
-    .btn:hover{{background:rgba(255,255,255,.10)}}
-    input,select{{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);color:var(--text);border-radius:10px;padding:8px 10px;outline:none}}
-    input::placeholder{{color:rgba(154,164,178,.8)}}
-    .row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
-    .flash{{margin:12px 0;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06)}}
-    .flash.ok{{border-color:rgba(43,213,118,.35)}}
-    .flash.err{{border-color:rgba(255,107,107,.35)}}
-    .flash.warn{{border-color:rgba(255,209,102,.35)}}
-    .pager{{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;flex-wrap:wrap}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <div class="muted">CapsMons</div>
-        <h1 style="margin:0;font-size:22px">🛠️ Admin</h1>
-      </div>
-      <div class="row">
-        <span class="pill {'ok' if is_live else 'off'}">{'🟢 LIVE' if is_live else '⚪ OFFLINE'}</span>
-        <form method="post" action="/admin/set_live" style="margin:0">
-          <input type="hidden" name="value" value="{'false' if is_live else 'true'}">
-          <button class="btn" type="submit">{'Passer OFF' if is_live else 'Passer LIVE'}</button>
-        </form>
-        <a class="btn" href="/admin/autodrop">Auto-drop</a>
-        <a class="btn" href="/admin/stats">Stats</a>
-        <a class="btn" href="/admin/rp">RP</a>
-      </div>
-    </div>
-
-    {_admin_flash_html(flash, flash_kind)}
-
-    <div class="grid">
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <div>
-            <div class="muted">Viewers ({total})</div>
-            <div style="font-weight:800;margin-top:2px">Liste</div>
-          </div>
-          <form method="get" action="/admin" class="row" style="margin:0">
-            <input name="q" value="{_admin_esc(q_clean)}" placeholder="recherche login..." />
-            <input name="per" value="{per}" style="width:90px" />
-            <button class="btn" type="submit">Rechercher</button>
-          </form>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>login</th>
-              <th>CM actif</th>
-              <th>XP actif</th>
-              <th>Stage actif</th>
-              <th>XP total</th>
-              <th>Stage max</th>
-              <th>#CM</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join([
-              f"<tr>"
-              f"<td><a href='/admin/user/{_admin_esc(u['twitch_login'])}'>{_admin_esc(u['twitch_login'])}</a></td>"
-              f"<td>{_admin_esc(u.get('active_cm_key') or '')}{(' · '+_admin_esc(u.get('active_lineage_key') or '')) if u.get('active_lineage_key') else ''}</td>"
-              f"<td>{u.get('active_xp_total') or 0}</td>"
-              f"<td>{u.get('active_stage') or 0}</td>"
-              f"<td>{u.get('xp_total_sum') or 0}</td>"
-              f"<td>{u.get('stage_max') or 0}</td>"
-              f"<td>{u.get('cm_count') or 0}</td>"
-              f"<td class='row' style='gap:8px'>"
-              f"<a class='btn' href='/admin/user/{_admin_esc(u['twitch_login'])}'>Fiche</a>"
-              f"<a class='btn' href='/admin/user/{_admin_esc(u['twitch_login'])}/collection'>Collection</a>"
-              f"</td>"
-              f"</tr>"
-            for u in users]) if users else "<tr><td colspan='8' class='muted'>Aucun résultat.</td></tr>"}
-          </tbody>
-        </table>
-
-        <div class="pager">
-          <div class="muted">page {page}/{pages}</div>
-          <a class="btn" href="{page_link(1)}">⏮️</a>
-          <a class="btn" href="{page_link(page-1 if page>1 else 1)}">⬅️</a>
-          <a class="btn" href="{page_link(page+1 if page<pages else pages)}">➡️</a>
-          <a class="btn" href="{page_link(pages)}">⏭️</a>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="muted">Top 50 (XP actif)</div>
-        <table>
-          <thead>
-            <tr><th>#</th><th>login</th><th>CM</th><th>stage</th><th>xp</th></tr>
-          </thead>
-          <tbody>
-            {''.join([
-              f"<tr>"
-              f"<td>{i+1}</td>"
-              f"<td><a href='/admin/user/{_admin_esc(r['twitch_login'])}'>{_admin_esc(r['twitch_login'])}</a></td>"
-              f"<td>{_admin_esc(r.get('cm_key') or '')}{(' · '+_admin_esc(r.get('lineage_key') or '')) if r.get('lineage_key') else ''}</td>"
-              f"<td>{r.get('stage') or 0}</td>"
-              f"<td>{r.get('xp_total') or 0}</td>"
-              f"</tr>"
-            for i, r in enumerate(top)]) if top else "<tr><td colspan='5' class='muted'>Aucun CM actif.</td></tr>"}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-  </div>
-</body>
-</html>"""
-    return HTMLResponse(html)
-
-# ================================
 # =============================================================================
 # PRESENCES
 # =============================================================================
@@ -6060,246 +5306,7 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
 # =============================================================================
 # ADMIN: lancer un drop manuel (page + endpoint)
 # =============================================================================
-@app.get("/admin/drops", response_class=HTMLResponse)
-def admin_drops_page(
-    request: Request,
-    credentials: HTTPBasicCredentials = Depends(security),
-):
-    require_admin(credentials)
-
-    html = """<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CapsMons — Drops</title>
-  <style>
-    :root {
-      --bg:#0b0f14; --panel:#111826; --panel2:#0f1623; --text:#e6edf3; --muted:#9aa4b2;
-      --border:#233044; --link:#7aa2ff; --ok:#2bd576; --err:#ff6b6b; --warn:#ffd166;
-      --radius:14px;
-    }
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
-    a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
-    .wrap{max-width:1100px;margin:0 auto;padding:22px}
-    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin:14px 0}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-    input,select{background:#0b1220;color:var(--text);border:1px solid var(--border);border-radius:10px;padding:9px 10px;min-width:180px}
-    input:disabled,select:disabled{opacity:0.35;cursor:not-allowed}
-    .btn{display:inline-block;border:1px solid var(--border);background:#0b1220;color:var(--text);border-radius:12px;padding:10px 12px;cursor:pointer}
-    .btn:hover{border-color:#2f415c}
-    .muted{color:var(--muted);font-size:13px}
-    .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border)}
-    .badge.coop{border-color:rgba(43,213,118,.4);color:#2bd576}
-    .badge.first{border-color:rgba(255,209,102,.4);color:#ffd166}
-    .badge.random{border-color:rgba(122,162,255,.4);color:#7aa2ff}
-    .xp-table{width:100%;border-collapse:collapse;margin-top:8px}
-    .xp-table td,.xp-table th{padding:8px 12px;border-bottom:1px solid var(--border);font-size:13px}
-    .xp-table th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase}
-    code{background:#0b1220;border:1px solid var(--border);padding:2px 6px;border-radius:8px;font-size:12px}
-    .section-title{font-weight:800;font-size:15px;margin-bottom:10px}
-    .info-box{background:rgba(122,162,255,.08);border:1px solid rgba(122,162,255,.2);border-radius:10px;padding:12px 14px;margin-bottom:14px}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div>
-        <h1 style="margin:0 0 4px;">🎲 Lancer un drop</h1>
-        <div class="muted">Spawn direct depuis l'admin.</div>
-      </div>
-      <div class="row">
-        <a class="btn" href="/admin">⬅️ Retour admin</a>
-        <a class="btn" href="/admin/autodrop">🎁 AutoDrop</a>
-      </div>
-    </div>
-
-    <!-- MODE COOP -->
-    <div class="card">
-      <div class="section-title">🤝 Drop COOP <span class="badge coop">COOP</span></div>
-
-      <div class="info-box">
-        <div style="font-weight:700;margin-bottom:6px">XP progressif selon les participants</div>
-        <table class="xp-table">
-          <thead><tr><th>Participants</th><th>XP par personne</th></tr></thead>
-          <tbody>
-            <tr><td>1 seul</td><td>20 – 30 XP</td></tr>
-            <tr><td>2 – 3</td><td>30 – 50 XP</td></tr>
-            <tr><td>4 – 5</td><td>50 – 75 XP</td></tr>
-            <tr><td>6+</td><td>100 – 250 XP 🔥</td></tr>
-          </tbody>
-        </table>
-        <div class="muted" style="margin-top:8px">Chaque participant reçoit un tirage indépendant. Pas d'item donné en COOP. Tout le monde gagne à l'expiration du timer.</div>
-      </div>
-
-      <div class="row">
-        <div>
-          <label>Titre (overlay)</label>
-          <input id="coop_title" type="text" placeholder="ex: Capsule Mystère" style="min-width:280px">
-        </div>
-        <div>
-          <label>Image (media_url)</label>
-          <input id="coop_media" type="text" placeholder="https://..." style="min-width:280px">
-        </div>
-        <div>
-          <label>Durée (secondes)</label>
-          <input id="coop_duration" type="number" min="5" max="60" value="20" style="min-width:100px">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:14px">
-        <button class="btn" onclick="spawnCoop()" style="border-color:rgba(43,213,118,.4);color:#2bd576">🚀 Lancer COOP</button>
-        <span id="coop_status" class="muted"></span>
-      </div>
-    </div>
-
-    <!-- MODE FIRST / RANDOM -->
-    <div class="card">
-      <div class="section-title">⚡ Drop FIRST / 🎲 RANDOM</div>
-      <div class="muted" style="margin-bottom:14px">Ces modes donnent un item + XP au(x) gagnant(s).</div>
-
-      <div class="row">
-        <div>
-          <label>Mode</label>
-          <select id="d_mode">
-            <option value="first">⚡ first (premier arrivé)</option>
-            <option value="random">🎲 random (tirage au sort)</option>
-          </select>
-        </div>
-        <div>
-          <label>Durée (secondes)</label>
-          <input id="d_duration" type="number" min="5" max="60" value="15" style="min-width:100px">
-        </div>
-        <div>
-          <label>XP bonus gagnant</label>
-          <input id="d_xp" type="number" min="0" max="1000" value="50" style="min-width:100px">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:12px">
-        <div>
-          <label>Titre (overlay)</label>
-          <input id="d_title" type="text" placeholder="Titre overlay" style="min-width:280px">
-        </div>
-        <div>
-          <label>Image (media_url)</label>
-          <input id="d_media" type="text" placeholder="https://..." style="min-width:280px">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:12px">
-        <div>
-          <label>ticket_key (item gagné)</label>
-          <input id="d_ticket" type="text" placeholder="ex: grande_capsule" style="min-width:220px">
-        </div>
-        <div>
-          <label>ticket_qty</label>
-          <input id="d_qty" type="number" min="1" max="50" value="1" style="min-width:100px">
-        </div>
-      </div>
-
-      <div class="row" style="margin-top:14px">
-        <button class="btn" onclick="spawnDrop()" style="border-color:rgba(122,162,255,.4);color:#7aa2ff">🚀 Lancer</button>
-        <span id="d_status" class="muted"></span>
-      </div>
-    </div>
-
-    <!-- TEST AUTODROP -->
-    <div class="card">
-      <div class="section-title">🧪 Test AutoDrop</div>
-      <div class="muted" style="margin-bottom:10px">Déclenche un drop avec le tirage pondéré selon tes réglages AutoDrop.</div>
-      <button class="btn" onclick="testAutoDrop()">🧪 Test AutoDrop maintenant</button>
-      <span id="ad_status" class="muted" style="margin-left:10px"></span>
-    </div>
-  </div>
-
-<script>
-async function spawnCoop() {
-  const el = id => document.getElementById(id);
-  const title = el('coop_title').value.trim();
-  const media_url = el('coop_media').value.trim();
-  const duration = parseInt(el('coop_duration').value) || 20;
-
-  if (!title || !media_url) {
-    el('coop_status').textContent = '⛔ Titre et image obligatoires.';
-    return;
-  }
-
-  el('coop_status').textContent = 'Spawn...';
-
-  const r = await fetch('/admin/drop/spawn', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      mode: 'coop',
-      title,
-      media_url,
-      duration_seconds: duration,
-      ticket_key: 'none',
-      ticket_qty: 1,
-      xp_bonus: 0,
-    })
-  });
-
-  let j = null;
-  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
-  el('coop_status').textContent = r.ok
-    ? `✅ Drop COOP lancé (id ${j.drop_id}) — les participants tapent !grab`
-    : `⛔ ${JSON.stringify(j)}`;
-}
-
-async function spawnDrop() {
-  const el = id => document.getElementById(id);
-  const title = el('d_title').value.trim();
-  const media_url = el('d_media').value.trim();
-  const ticket_key = el('d_ticket').value.trim();
-
-  if (!title || !media_url || !ticket_key) {
-    el('d_status').textContent = '⛔ Titre, image et ticket_key obligatoires.';
-    return;
-  }
-
-  el('d_status').textContent = 'Spawn...';
-
-  const r = await fetch('/admin/drop/spawn', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      mode: el('d_mode').value,
-      title,
-      media_url,
-      duration_seconds: parseInt(el('d_duration').value) || 15,
-      xp_bonus: parseInt(el('d_xp').value) || 50,
-      ticket_key,
-      ticket_qty: parseInt(el('d_qty').value) || 1,
-    })
-  });
-
-  let j = null;
-  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
-  el('d_status').textContent = r.ok
-    ? `✅ Drop lancé (id ${j.drop_id})`
-    : `⛔ ${JSON.stringify(j)}`;
-}
-
-async function testAutoDrop() {
-  const el = id => document.getElementById(id);
-  el('ad_status').textContent = 'Test...';
-  const r = await fetch('/admin/autodrop/test', {method: 'POST'});
-  let j = null;
-  try { j = await r.json(); } catch(e) { j = {detail: 'bad json'}; }
-  if (!r.ok) { el('ad_status').textContent = '⛔ ' + JSON.stringify(j); return; }
-  const p = j.picked || {};
-  el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || '?'}`;
-}
-</script>
-
-</body>
-</html>"""
-    return HTMLResponse(html)
-
-
+    
 @app.post("/admin/drop/spawn")
 def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
@@ -6346,156 +5353,6 @@ def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(
         conn.commit()
 
     return {"ok": True, "drop_id": drop_id}
-
-
-
-# =============================================================================
-# Admin: Boutique points de chaîne
-# =============================================================================
-@app.get("/admin/points", response_class=HTMLResponse)
-def admin_points(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cfg = {
-                "cp_enabled": kv_get(cur, "cp_enabled", "false") or "false",
-                "broadcaster_user_id": kv_get(cur, "broadcaster_user_id", "") or "",
-                "cp_reward_drop_coop_id": kv_get(cur, "cp_reward_drop_coop_id", "") or "",
-                "cp_reward_capsule_id": kv_get(cur, "cp_reward_capsule_id", "") or "",
-                "cp_reward_candy_id": kv_get(cur, "cp_reward_candy_id", "") or "",
-                "cp_reward_egg_id": kv_get(cur, "cp_reward_egg_id", "") or "",
-                "cp_capsule_item_key": kv_get(cur, "cp_capsule_item_key", "grande_capsule") or "grande_capsule",
-                "cp_candy_item_key": kv_get(cur, "cp_candy_item_key", "bonbon_2") or "bonbon_2",
-                "cp_egg_item_key": kv_get(cur, "cp_egg_item_key", "") or "",
-                "cp_drop_pick_kind": kv_get(cur, "cp_drop_pick_kind", kv_get(cur, "auto_drop_pick_kind", "any") or "any") or "any",
-                "cp_drop_duration_seconds": kv_get(cur, "cp_drop_duration_seconds", kv_get(cur, "auto_drop_duration_seconds", "20") or "20") or "20",
-                "cp_drop_target_hits": kv_get(cur, "cp_drop_target_hits", kv_get(cur, "auto_drop_target_hits", "10") or "10") or "10",
-                "cp_drop_ticket_qty": kv_get(cur, "cp_drop_ticket_qty", kv_get(cur, "auto_drop_ticket_qty", "1") or "1") or "1",
-                "cp_drop_fallback_icon_url": kv_get(cur, "cp_drop_fallback_icon_url", "") or "",
-            }
-        conn.commit()
-
-    checked = "checked" if cfg["cp_enabled"] == "true" else ""
-    msg = str(request.query_params.get("msg", "") or "")
-    msg_html = f"<p style='color: #6bff6b; font-weight: 700;'>{msg}</p>" if msg else ""
-
-    html = f"""<!doctype html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CapsMons — Boutique Points</title>
-  <style>
-    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background: #0f1115; color: #e7e7e7; margin: 0; }}
-    .wrap {{ max-width: 980px; margin: 0 auto; padding: 24px; }}
-    .card {{ background: #151a22; border: 1px solid #242b36; border-radius: 12px; padding: 16px; margin-bottom: 16px; }}
-    label {{ display:block; margin: 10px 0 6px; opacity: .9; }}
-    input[type=text], input[type=number], select {{ width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #2a3442; background:#0f1115; color:#e7e7e7; }}
-    .row {{ display:flex; gap: 12px; }}
-    .row > div {{ flex: 1; }}
-    .btn {{ display:inline-block; padding: 10px 14px; border-radius: 10px; border: 1px solid #2a3442; background:#0f1115; color:#e7e7e7; cursor:pointer; }}
-    .btn-primary {{ background:#1d2a3a; }}
-    code {{ background:#0f1115; padding: 2px 6px; border-radius: 6px; border: 1px solid #2a3442; }}
-    a {{ color: #7ab8ff; }}
-    .muted {{ opacity: .75; }}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h2>🪙 Boutique (points de chaîne)</h2>
-      {msg_html}
-      <p class="muted">Cette page mappe des Reward IDs (Twitch) vers des actions CapsMons. Les événements arrivent via EventSub (<code>/eventsub</code>).</p>
-      <p class="muted">Doc EventSub: le type <code>channel.channel_points_custom_reward_redemption.add</code> nécessite <code>channel:read:redemptions</code> ou <code>channel:manage:redemptions</code>.</p>
-    </div>
-
-    <form class="card" method="post" action="/admin/points/save">
-      <h3>Activation</h3>
-      <label><input type="checkbox" name="cp_enabled" value="true" {checked}/> Activer la boutique points de chaîne</label>
-
-      <h3>Reward IDs (Twitch)</h3>
-      <div class="row">
-        <div>
-          <label>Drop COOP (reward_id)</label>
-          <input type="text" name="cp_reward_drop_coop_id" value="{cfg['cp_reward_drop_coop_id']}" />
-        </div>
-        <div>
-          <label>Capsule XP (reward_id)</label>
-          <input type="text" name="cp_reward_capsule_id" value="{cfg['cp_reward_capsule_id']}" />
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Bonbon (reward_id)</label>
-          <input type="text" name="cp_reward_candy_id" value="{cfg['cp_reward_candy_id']}" />
-        </div>
-        <div>
-          <label>Œuf (reward_id)</label>
-          <input type="text" name="cp_reward_egg_id" value="{cfg['cp_reward_egg_id']}" />
-        </div>
-      </div>
-
-      <h3>Items offerts</h3>
-      <div class="row">
-        <div>
-          <label>Item key capsule</label>
-          <input type="text" name="cp_capsule_item_key" value="{cfg['cp_capsule_item_key']}" />
-        </div>
-        <div>
-          <label>Item key bonbon</label>
-          <input type="text" name="cp_candy_item_key" value="{cfg['cp_candy_item_key']}" />
-        </div>
-      </div>
-      <label>Item key œuf (optionnel — si vide: pick pondéré parmi <code>egg_*</code>)</label>
-      <input type="text" name="cp_egg_item_key" value="{cfg['cp_egg_item_key']}" />
-
-      <h3>Paramètres Drop COOP (achat)</h3>
-      <div class="row">
-        <div>
-          <label>Pick kind (any/xp/candy/egg)</label>
-          <input type="text" name="cp_drop_pick_kind" value="{cfg['cp_drop_pick_kind']}" />
-        </div>
-        <div>
-          <label>Durée (secondes)</label>
-          <input type="number" name="cp_drop_duration_seconds" value="{cfg['cp_drop_duration_seconds']}" />
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Target hits (coop)</label>
-          <input type="number" name="cp_drop_target_hits" value="{cfg['cp_drop_target_hits']}" />
-        </div>
-        <div>
-          <label>Ticket qty</label>
-          <input type="number" name="cp_drop_ticket_qty" value="{cfg['cp_drop_ticket_qty']}" />
-        </div>
-      </div>
-      <label>Fallback icon_url (si l'item tiré n'a pas d'icône)</label>
-      <input type="text" name="cp_drop_fallback_icon_url" value="{cfg['cp_drop_fallback_icon_url']}" />
-
-      <div style="margin-top: 12px;">
-        <button class="btn btn-primary" type="submit">💾 Sauvegarder</button>
-        <a class="btn" href="/admin">↩️ Retour admin</a>
-      </div>
-    </form>
-
-    <form class="card" method="post" action="/admin/eventsub/subscribe_channel_points">
-      <h3>EventSub — souscription</h3>
-      <p class="muted">Crée la souscription <code>channel.channel_points_custom_reward_redemption.add</code> (webhook). La création d'une souscription webhook utilise un app access token.</p>
-      <p class="muted">Broadcaster user id détecté: <code>{cfg['broadcaster_user_id'] or '—'}</code></p>
-      <button class="btn btn-primary" type="submit">🔔 (Re)créer la souscription Channel Points</button>
-    </form>
-
-    <div class="card">
-      <h3>Annonce en chat (bot)</h3>
-      <p class="muted">Le bot peut poll <code>/internal/announcements/poll</code> pour annoncer les achats. (Côté bot: une boucle toutes les ~2s suffit.)</p>
-    </div>
-  </div>
-</body>
-</html>"""
-
-    return HTMLResponse(html)
 
 
 @app.post("/admin/points/save")
@@ -6584,3 +5441,452 @@ def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = 
 
     return RedirectResponse(url="/admin/points?msg=Souscription créée", status_code=302)
 
+
+    
+# =============================================================================
+# ADMIN SPA — Route unifiée + Stats par stream
+# =============================================================================
+# Ce fichier contient les remplacements à faire dans main.py :
+#
+# 1. Remplacer @app.get("/admin") et def admin_home(...)   → nouvelle version
+# 2. Remplacer @app.get("/admin/stats") et def admin_stats(...) → nouvelle version
+# 3. Remplacer @app.get("/admin/cms") et def admin_cms(...)    → nouvelle version
+# 4. Remplacer @app.get("/admin/rp") et def admin_rp(...)     → nouvelle version
+# 5. Remplacer @app.get("/admin/forms") et def admin_forms(...) → nouvelle version
+# 6. Remplacer @app.get("/admin/points") et def admin_points(...) → nouvelle version
+# 7. Remplacer @app.get("/admin/autodrop") et def admin_autodrop_page(...) → nouvelle version
+# 8. Remplacer @app.get("/admin/drops") et def admin_drops_page(...) → nouvelle version
+# 9. AJOUTER @app.get("/admin/stats/json") — nouveau endpoint JSON pour dashboard
+#
+# =============================================================================
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPER : charge tout le contexte Jinja2 pour la SPA en une seule connexion DB
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_admin_context(request: Request, flash: str | None = None, flash_kind: str | None = None,
+                         q: str | None = None, page: int = 1, per: int = 50) -> dict:
+    """Charge TOUTES les données nécessaires au template admin_spa.html en une seule passe DB."""
+    import math
+
+    q_clean = (q or "").strip().lower()
+    try:    page = max(1, int(page or 1))
+    except: page = 1
+    try:    per = max(10, min(200, int(per or 50)))
+    except: per = 50
+
+    ctx: dict = {
+        "request": request,
+        "flash": flash,
+        "flash_kind": flash_kind,
+        "q": q_clean,
+        "page": page,
+        "per": per,
+        # defaults (overwritten below)
+        "is_live": False,
+        "total_users": 0,
+        "total_pages": 1,
+        "users": [],
+        # stats
+        "xp_today": 0, "xp_7d": 0, "events_24h": 0,
+        "active_users_24h": 0, "active_users_15m": 0,
+        "xp_by_day": [], "top_xp_24h": [], "top_events_24h": [],
+        "stream_stats": [],
+        # cms / lineages / forms / rp
+        "lineages": [], "cms": [], "items": [],
+        # cp config
+        "cp": {},
+        "broadcaster_user_id": "",
+    }
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+
+            # ── LIVE ──────────────────────────────────────────────────────
+            cur.execute("SELECT value FROM kv WHERE key='is_live';")
+            row = cur.fetchone()
+            ctx["is_live"] = bool(row and str(row[0]).lower() == "true")
+
+            # ── VIEWERS ───────────────────────────────────────────────────
+            where = "WHERE u.twitch_login ILIKE %s" if q_clean else ""
+            params: list = ([f"%{q_clean}%"] if q_clean else [])
+
+            cur.execute(f"SELECT COUNT(*) FROM users u {where};", params)
+            total = int(cur.fetchone()[0] or 0)
+            pages = max(1, math.ceil(total / per)) if total else 1
+            if page > pages: page = pages
+            ctx["total_users"] = total
+            ctx["total_pages"] = pages
+            ctx["page"] = page
+
+            cur.execute(
+                f"""
+                SELECT u.twitch_login,
+                    COALESCE(SUM(c.xp_total), 0),
+                    COALESCE(MAX(c.stage), 0),
+                    COUNT(c.id),
+                    MAX(c.id) FILTER (WHERE c.is_active=true)
+                FROM users u
+                LEFT JOIN creatures_v2 c ON c.twitch_login = u.twitch_login
+                {where}
+                GROUP BY u.twitch_login
+                ORDER BY MAX(c.acquired_at) DESC NULLS LAST, u.twitch_login ASC
+                LIMIT %s OFFSET %s;
+                """,
+                params + [per, (page - 1) * per],
+            )
+            ctx["users"] = [
+                {"twitch_login": r[0], "xp_total_sum": int(r[1] or 0),
+                 "stage_max": int(r[2] or 0), "cm_count": int(r[3] or 0),
+                 "active_id": int(r[4]) if r[4] is not None else None}
+                for r in cur.fetchall()
+            ]
+
+            # ── STATS GLOBALES ────────────────────────────────────────────
+            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
+            today_paris = cur.fetchone()[0]
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE created_at >= %s;", (today_paris,))
+            ctx["xp_today"] = int(cur.fetchone()[0])
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE created_at >= now() - interval '7 days';")
+            ctx["xp_7d"] = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT COUNT(*), COUNT(DISTINCT twitch_login)
+                FROM xp_events WHERE created_at >= now() - interval '24 hours';
+            """)
+            r = cur.fetchone()
+            ctx["events_24h"] = int(r[0]); ctx["active_users_24h"] = int(r[1])
+
+            cur.execute("""
+                SELECT COUNT(DISTINCT twitch_login)
+                FROM xp_events WHERE created_at >= now() - interval '15 minutes';
+            """)
+            ctx["active_users_15m"] = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD'),
+                       SUM(amount)
+                FROM xp_events
+                WHERE created_at >= now() - interval '7 days'
+                GROUP BY 1 ORDER BY 1 DESC;
+            """)
+            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+            max_xp = max((r["xp"] for r in xp_by_day), default=0) or 1
+            for r in xp_by_day: r["pct"] = int((r["xp"] / max_xp) * 100)
+            ctx["xp_by_day"] = xp_by_day
+
+            cur.execute("""
+                SELECT twitch_login, SUM(amount) FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+            """)
+            ctx["top_xp_24h"] = [{"twitch_login": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT twitch_login, COUNT(*) FROM xp_events
+                WHERE created_at >= now() - interval '24 hours'
+                GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+            """)
+            ctx["top_events_24h"] = [{"twitch_login": r[0], "events": int(r[1])} for r in cur.fetchall()]
+
+            # ── STATS PAR STREAM ──────────────────────────────────────────
+            cur.execute("""
+                SELECT
+                    ss.id,
+                    ss.started_at,
+                    ss.ended_at,
+                    EXTRACT(EPOCH FROM COALESCE(ss.ended_at, now()) - ss.started_at)::int AS duration_s,
+                    COALESCE(SUM(xe.amount), 0)::int AS xp_total,
+                    COUNT(DISTINCT xe.twitch_login) AS viewers_uniques,
+                    COUNT(xe.id) AS events_total
+                FROM stream_sessions ss
+                LEFT JOIN xp_events xe
+                    ON xe.created_at BETWEEN ss.started_at AND COALESCE(ss.ended_at, now())
+                GROUP BY ss.id
+                ORDER BY ss.started_at DESC
+                LIMIT 20;
+            """)
+            stream_rows = cur.fetchall()
+
+            stream_stats = []
+            for row in stream_rows:
+                sid, started_at, ended_at, duration_s, xp_total, viewers_uniques, events_total = row
+                duration_s = int(duration_s or 0)
+                h, rem = divmod(duration_s, 3600)
+                m, s = divmod(rem, 60)
+                duration_str = f"{h}h{m:02d}" if h else f"{m}m{s:02d}s"
+
+                # Top viewers pour ce stream
+                cur.execute("""
+                    SELECT xe.twitch_login, SUM(xe.amount)::int AS xp
+                    FROM xp_events xe
+                    WHERE xe.created_at BETWEEN %s AND COALESCE(%s, now())
+                    GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+                """, (started_at, ended_at))
+                top_viewers = [{"login": r[0], "xp": r[1]} for r in cur.fetchall()]
+
+                # Drops pendant ce stream
+                cur.execute("""
+                    SELECT COUNT(*) FROM drops
+                    WHERE created_at BETWEEN %s AND COALESCE(%s, now());
+                """, (started_at, ended_at))
+                drops_count = int(cur.fetchone()[0])
+
+                stream_stats.append({
+                    "id": sid,
+                    "started_at": started_at.strftime("%d/%m/%Y %H:%M") if started_at else "—",
+                    "ended_at": ended_at.strftime("%H:%M") if ended_at else "en cours",
+                    "is_live": ended_at is None,
+                    "duration": duration_str,
+                    "xp_total": int(xp_total),
+                    "viewers_uniques": int(viewers_uniques),
+                    "events_total": int(events_total),
+                    "drops_count": drops_count,
+                    "top_viewers": top_viewers,
+                })
+
+            ctx["stream_stats"] = stream_stats
+
+            # ── CMS + LINEAGES ────────────────────────────────────────────
+            cur.execute("""
+                SELECT key, name, is_enabled, COALESCE(choose_enabled, true)
+                FROM lineages ORDER BY key;
+            """)
+            ctx["lineages"] = [
+                {"key": r[0], "name": r[1], "is_enabled": bool(r[2]), "choose_enabled": bool(r[3])}
+                for r in cur.fetchall()
+            ]
+
+            cur.execute("""
+                SELECT key, name, lineage_key, is_enabled, in_hatch_pool, COALESCE(media_url,'')
+                FROM cms ORDER BY lineage_key, key;
+            """)
+            ctx["cms"] = [
+                {"key": r[0], "name": r[1], "lineage_key": r[2],
+                 "is_enabled": bool(r[3]), "in_hatch_pool": bool(r[4]), "media_url": r[5]}
+                for r in cur.fetchall()
+            ]
+
+            # ── FORMS ─────────────────────────────────────────────────────
+            cur.execute("SELECT key, name, lineage_key FROM cms ORDER BY lineage_key, key;")
+            cms_list = [{"key": r[0], "cm_name": r[1], "lineage_key": r[2]} for r in cur.fetchall()]
+
+            cur.execute("SELECT cm_key, stage, name, image_url, COALESCE(sound_url,'') FROM cm_forms ORDER BY cm_key, stage;")
+            forms_map = {}
+            for cm_key, stage, name, image_url, sound_url in cur.fetchall():
+                forms_map[(cm_key, int(stage))] = {"name": name, "image_url": image_url, "sound_url": sound_url}
+
+            # NOTE: "items" est utilisé par forms ET rp, on les met dans des clés séparées
+            ctx["forms_items"] = [
+                {**cm, "stages": [
+                    {"stage": st, **forms_map.get((cm["key"], st), {"name": "", "image_url": "", "sound_url": ""})}
+                    for st in (1, 2, 3)
+                ]}
+                for cm in cms_list
+            ]
+
+            # ── RP ────────────────────────────────────────────────────────
+            cur.execute("SELECT key, lines FROM rp_lines ORDER BY key;")
+            rp_items = []
+            for k, lines in cur.fetchall():
+                if isinstance(lines, str):
+                    try:    lines = json.loads(lines)
+                    except: lines = []
+                if not isinstance(lines, list): lines = []
+                text = "\n".join([str(x) for x in lines if str(x).strip()])
+                rp_items.append({"key": k, "count": len(lines), "text": text})
+            ctx["rp_items"] = rp_items
+
+            # ── CHANNEL POINTS ────────────────────────────────────────────
+            ctx["cp"] = {
+                "cp_enabled":               kv_get(cur, "cp_enabled", "false") or "false",
+                "cp_reward_drop_coop_id":   kv_get(cur, "cp_reward_drop_coop_id", "") or "",
+                "cp_reward_capsule_id":     kv_get(cur, "cp_reward_capsule_id", "") or "",
+                "cp_reward_candy_id":       kv_get(cur, "cp_reward_candy_id", "") or "",
+                "cp_reward_egg_id":         kv_get(cur, "cp_reward_egg_id", "") or "",
+                "cp_capsule_item_key":      kv_get(cur, "cp_capsule_item_key", "grande_capsule") or "grande_capsule",
+                "cp_candy_item_key":        kv_get(cur, "cp_candy_item_key", "bonbon_2") or "bonbon_2",
+                "cp_egg_item_key":          kv_get(cur, "cp_egg_item_key", "") or "",
+                "cp_drop_pick_kind":        kv_get(cur, "cp_drop_pick_kind", "any") or "any",
+                "cp_drop_duration_seconds": kv_get(cur, "cp_drop_duration_seconds", "20") or "20",
+                "cp_drop_fallback_icon_url":kv_get(cur, "cp_drop_fallback_icon_url", "") or "",
+            }
+            ctx["broadcaster_user_id"] = kv_get(cur, "broadcaster_user_id", "") or ""
+
+            # ── AUTODROP ──────────────────────────────────────────────────
+            ad_keys = [
+                "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
+                "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
+                "auto_drop_pick_kind", "auto_drop_mode", "auto_drop_ticket_qty",
+                "auto_drop_fallback_media_url",
+            ]
+            ctx["autodrop"] = kv_get_many(cur, ad_keys)
+
+    return ctx
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROUTE PRINCIPALE — remplace toutes les routes GET admin qui renvoient le SPA
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/stats", response_class=HTMLResponse)
+@app.get("/admin/cms", response_class=HTMLResponse)
+@app.get("/admin/rp", response_class=HTMLResponse)
+@app.get("/admin/forms", response_class=HTMLResponse)
+@app.get("/admin/drops", response_class=HTMLResponse)
+@app.get("/admin/autodrop", response_class=HTMLResponse)
+def admin_spa(
+    request: Request,
+    q: str | None = None,
+    page: int = 1,
+    per: int = 50,
+    flash: str | None = None,
+    flash_kind: str | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    ctx = _build_admin_context(request, flash=flash, flash_kind=flash_kind, q=q, page=page, per=per)
+    return templates.TemplateResponse("admin_spa.html", ctx)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /admin/points — garde son propre chargement (formulaire HTML spécifique)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/points", response_class=HTMLResponse)
+def admin_points(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    ctx = _build_admin_context(request)
+    return templates.TemplateResponse("admin_spa.html", ctx)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /admin/stats/json — endpoint JSON pour les KPIs dashboard live
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/stats/json")
+def admin_stats_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris';")
+            today_paris = cur.fetchone()[0]
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE created_at >= %s;", (today_paris,))
+            xp_today = int(cur.fetchone()[0])
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE created_at >= now() - interval '7 days';")
+            xp_7d = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT COUNT(*), COUNT(DISTINCT twitch_login)
+                FROM xp_events WHERE created_at >= now() - interval '24 hours';
+            """)
+            r = cur.fetchone()
+            events_24h, active_users_24h = int(r[0]), int(r[1])
+
+            cur.execute("SELECT COUNT(DISTINCT twitch_login) FROM xp_events WHERE created_at >= now() - interval '15 minutes';")
+            active_users_15m = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'Europe/Paris'), 'YYYY-MM-DD'),
+                       SUM(amount)
+                FROM xp_events WHERE created_at >= now() - interval '7 days'
+                GROUP BY 1 ORDER BY 1 DESC;
+            """)
+            xp_by_day = [{"day": r[0], "xp": int(r[1])} for r in cur.fetchall()]
+            max_xp = max((r["xp"] for r in xp_by_day), default=0) or 1
+            for r in xp_by_day: r["pct"] = int((r["xp"] / max_xp) * 100)
+
+    return {
+        "xp_today": xp_today,
+        "xp_7d": xp_7d,
+        "events_24h": events_24h,
+        "active_users_24h": active_users_24h,
+        "active_users_15m": active_users_15m,
+        "xp_by_day": xp_by_day,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /admin/streams/json — stats par stream pour le panneau Streams du SPA
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/streams/json")
+def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    ss.id,
+                    ss.started_at,
+                    ss.ended_at,
+                    EXTRACT(EPOCH FROM COALESCE(ss.ended_at, now()) - ss.started_at)::int AS duration_s,
+                    COALESCE(SUM(xe.amount), 0)::int AS xp_total,
+                    COUNT(DISTINCT xe.twitch_login)::int AS viewers_uniques,
+                    COUNT(xe.id)::int AS events_total
+                FROM stream_sessions ss
+                LEFT JOIN xp_events xe
+                    ON xe.created_at BETWEEN ss.started_at AND COALESCE(ss.ended_at, now())
+                GROUP BY ss.id
+                ORDER BY ss.started_at DESC
+                LIMIT 20;
+            """)
+            rows = cur.fetchall()
+
+            result = []
+            for row in rows:
+                sid, started_at, ended_at, duration_s, xp_total, viewers_uniques, events_total = row
+                duration_s = int(duration_s or 0)
+                h, rem = divmod(duration_s, 3600)
+                m, s = divmod(rem, 60)
+
+                # top viewers
+                cur.execute("""
+                    SELECT twitch_login, SUM(amount)::int
+                    FROM xp_events
+                    WHERE created_at BETWEEN %s AND COALESCE(%s, now())
+                    GROUP BY 1 ORDER BY 2 DESC LIMIT 5;
+                """, (started_at, ended_at))
+                top_viewers = [{"login": r[0], "xp": r[1]} for r in cur.fetchall()]
+
+                # drops
+                cur.execute("""
+                    SELECT COUNT(*) FROM drops
+                    WHERE created_at BETWEEN %s AND COALESCE(%s, now());
+                """, (started_at, ended_at))
+                drops_count = int(cur.fetchone()[0])
+
+                # xp par source (ventilation)
+                cur.execute("""
+                    SELECT source, SUM(amount)::int
+                    FROM xp_events
+                    WHERE created_at BETWEEN %s AND COALESCE(%s, now())
+                    GROUP BY 1 ORDER BY 2 DESC;
+                """, (started_at, ended_at))
+                xp_by_source = [{"source": r[0] or "?", "xp": r[1]} for r in cur.fetchall()]
+
+                result.append({
+                    "id": sid,
+                    "started_at": started_at.isoformat() if started_at else None,
+                    "ended_at": ended_at.isoformat() if ended_at else None,
+                    "started_label": started_at.strftime("%d/%m %H:%M") if started_at else "—",
+                    "ended_label": ended_at.strftime("%H:%M") if ended_at else "en cours 🔴",
+                    "is_live": ended_at is None,
+                    "duration": f"{h}h{m:02d}" if h else f"{m}m{s:02d}s",
+                    "xp_total": xp_total,
+                    "viewers_uniques": viewers_uniques,
+                    "events_total": events_total,
+                    "drops_count": drops_count,
+                    "top_viewers": top_viewers,
+                    "xp_by_source": xp_by_source,
+                })
+
+    return result
