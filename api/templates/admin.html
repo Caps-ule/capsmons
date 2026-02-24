@@ -1,403 +1,1525 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <title>CapsMons — Admin</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CapsMons — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
 
   <style>
-    :root{
-      --bg:#0b0f14;
-      --panel:#111826;
-      --panel2:#0f1623;
-      --text:#e6edf3;
-      --muted:#9aa4b2;
-      --border:#233044;
-      --tableHead:#0e1522;
-      --link:#7aa2ff;
-      --shadow:0 12px 30px rgba(0,0,0,.35);
-      --radius:14px;
+    /* ─── TOKENS ─────────────────────────────────────────────── */
+    :root {
+      --bg:       #060810;
+      --bg2:      #0a0d18;
+      --bg3:      #0d1121;
+      --panel:    #0f1428;
+      --panel2:   #111830;
+      --border:   #1a2540;
+      --border2:  #243060;
+      --text:     #c8d4f0;
+      --muted:    #5a6a90;
+      --dim:      #3a4860;
 
-      --ok:#2bd576;
-      --off:#4a5568;
+      --cyan:     #00e5ff;
+      --cyan2:    #00b8cc;
+      --magenta:  #ff2d78;
+      --magenta2: #cc2060;
+      --green:    #00ff9d;
+      --green2:   #00cc7a;
+      --amber:    #ffb700;
+      --amber2:   #cc9200;
+      --purple:   #9d4edd;
+
+      --glow-c:   0 0 12px rgba(0,229,255,.35), 0 0 40px rgba(0,229,255,.12);
+      --glow-m:   0 0 12px rgba(255,45,120,.35), 0 0 40px rgba(255,45,120,.12);
+      --glow-g:   0 0 12px rgba(0,255,157,.35), 0 0 40px rgba(0,255,157,.12);
+
+      --sidebar-w: 220px;
+      --radius: 10px;
+      --font-mono: 'Share Tech Mono', monospace;
+      --font-ui:   'Rajdhani', sans-serif;
+      --font-head: 'Orbitron', monospace;
     }
-    [data-theme="light"]{
-      --bg:#ffffff;
-      --panel:#ffffff;
-      --panel2:#f7f7f9;
-      --text:#101418;
-      --muted:#5b6777;
-      --border:#e6e8ec;
-      --tableHead:#f2f4f7;
-      --link:#0b57d0;
-      --shadow:0 10px 24px rgba(0,0,0,.08);
+    [data-theme="light"] {
+      --bg:      #f0f2f8;
+      --bg2:     #e8ebf5;
+      --bg3:     #dde2f0;
+      --panel:   #ffffff;
+      --panel2:  #f5f7ff;
+      --border:  #d0d8f0;
+      --border2: #b8c4e8;
+      --text:    #1a2040;
+      --muted:   #6070a0;
+      --dim:     #a0b0d0;
 
-      --ok:#0a7a2f;
-      --off:#94a3b8;
-    }
-
-    *{box-sizing:border-box}
-    body{
-      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-      margin:24px;
-      max-width:1100px;
-      background:var(--bg);
-      color:var(--text);
-    }
-
-    a{color:var(--link); text-decoration:none}
-    a:hover{text-decoration:underline}
-
-    h1{margin:0 0 6px; font-size:28px}
-    h2{margin:22px 0 10px; font-size:18px}
-
-    .muted{color:var(--muted); font-size:13px}
-    .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
-
-    input,button{
-      padding:10px 12px;
-      font-size:14px;
-      border-radius:12px;
-      border:1px solid var(--border);
-      background:var(--panel);
-      color:var(--text);
-    }
-    button{cursor:pointer}
-    button:hover{filter:brightness(1.08)}
-
-    .card{
-      border:1px solid var(--border);
-      border-radius:var(--radius);
-      padding:16px;
-      margin-top:16px;
-      background:linear-gradient(180deg,var(--panel),var(--panel2));
-      box-shadow:var(--shadow);
+      --cyan:    #007acc;
+      --cyan2:   #005fa0;
+      --magenta: #cc0055;
+      --green:   #007a40;
+      --amber:   #996600;
+      --glow-c:  none;
+      --glow-m:  none;
+      --glow-g:  none;
     }
 
-    table{
-      border-collapse:collapse;
-      width:100%;
-      margin-top:16px;
-      border-radius:12px;
-      overflow:hidden;
-      border:1px solid var(--border);
+    /* ─── RESET ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-ui);
+      font-size: 15px;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      overflow: hidden;
     }
-    th,td{border-bottom:1px solid var(--border); padding:10px; text-align:left; vertical-align:middle}
-    th{
-      background:var(--tableHead);
-      color:var(--muted);
-      font-weight:600;
-      font-size:12px;
-      text-transform:uppercase;
-      letter-spacing:.04em;
-    }
-    tr:last-child td{border-bottom:none}
-
-    .topbar{
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:12px;
-      flex-wrap:wrap;
-      margin-bottom:8px;
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    input, select, textarea, button {
+      font-family: var(--font-ui);
+      font-size: 14px;
     }
 
-    .toggle{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid var(--border);
-      background:var(--panel);
-    }
-    .toggle input{transform:scale(1.1)}
+    /* ─── SCROLLBAR ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg2); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
-    /* Live buttons */
-    .liveRow{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-    .btn{
-      border:none;
-      border-radius:10px;
-      padding:8px 12px;
-      font-weight:800;
-      cursor:pointer;
+    /* ─── SIDEBAR ────────────────────────────────────────────── */
+    #sidebar {
+      width: var(--sidebar-w);
+      min-height: 100vh;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: relative;
+      z-index: 10;
     }
-    .btnLive{ background:var(--ok); color:#07130c; }
-    .btnOff{ background:var(--off); color:#0b0f14; }
-    .btnDisabled{ opacity:.45; cursor:not-allowed; }
+    #sidebar::before {
+      content: '';
+      position: absolute;
+      top: 0; right: 0;
+      width: 1px; height: 100%;
+      background: linear-gradient(180deg, transparent, var(--cyan), var(--magenta), transparent);
+      opacity: .4;
+    }
+    .sidebar-logo {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .logo-text {
+      font-family: var(--font-head);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      color: var(--cyan);
+      text-shadow: var(--glow-c);
+    }
+    .sidebar-logo .logo-sub {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+      letter-spacing: .08em;
+    }
+    .sidebar-logo .live-dot {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .live-dot.on  { background: var(--green); box-shadow: var(--glow-g); animation: pulse 1.4s infinite; }
+    .live-dot.off { background: var(--dim); }
 
-    .badge{
-      padding:4px 10px;
-      border-radius:999px;
-      font-size:12px;
-      border:1px solid rgba(255,255,255,.15);
-      background:rgba(255,255,255,.06);
-      color:var(--text);
-    }
-    [data-theme="light"] .badge{
-      border:1px solid rgba(0,0,0,.12);
-      background:rgba(0,0,0,.04);
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .4; }
     }
 
-    .navlinks a{margin-right:14px}
-    .navlinks a:last-child{margin-right:0}
+    .nav-section {
+      padding: 10px 8px 4px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--dim);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      margin: 1px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: .03em;
+      border: 1px solid transparent;
+      transition: all .15s;
+      user-select: none;
+    }
+    .nav-item:hover {
+      background: var(--panel);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .nav-item.active {
+      background: var(--panel);
+      color: var(--cyan);
+      border-color: var(--border2);
+      box-shadow: inset 3px 0 0 var(--cyan), var(--glow-c);
+    }
+    .nav-item .icon { font-size: 16px; flex-shrink: 0; }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 12px 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ─── MAIN ───────────────────────────────────────────────── */
+    #main {
+      flex: 1;
+      min-height: 100vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    #topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      gap: 12px;
+    }
+    #topbar .page-title {
+      font-family: var(--font-head);
+      font-size: 14px;
+      color: var(--cyan);
+      letter-spacing: .1em;
+    }
+    .topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+    #content {
+      flex: 1;
+      padding: 24px;
+    }
+
+    /* ─── PANELS ─────────────────────────────────────────────── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    .card {
+      background: linear-gradient(160deg, var(--panel), var(--panel2));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 2px;
+      background: linear-gradient(90deg, var(--cyan), transparent);
+      opacity: .5;
+    }
+    .card.accent-m::before { background: linear-gradient(90deg, var(--magenta), transparent); }
+    .card.accent-g::before { background: linear-gradient(90deg, var(--green), transparent); }
+    .card.accent-a::before { background: linear-gradient(90deg, var(--amber), transparent); }
+
+    .card-title {
+      font-family: var(--font-head);
+      font-size: 11px;
+      letter-spacing: .12em;
+      color: var(--cyan);
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+    .card.accent-m .card-title { color: var(--magenta); }
+    .card.accent-g .card-title { color: var(--green); }
+    .card.accent-a .card-title { color: var(--amber); }
+
+    /* ─── GRID KPI ───────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kpi-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; right: 0;
+      width: 60px; height: 60px;
+      border-radius: 50%;
+      opacity: .06;
+    }
+    .kpi-card.c::after { background: var(--cyan); }
+    .kpi-card.m::after { background: var(--magenta); }
+    .kpi-card.g::after { background: var(--green); }
+    .kpi-card.a::after { background: var(--amber); }
+    .kpi-label { font-size: 11px; color: var(--muted); font-family: var(--font-mono); letter-spacing: .06em; }
+    .kpi-val {
+      font-family: var(--font-head);
+      font-size: 28px;
+      font-weight: 900;
+      margin-top: 4px;
+      line-height: 1;
+    }
+    .kpi-card.c .kpi-val { color: var(--cyan); }
+    .kpi-card.m .kpi-val { color: var(--magenta); }
+    .kpi-card.g .kpi-val { color: var(--green); }
+    .kpi-card.a .kpi-val { color: var(--amber); }
+
+    /* ─── TABLE ──────────────────────────────────────────────── */
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: var(--bg3); }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { color: var(--cyan); }
+    th.sort-asc::after  { content: ' ▲'; color: var(--cyan); }
+    th.sort-desc::after { content: ' ▼'; color: var(--cyan); }
+    td {
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: rgba(0,229,255,.03); }
+
+    /* ─── BADGES ─────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      letter-spacing: .04em;
+      border: 1px solid;
+    }
+    .badge-ok    { color: var(--green);   border-color: rgba(0,255,157,.3);  background: rgba(0,255,157,.07); }
+    .badge-err   { color: var(--magenta); border-color: rgba(255,45,120,.3); background: rgba(255,45,120,.07); }
+    .badge-warn  { color: var(--amber);   border-color: rgba(255,183,0,.3);  background: rgba(255,183,0,.07); }
+    .badge-info  { color: var(--cyan);    border-color: rgba(0,229,255,.3);  background: rgba(0,229,255,.07); }
+    .badge-dim   { color: var(--muted);   border-color: var(--border);       background: var(--bg3); }
+
+    /* ─── FORMS ──────────────────────────────────────────────── */
+    .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-label {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    input[type="text"], input[type="number"], input[type="password"],
+    select, textarea {
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 8px 12px;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--cyan);
+      box-shadow: 0 0 0 2px rgba(0,229,255,.12);
+    }
+    textarea { font-family: var(--font-mono); font-size: 13px; width: 100%; min-height: 100px; resize: vertical; }
+
+    /* ─── BUTTONS ────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      letter-spacing: .04em;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .btn-cyan    { color: var(--cyan);    border-color: rgba(0,229,255,.4);  background: rgba(0,229,255,.08); }
+    .btn-cyan:hover { background: rgba(0,229,255,.18); box-shadow: var(--glow-c); }
+    .btn-magenta { color: var(--magenta); border-color: rgba(255,45,120,.4); background: rgba(255,45,120,.08); }
+    .btn-magenta:hover { background: rgba(255,45,120,.18); box-shadow: var(--glow-m); }
+    .btn-green   { color: var(--green);   border-color: rgba(0,255,157,.4);  background: rgba(0,255,157,.08); }
+    .btn-green:hover { background: rgba(0,255,157,.18); box-shadow: var(--glow-g); }
+    .btn-amber   { color: var(--amber);   border-color: rgba(255,183,0,.4);  background: rgba(255,183,0,.08); }
+    .btn-dim     { color: var(--muted);   border-color: var(--border);       background: var(--bg3); }
+    .btn-dim:hover { color: var(--text); background: var(--panel); }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-live { color: #060810; background: var(--green); border-color: var(--green); font-weight: 900; }
+    .btn-live:hover { box-shadow: var(--glow-g); }
+    .btn-off  { color: #060810; background: var(--dim);   border-color: var(--dim); font-weight: 900; opacity: .6; }
+
+    /* ─── SEARCH ─────────────────────────────────────────────── */
+    .search-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .search-wrap input {
+      padding-left: 32px;
+      min-width: 220px;
+    }
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* ─── TOGGLE ─────────────────────────────────────────────── */
+    .toggle-switch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .toggle-switch input { display: none; }
+    .toggle-track {
+      width: 36px; height: 20px;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 999px;
+      position: relative;
+      transition: background .2s;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 14px; height: 14px;
+      background: var(--muted);
+      border-radius: 50%;
+      transition: all .2s;
+    }
+    .toggle-switch input:checked ~ .toggle-track { background: rgba(0,229,255,.2); border-color: var(--cyan); }
+    .toggle-switch input:checked ~ .toggle-track::after { background: var(--cyan); left: 18px; box-shadow: var(--glow-c); }
+
+    /* ─── FLASH ──────────────────────────────────────────────── */
+    .flash {
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 14px;
+      border: 1px solid;
+      font-family: var(--font-mono);
+    }
+    .flash-ok  { color: var(--green);   border-color: rgba(0,255,157,.3);  background: rgba(0,255,157,.07); }
+    .flash-err { color: var(--magenta); border-color: rgba(255,45,120,.3); background: rgba(255,45,120,.07); }
+
+    /* ─── BAR CHART ──────────────────────────────────────────── */
+    .bar-row { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+    .bar-label { width: 100px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .bar-track { flex: 1; height: 12px; background: var(--bg3); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+    .bar-fill  { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--cyan2)); border-radius: 999px; transition: width .4s ease; }
+    .bar-val { width: 60px; text-align: right; font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+
+    /* ─── PAGINATION ─────────────────────────────────────────── */
+    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+    .page-btn {
+      padding: 6px 12px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      transition: all .15s;
+    }
+    .page-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .page-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,229,255,.08); }
+    .page-info { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
+
+    /* ─── XP TABLE ───────────────────────────────────────────── */
+    .xp-tier-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .xp-tier-table td, .xp-tier-table th { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--border); }
+    .xp-tier-table th { font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+    /* ─── STATUS LINE ────────────────────────────────────────── */
+    .status-line {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 18px;
+      transition: color .2s;
+    }
+    .status-line.ok  { color: var(--green); }
+    .status-line.err { color: var(--magenta); }
+
+    /* ─── PILL ───────────────────────────────────────────────── */
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      border: 1px solid var(--border2);
+      color: var(--muted);
+      background: var(--bg3);
+    }
+
+    /* ─── MISC ───────────────────────────────────────────────── */
+    .muted { color: var(--muted); font-size: 13px; }
+    .mono  { font-family: var(--font-mono); font-size: 13px; }
+    .section-gap { margin-bottom: 20px; }
+    .row  { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .col  { display: flex; flex-direction: column; gap: 8px; }
+    .sep  { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+    code  { font-family: var(--font-mono); font-size: 12px; background: var(--bg3); border: 1px solid var(--border); padding: 2px 6px; border-radius: 5px; }
+
+    /* scanline effect (subtle) */
+    #main::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,.04) 2px,
+        rgba(0,0,0,.04) 4px
+      );
+      z-index: 9999;
+    }
+    [data-theme="light"] #main::before { display: none; }
   </style>
 </head>
 
 <body>
-  <div class="topbar">
-    <div>
-      <h1>CapsMons — Admin</h1>
-      <div class="muted">Protégé par HTTP Basic (MVP). URL: <b>/admin</b></div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SIDEBAR
+═══════════════════════════════════════════════════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-text">CAPSMÖNS</div>
+    <div class="logo-sub">
+      <span class="live-dot {% if is_live %}on{% else %}off{% endif %}"></span>
+      {% if is_live %}LIVE{% else %}OFFLINE{% endif %} · ADMIN v2
     </div>
+  </div>
 
-    <div class="row">
-      <a href="/admin/stats">📊 Stats</a>
+  <div class="nav-section">// SYSTÈME</div>
+  <div class="nav-item active" data-page="dashboard" onclick="nav(this)">
+    <span class="icon">⬡</span> Dashboard
+  </div>
+  <div class="nav-item" data-page="stats" onclick="nav(this)">
+    <span class="icon">◈</span> Stats
+  </div>
 
-      <div class="toggle">
-        <input type="checkbox" id="themeToggle" checked>
-        <label for="themeToggle">Dark mode</label>
+  <div class="nav-section">// CONTENU</div>
+  <div class="nav-item" data-page="viewers" onclick="nav(this)">
+    <span class="icon">◎</span> Viewers
+  </div>
+  <div class="nav-item" data-page="cms" onclick="nav(this)">
+    <span class="icon">◈</span> CM & Pool
+  </div>
+  <div class="nav-item" data-page="forms" onclick="nav(this)">
+    <span class="icon">◇</span> Forms
+  </div>
+  <div class="nav-item" data-page="rp" onclick="nav(this)">
+    <span class="icon">◉</span> Phrases RP
+  </div>
+
+  <div class="nav-section">// GAMEPLAY</div>
+  <div class="nav-item" data-page="drops" onclick="nav(this)">
+    <span class="icon">▽</span> Drops
+  </div>
+  <div class="nav-item" data-page="autodrop" onclick="nav(this)">
+    <span class="icon">⟳</span> AutoDrop
+  </div>
+  <div class="nav-item" data-page="points" onclick="nav(this)">
+    <span class="icon">◈</span> Channel Points
+  </div>
+
+  <div class="sidebar-footer">
+    <label class="toggle-switch">
+      <input type="checkbox" id="themeToggle">
+      <div class="toggle-track"></div>
+      <span id="themeLabel">Light mode</span>
+    </label>
+  </div>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════
+     MAIN
+═══════════════════════════════════════════════════════════ -->
+<div id="main">
+
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <div class="page-title" id="pageTitle">⬡ DASHBOARD</div>
+    <div class="topbar-actions">
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input type="text" id="globalSearch" placeholder="Rechercher un viewer…" oninput="searchViewer(this.value)" style="min-width:200px">
       </div>
-
-      <div class="liveRow">
-        <button class="btn btnLive {% if is_live %}btnDisabled{% endif %}" onclick="setLive(true)">🟢 Live</button>
-        <button class="btn btnOff {% if not is_live %}btnDisabled{% endif %}" onclick="setLive(false)">⚫ Off Live</button>
-
-
-        <span class="badge">
-          État : <b>{% if is_live %}LIVE{% else %}OFFLINE{% endif %}</b>
-        </span>
+      <div id="liveControls" class="row" style="gap:6px">
+        <button class="btn btn-live {% if is_live %}btn-off{% endif %}" onclick="setLive(true)">● LIVE</button>
+        <button class="btn btn-off {% if not is_live %}btn-live{% endif %}" onclick="setLive(false)">○ OFF</button>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <form method="get" action="/admin" class="row" style="margin:0 0 10px;">
-      <label for="q">Rechercher un viewer :</label>
-      <input id="q" type="text" name="q" placeholder="pseudo twitch (ex: capsloque)" value="{{ q or '' }}">
-      <button type="submit">Rechercher</button>
-    </form>
+  <!-- SEARCH RESULTS OVERLAY -->
+  <div id="searchResults" style="display:none; padding:16px 24px; border-bottom:1px solid var(--border); background:var(--bg2);">
+    <div class="muted" style="margin-bottom:8px;font-family:var(--font-mono);font-size:11px;">RÉSULTAT RECHERCHE</div>
+    <div id="searchResultContent"></div>
+  </div>
 
-    <div class="navlinks muted">
-      <a href="/admin/stats">📊 Stats</a>
-      <a href="/admin/cms">🧬 CM & Pool</a>
-      <a href="/admin/rp">📝 RP</a>
-      <a href="/admin/forms">🧬 Forms</a>
+  <!-- CONTENT -->
+  <div id="content">
+
+    <!-- ══════════ PAGE: DASHBOARD ══════════ -->
+    <div class="page active" id="page-dashboard">
+      <div class="kpi-grid">
+        <div class="kpi-card c">
+          <div class="kpi-label">VIEWERS TOTAL</div>
+          <div class="kpi-val">{{ total_users }}</div>
+        </div>
+        <div class="kpi-card g">
+          <div class="kpi-label">XP AUJOURD'HUI</div>
+          <div class="kpi-val" id="kpi-xp-today">—</div>
+        </div>
+        <div class="kpi-card m">
+          <div class="kpi-label">ACTIFS 24H</div>
+          <div class="kpi-val" id="kpi-active-24h">—</div>
+        </div>
+        <div class="kpi-card a">
+          <div class="kpi-label">ACTIFS 15MIN</div>
+          <div class="kpi-val" id="kpi-active-15m">—</div>
+        </div>
+        <div class="kpi-card c">
+          <div class="kpi-label">EVENTS 24H</div>
+          <div class="kpi-val" id="kpi-events-24h">—</div>
+        </div>
+      </div>
+
+      <div class="row" style="gap:16px;align-items:flex-start">
+        <div style="flex:1;min-width:280px">
+          <div class="card">
+            <div class="card-title">XP par jour (7j)</div>
+            <div id="xpChart"></div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:280px">
+          <div class="card accent-m">
+            <div class="card-title">Top XP 24h</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Viewer</th><th>XP</th></tr></thead>
+                <tbody id="topXpTable">
+                  {% for row in top_xp_24h %}
+                  <tr>
+                    <td><a href="#" onclick="openUser('{{ row.twitch_login }}')">{{ row.twitch_login }}</a></td>
+                    <td><span class="badge badge-info">{{ row.xp }}</span></td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card accent-g" style="margin-top:0">
+        <div class="card-title">Actions rapides</div>
+        <div class="row">
+          <button class="btn btn-cyan" onclick="nav(document.querySelector('[data-page=drops]'))">▽ Lancer un drop</button>
+          <button class="btn btn-green" onclick="nav(document.querySelector('[data-page=autodrop]'))">⟳ AutoDrop</button>
+          <button class="btn btn-amber" onclick="nav(document.querySelector('[data-page=points]'))">◈ Channel Points</button>
+          <button class="btn btn-dim" onclick="nav(document.querySelector('[data-page=viewers]'))">◎ Viewers</button>
+        </div>
+      </div>
     </div>
 
-    <div style="margin-top:10px">
-      {% if q and result %}
-      <div>
-        Résultat :
-        <a href="/admin/user/{{ result.twitch_login }}">{{ result.twitch_login }}</a>
-        — {{ result.xp_total }} XP — stage {{ result.stage }}
+    <!-- ══════════ PAGE: STATS ══════════ -->
+    <div class="page" id="page-stats">
+      <div class="kpi-grid">
+        <div class="kpi-card g">
+          <div class="kpi-label">XP AUJOURD'HUI</div>
+          <div class="kpi-val">{{ xp_today }}</div>
+        </div>
+        <div class="kpi-card c">
+          <div class="kpi-label">XP 7 JOURS</div>
+          <div class="kpi-val">{{ xp_7d }}</div>
+        </div>
+        <div class="kpi-card m">
+          <div class="kpi-label">EVENTS 24H</div>
+          <div class="kpi-val">{{ events_24h }}</div>
+        </div>
+        <div class="kpi-card a">
+          <div class="kpi-label">ACTIFS 24H</div>
+          <div class="kpi-val">{{ active_users_24h }}</div>
+        </div>
+        <div class="kpi-card c">
+          <div class="kpi-label">ACTIFS 15MIN</div>
+          <div class="kpi-val">{{ active_users_15m }}</div>
+        </div>
       </div>
-      {% elif q and not result %}
-      <div>Aucun résultat pour “{{ q }}”.</div>
+
+      <div class="row" style="gap:16px;align-items:flex-start">
+        <div style="flex:2;min-width:300px">
+          <div class="card">
+            <div class="card-title">XP par jour (7 derniers jours)</div>
+            {% for row in xp_by_day %}
+            <div class="bar-row">
+              <div class="bar-label">{{ row.day }}</div>
+              <div class="bar-track"><div class="bar-fill" style="width:{{ row.pct }}%"></div></div>
+              <div class="bar-val">{{ row.xp }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div style="flex:1;min-width:240px">
+          <div class="card accent-m">
+            <div class="card-title">Top activité 24h</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Viewer</th><th>Events</th></tr></thead>
+                <tbody>
+                  {% for row in top_events_24h %}
+                  <tr>
+                    <td><a href="#" onclick="openUser('{{ row.twitch_login }}')">{{ row.twitch_login }}</a></td>
+                    <td><span class="badge badge-warn">{{ row.events }}</span></td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card accent-g" style="margin-top:12px">
+            <div class="card-title">Top XP 24h</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Viewer</th><th>XP</th></tr></thead>
+                <tbody>
+                  {% for row in top_xp_24h %}
+                  <tr>
+                    <td><a href="#" onclick="openUser('{{ row.twitch_login }}')">{{ row.twitch_login }}</a></td>
+                    <td><span class="badge badge-ok">{{ row.xp }}</span></td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:0">
+        <div class="row" style="justify-content:space-between">
+          <div class="card-title" style="margin:0">AUTO-REFRESH</div>
+          <label class="toggle-switch" id="autoRefreshToggle">
+            <input type="checkbox" id="autoRefreshCb" checked onchange="toggleAutoRefresh()">
+            <div class="toggle-track"></div>
+            <span>30s</span>
+          </label>
+        </div>
+        <div class="muted mono" id="nextRefreshInfo" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- ══════════ PAGE: VIEWERS ══════════ -->
+    <div class="page" id="page-viewers">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:14px">
+          <div class="card-title" style="margin:0">◎ VIEWERS — {{ total_users }} total</div>
+          <div class="search-wrap">
+            <span class="search-icon">⌕</span>
+            <input type="text" id="viewerFilter" placeholder="Filtrer…" oninput="filterTable('viewersTbody', this.value)">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="viewersTable">
+            <thead>
+              <tr>
+                <th onclick="sortTable('viewersTbody',0)">Viewer</th>
+                <th onclick="sortTable('viewersTbody',1)">CM</th>
+                <th onclick="sortTable('viewersTbody',2)">XP Total</th>
+                <th onclick="sortTable('viewersTbody',3)">Stage max</th>
+                <th onclick="sortTable('viewersTbody',4)">Actif</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="viewersTbody">
+              {% for u in users %}
+              <tr>
+                <td><b>{{ u.twitch_login }}</b></td>
+                <td>{{ u.cm_count }}</td>
+                <td><span class="badge badge-info">{{ u.xp_total_sum }}</span></td>
+                <td><span class="badge {% if u.stage_max >= 3 %}badge-ok{% elif u.stage_max >= 1 %}badge-warn{% else %}badge-dim{% endif %}">{{ u.stage_max }}</span></td>
+                <td>{% if u.active_id %}<span class="badge badge-ok">#{{ u.active_id }}</span>{% else %}<span class="badge badge-dim">—</span>{% endif %}</td>
+                <td class="row" style="gap:6px">
+                  <button class="btn btn-cyan btn-sm" onclick="openUser('{{ u.twitch_login }}')">Ouvrir</button>
+                  <button class="btn btn-dim btn-sm" onclick="openCollection('{{ u.twitch_login }}')">Collection</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" style="margin-top:12px">
+          {% set base = '/admin?per=' ~ per ~ (q and ('&q=' ~ q) or '') %}
+          <button class="page-btn" onclick="location.href='{{ base }}&page=1'">⏮</button>
+          <button class="page-btn" onclick="location.href='{{ base }}&page={{ (page-1) if page>1 else 1 }}'">‹</button>
+          <span class="page-info">Page {{ page }} / {{ total_pages }}</span>
+          <button class="page-btn" onclick="location.href='{{ base }}&page={{ (page+1) if page<total_pages else total_pages }}'">›</button>
+          <button class="page-btn" onclick="location.href='{{ base }}&page={{ total_pages }}'">⏭</button>
+        </div>
+      </div>
+
+      <!-- USER DETAIL PANEL (inlined, shown via JS) -->
+      <div id="userPanel" style="display:none">
+        <div class="card accent-m">
+          <div class="row" style="justify-content:space-between;margin-bottom:14px">
+            <div class="card-title" style="margin:0" id="userPanelTitle">USER</div>
+            <button class="btn btn-dim btn-sm" onclick="closeUserPanel()">✕ Fermer</button>
+          </div>
+          <div id="userPanelBody"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ PAGE: CM & POOL ══════════ -->
+    <div class="page" id="page-cms">
+      {% if flash and request.path == '/admin/cms' %}
+        <div class="flash flash-{{ flash_kind }}">{{ flash }}</div>
       {% endif %}
+
+      <div class="card">
+        <div class="card-title">◈ LINEAGES</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Nom</th><th>Statut</th><th>Action</th></tr></thead>
+            <tbody>
+              {% for l in lineages %}
+              <tr>
+                <td><span class="pill">{{ l.key }}</span></td>
+                <td>{{ l.name }}</td>
+                <td>{% if l.is_enabled %}<span class="badge badge-ok">ACTIF</span>{% else %}<span class="badge badge-dim">INACTIF</span>{% endif %}</td>
+                <td>
+                  <form method="post" action="/admin/cms/action" style="display:inline">
+                    <input type="hidden" name="action" value="toggle_lineage">
+                    <input type="hidden" name="key" value="{{ l.key }}">
+                    <button type="submit" class="btn btn-sm {% if l.is_enabled %}btn-magenta{% else %}btn-green{% endif %}">
+                      {{ 'Désactiver' if l.is_enabled else 'Activer' }}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card accent-g">
+        <div class="card-title">CRÉER UN CM</div>
+        <form method="post" action="/admin/cms/action" class="form-row">
+          <input type="hidden" name="action" value="add_cm">
+          <div class="form-group">
+            <div class="form-label">KEY</div>
+            <input type="text" name="cm_key" placeholder="biolab_04" required>
+          </div>
+          <div class="form-group">
+            <div class="form-label">NOM</div>
+            <input type="text" name="cm_name" placeholder="Biolab CM 04" required>
+          </div>
+          <div class="form-group">
+            <div class="form-label">LIGNÉE</div>
+            <select name="lineage_key" required>
+              {% for l in lineages %}
+              <option value="{{ l.key }}">{{ l.name }} ({{ l.key }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn btn-green">+ Créer</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:14px">
+          <div class="card-title" style="margin:0">CM</div>
+          <div class="search-wrap">
+            <span class="search-icon">⌕</span>
+            <input type="text" placeholder="Filtrer…" oninput="filterTable('cmsTbody', this.value)">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Key</th><th>Nom</th><th>Lignée</th><th>Activé</th><th>Pool</th><th>Media URL</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="cmsTbody">
+              {% for cm in cms %}
+              <tr>
+                <td><span class="pill">{{ cm.key }}</span></td>
+                <td>
+                  <form method="post" action="/admin/cms/action" class="row" style="gap:6px">
+                    <input type="hidden" name="action" value="rename_cm">
+                    <input type="hidden" name="key" value="{{ cm.key }}">
+                    <input type="text" name="cm_name" value="{{ cm.name }}" style="min-width:180px">
+                    <button type="submit" class="btn btn-dim btn-sm">✓</button>
+                  </form>
+                </td>
+                <td><span class="pill">{{ cm.lineage_key }}</span></td>
+                <td>{% if cm.is_enabled %}<span class="badge badge-ok">✓</span>{% else %}<span class="badge badge-dim">✗</span>{% endif %}</td>
+                <td>{% if cm.in_hatch_pool %}<span class="badge badge-info">🎲</span>{% else %}<span class="badge badge-dim">—</span>{% endif %}</td>
+                <td>
+                  <form method="post" action="/admin/cms/action" class="row" style="gap:6px">
+                    <input type="hidden" name="action" value="update_media_url">
+                    <input type="hidden" name="key" value="{{ cm.key }}">
+                    <input type="text" name="media_url" value="{{ cm.media_url }}" placeholder="https://…" style="min-width:280px">
+                    <button type="submit" class="btn btn-dim btn-sm">✓</button>
+                  </form>
+                </td>
+                <td class="row" style="gap:4px">
+                  <form method="post" action="/admin/cms/action" style="display:inline">
+                    <input type="hidden" name="action" value="toggle_cm_enabled">
+                    <input type="hidden" name="key" value="{{ cm.key }}">
+                    <button type="submit" class="btn btn-sm {% if cm.is_enabled %}btn-magenta{% else %}btn-green{% endif %}">
+                      {{ '✗' if cm.is_enabled else '✓' }}
+                    </button>
+                  </form>
+                  <form method="post" action="/admin/cms/action" style="display:inline">
+                    <input type="hidden" name="action" value="toggle_cm_pool">
+                    <input type="hidden" name="key" value="{{ cm.key }}">
+                    <button type="submit" class="btn btn-cyan btn-sm">Pool</button>
+                  </form>
+                  <form method="post" action="/admin/cms/action" style="display:inline">
+                    <input type="hidden" name="action" value="delete_cm">
+                    <input type="hidden" name="key" value="{{ cm.key }}">
+                    <button type="submit" class="btn btn-magenta btn-sm" onclick="return confirm('Supprimer {{ cm.key }} ?')">✕</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div class="card">
-    <h2 style="margin:0 0 10px;">🎁 Auto Drop</h2>
-    <div class="muted" style="margin-bottom:12px;">
-      Configure les drops automatiques (stocké en BDD, pas dans le .env).
-    </div>
+    <!-- ══════════ PAGE: FORMS ══════════ -->
+    <div class="page" id="page-forms">
+      {% if flash and request.path == '/admin/forms' %}
+        <div class="flash flash-{{ flash_kind or 'ok' }}">{{ flash }}</div>
+      {% endif %}
+      <div class="muted mono" style="margin-bottom:14px">// Chaque CM doit avoir 3 formes : stage 1 (éclosion), 2 (evo1), 3 (evo2)</div>
 
-    <div class="row" style="align-items:flex-end;">
-      <label class="row" style="gap:8px;">
-        <input type="checkbox" id="ad_enabled">
-        <span>Activé</span>
-      </label>
-
-      <div>
-        <div class="muted">Délai min (s)</div>
-        <input id="ad_min" type="number" min="60" value="900" style="width:120px">
+      {% for it in items %}
+      <div class="card">
+        <div class="card-title">{{ it.cm_name }} <span class="pill" style="margin-left:6px">{{ it.key }}</span> <span class="pill">{{ it.lineage_key }}</span></div>
+        <div class="row" style="gap:16px;align-items:flex-start">
+          {% for st in it.stages %}
+          <div style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+            <div class="form-label" style="margin-bottom:10px">STAGE {{ st.stage }}</div>
+            <form method="post" action="/admin/forms/save" class="col">
+              <input type="hidden" name="cm_key" value="{{ it.key }}">
+              <input type="hidden" name="stage" value="{{ st.stage }}">
+              <div class="form-group">
+                <div class="form-label">NOM</div>
+                <input type="text" name="name" placeholder="Nom" value="{{ st.name }}">
+              </div>
+              <div class="form-group">
+                <div class="form-label">IMAGE URL</div>
+                <input type="text" name="image_url" placeholder="https://…" value="{{ st.image_url }}">
+              </div>
+              <div class="form-group">
+                <div class="form-label">SOUND URL</div>
+                <input type="text" name="sound_url" placeholder="https://… (optionnel)" value="{{ st.sound_url }}">
+              </div>
+              <div class="row" style="gap:8px;margin-top:4px">
+                <button type="submit" class="btn btn-cyan btn-sm">✓ Save</button>
+                {% if st.image_url %}
+                <a href="{{ st.image_url }}" target="_blank" class="btn btn-dim btn-sm">👁 Preview</a>
+                {% endif %}
+              </div>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
       </div>
-      <div>
-        <div class="muted">Délai max (s)</div>
-        <input id="ad_max" type="number" min="60" value="1500" style="width:120px">
-      </div>
-
-      <div>
-        <div class="muted">Durée min (s)</div>
-        <input id="ad_dmin" type="number" min="5" value="10" style="width:120px">
-      </div>
-      <div>
-        <div class="muted">Durée max (s)</div>
-        <input id="ad_dmax" type="number" min="5" value="20" style="width:120px">
-      </div>
-
-      <div>
-        <div class="muted">Type</div>
-        <select id="ad_kind" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
-          <option value="any">any</option>
-          <option value="xp">xp</option>
-          <option value="candy">candy</option>
-          <option value="egg">egg</option>
-        </select>
-      </div>
-
-      <div>
-        <div class="muted">Mode</div>
-        <select id="ad_mode" style="padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
-          <option value="random">random</option>
-          <option value="first">first</option>
-        </select>
-      </div>
-
-      <div>
-        <div class="muted">Qty</div>
-        <input id="ad_qty" type="number" min="1" max="50" value="1" style="width:90px">
-      </div>
-    </div>
-
-    <div style="margin-top:12px;">
-      <div class="muted">Fallback image URL (si item.icon_url vide)</div>
-      <input id="ad_fallback" type="text" placeholder="https://..." style="width:100%;max-width:780px">
-    </div>
-
-    <div class="row" style="margin-top:14px;">
-      <button onclick="saveAutoDrop()">💾 Enregistrer</button>
-      <button onclick="testAutoDrop()">🧪 Test drop maintenant</button>
-      <span id="ad_status" class="muted"></span>
-    </div>
-  </div>
-  <h2>👥 Viewers</h2>
-
-  <div class="muted">
-    {{ total_users }} viewer(s) — page {{ page }} / {{ total_pages }}
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Viewer</th>
-        <th>CM</th>
-        <th>XP Total</th>
-        <th>Stage max</th>
-        <th>Actif</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
-      <tr>
-        <td><a href="/admin/user/{{ u.twitch_login }}">{{ u.twitch_login }}</a></td>
-        <td>{{ u.cm_count }}</td>
-        <td>{{ u.xp_total_sum }}</td>
-        <td>{{ u.stage_max }}</td>
-        <td>{% if u.active_id %}#{{ u.active_id }}{% else %}—{% endif %}</td>
-        <td>
-          <a href="/admin/user/{{ u.twitch_login }}">Ouvrir</a>
-          ·
-          <a href="/admin/user/{{ u.twitch_login }}/collection">Collection</a>
-        </td>
-      </tr>
       {% endfor %}
-    </tbody>
-  </table>
-
-  <div class="row" style="margin-top:12px;">
-    {% set base = '/admin?per=' ~ per ~ (q and ('&q=' ~ q) or '') %}
-    <a href="{{ base }}&page=1">⏮️ Début</a>
-    <a href="{{ base }}&page={{ (page-1) if page>1 else 1 }}">⬅️ Précédent</a>
-    <span class="muted">Page {{ page }} / {{ total_pages }}</span>
-    <a href="{{ base }}&page={{ (page+1) if page<total_pages else total_pages }}">Suivant ➡️</a>
-      <a href="{{ base }}&page={{ total_pages }}">Fin ⏭️</a>
     </div>
 
-    <script>
-      (function () {
-        const KEY = "capsmons_theme";
-        const toggle = document.getElementById("themeToggle");
+    <!-- ══════════ PAGE: RP ══════════ -->
+    <div class="page" id="page-rp">
+      {% if flash and request.path == '/admin/rp' %}
+        <div class="flash flash-ok">{{ flash }}</div>
+      {% endif %}
 
-        function apply(theme) {
-          document.documentElement.setAttribute("data-theme", theme);
-          toggle.checked = (theme !== "light");
-        }
+      <div class="card accent-g">
+        <div class="card-title">CRÉER UNE CLÉ RP</div>
+        <form method="post" action="/admin/rp/save" class="form-row">
+          <div class="form-group">
+            <div class="form-label">CLÉ</div>
+            <input type="text" name="key" placeholder="creature.stage0" required style="min-width:300px">
+          </div>
+          <button type="submit" class="btn btn-green">+ Créer</button>
+        </form>
+        <div class="muted" style="margin-top:8px">Clés suggérées : <code>creature.stage0</code> <code>evolve.announce</code> <code>cm.assigned</code> <code>drop.win.coop</code></div>
+      </div>
 
-        const saved = localStorage.getItem(KEY);
-        apply(saved || "dark");
+      <div class="search-wrap" style="margin-bottom:14px">
+        <span class="search-icon">⌕</span>
+        <input type="text" placeholder="Filtrer les clés…" oninput="filterCards('rp-cards', this.value)">
+      </div>
 
-        toggle.addEventListener("change", () => {
-          const theme = toggle.checked ? "dark" : "light";
-          localStorage.setItem(KEY, theme);
-          apply(theme);
-        });
-      })();
+      <div id="rp-cards">
+        {% for item in items %}
+        <div class="card rp-card" data-key="{{ item.key }}">
+          <div class="row" style="justify-content:space-between;margin-bottom:10px">
+            <div>
+              <code>{{ item.key }}</code>
+              <span class="muted" style="margin-left:8px">{{ item.count }} phrase{{ 's' if item.count > 1 }}</span>
+            </div>
+            <form method="post" action="/admin/rp/delete" style="display:inline">
+              <input type="hidden" name="key" value="{{ item.key }}">
+              <button type="submit" class="btn btn-magenta btn-sm" onclick="return confirm('Supprimer {{ item.key }} ?')">✕</button>
+            </form>
+          </div>
+          <form method="post" action="/admin/rp/save">
+            <input type="hidden" name="key" value="{{ item.key }}">
+            <textarea name="lines">{{ item.text }}</textarea>
+            <div class="row" style="margin-top:10px">
+              <button type="submit" class="btn btn-cyan">✓ Enregistrer</button>
+              <span class="muted">1 ligne = 1 phrase. Lignes vides ignorées.</span>
+            </div>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
 
-      async function setLive(v){
-        const r = await fetch('/admin/set_live', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({value: v})
-        });
-        const j = await r.json();
-        if(!r.ok) alert(JSON.stringify(j));
-        else location.reload();
+    <!-- ══════════ PAGE: DROPS ══════════ -->
+    <div class="page" id="page-drops">
+
+      <!-- COOP -->
+      <div class="card accent-g">
+        <div class="card-title">🤝 DROP COOP</div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+          <div class="muted mono" style="margin-bottom:8px">// XP progressif selon participants</div>
+          <table class="xp-tier-table">
+            <thead><tr><th>Participants</th><th>XP par personne</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><span class="badge badge-dim">20 – 30 XP</span></td></tr>
+              <tr><td>2 – 3</td><td><span class="badge badge-info">30 – 50 XP</span></td></tr>
+              <tr><td>4 – 5</td><td><span class="badge badge-warn">50 – 75 XP</span></td></tr>
+              <tr><td>6+</td><td><span class="badge badge-ok">100 – 250 XP 🔥</span></td></tr>
+            </tbody>
+          </table>
+          <div class="muted" style="margin-top:8px">Tirage indépendant par participant · Pas d'item · Tout le monde gagne à l'expiration</div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">TITRE (OVERLAY)</div>
+            <input type="text" id="coop_title" placeholder="Capsule Mystère" style="min-width:260px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">IMAGE URL</div>
+            <input type="text" id="coop_media" placeholder="https://…" style="min-width:260px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE (s)</div>
+            <input type="number" id="coop_duration" min="5" max="120" value="20" style="width:100px">
+          </div>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <button class="btn btn-green" onclick="spawnCoop()">▷ Lancer COOP</button>
+          <div class="status-line" id="coop_status"></div>
+        </div>
+      </div>
+
+      <!-- FIRST / RANDOM -->
+      <div class="card accent-c">
+        <div class="card-title">⚡ DROP FIRST / 🎲 RANDOM</div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">MODE</div>
+            <select id="d_mode">
+              <option value="first">⚡ first (premier)</option>
+              <option value="random">🎲 random (tirage)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE (s)</div>
+            <input type="number" id="d_duration" min="5" max="120" value="15" style="width:100px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">XP BONUS</div>
+            <input type="number" id="d_xp" min="0" max="9999" value="50" style="width:100px">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">TITRE</div>
+            <input type="text" id="d_title" placeholder="Titre overlay" style="min-width:260px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">IMAGE URL</div>
+            <input type="text" id="d_media" placeholder="https://…" style="min-width:260px">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">TICKET KEY</div>
+            <input type="text" id="d_ticket" placeholder="grande_capsule" style="min-width:200px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">QTY</div>
+            <input type="number" id="d_qty" min="1" max="50" value="1" style="width:80px">
+          </div>
+        </div>
+        <div class="row" style="margin-top:4px">
+          <button class="btn btn-cyan" onclick="spawnDrop()">▷ Lancer</button>
+          <div class="status-line" id="d_status"></div>
+        </div>
+      </div>
+
+      <!-- TEST AUTODROP -->
+      <div class="card accent-a">
+        <div class="card-title">🧪 TEST AUTODROP</div>
+        <div class="muted" style="margin-bottom:12px">Déclenche un drop avec le tirage pondéré de l'AutoDrop.</div>
+        <div class="row">
+          <button class="btn btn-amber" onclick="testAutoDrop('ad_test_status')">🧪 Test maintenant</button>
+          <div class="status-line" id="ad_test_status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ PAGE: AUTODROP ══════════ -->
+    <div class="page" id="page-autodrop">
+      <div class="card">
+        <div class="card-title">⟳ CONFIGURATION AUTODROP</div>
+        <div class="form-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="ad_enabled">
+            <div class="toggle-track"></div>
+            <span>Activé</span>
+          </label>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">DÉLAI MIN (s)</div>
+            <input type="number" id="ad_min" min="60" value="900" style="width:140px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DÉLAI MAX (s)</div>
+            <input type="number" id="ad_max" min="60" value="1500" style="width:140px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE MIN (s)</div>
+            <input type="number" id="ad_dmin" min="5" value="10" style="width:140px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE MAX (s)</div>
+            <input type="number" id="ad_dmax" min="5" value="20" style="width:140px">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <div class="form-label">TYPE</div>
+            <select id="ad_kind">
+              <option value="any">any</option>
+              <option value="xp">xp</option>
+              <option value="candy">candy</option>
+              <option value="egg">egg</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">MODE</div>
+            <select id="ad_mode">
+              <option value="random">random</option>
+              <option value="first">first</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">QTY</div>
+            <input type="number" id="ad_qty" min="1" max="50" value="1" style="width:90px">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <div class="form-label">FALLBACK IMAGE URL</div>
+          <input type="text" id="ad_fallback" placeholder="https://…" style="width:100%;max-width:600px">
+        </div>
+        <div class="row">
+          <button class="btn btn-cyan" onclick="saveAutoDrop()">✓ Enregistrer</button>
+          <button class="btn btn-amber" onclick="testAutoDrop('ad_status')">🧪 Test drop</button>
+          <div class="status-line" id="ad_status"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ PAGE: CHANNEL POINTS ══════════ -->
+    <div class="page" id="page-points">
+      <div class="card">
+        <div class="card-title">◈ CHANNEL POINTS</div>
+        <div class="muted mono" style="margin-bottom:16px">// Configuration des récompenses Twitch</div>
+
+        <div id="points_form_content">
+          <!-- Chargé dynamiquement depuis /admin/points -->
+          <div class="muted">Chargement…</div>
+        </div>
+      </div>
+
+      <div class="card accent-g">
+        <div class="card-title">CONNEXION TWITCH OAuth</div>
+        <div class="row">
+          <a href="/admin/twitch/connect" class="btn btn-cyan">🔗 Se connecter avec Twitch</a>
+          <div class="muted">Broadcaster ID : <code id="broadcasterIdDisplay">{{ broadcaster_user_id or '—' }}</code></div>
+        </div>
+      </div>
+
+      <div class="card accent-m">
+        <div class="card-title">EVENTSUB</div>
+        <div class="row">
+          <button class="btn btn-magenta" onclick="createEventSub()">(Re)créer la souscription EventSub</button>
+          <div class="status-line" id="eventsub_status"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /#content -->
+</div><!-- /#main -->
+
+
+<!-- ═══════════════════════════════════════════════════════════
+     SCRIPTS
+═══════════════════════════════════════════════════════════ -->
+<script>
+/* ─── NAVIGATION ─────────────────────────────────────────── */
+const pageTitles = {
+  dashboard: '⬡ DASHBOARD',
+  stats:     '◈ STATS',
+  viewers:   '◎ VIEWERS',
+  cms:       '◈ CM & POOL',
+  forms:     '◇ FORMS',
+  rp:        '◉ PHRASES RP',
+  drops:     '▽ DROPS',
+  autodrop:  '⟳ AUTODROP',
+  points:    '◈ CHANNEL POINTS',
+};
+
+function nav(el) {
+  const page = el.dataset.page;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.getElementById('pageTitle').textContent = pageTitles[page] || page.toUpperCase();
+  history.replaceState(null, '', '#' + page);
+
+  if (page === 'autodrop') loadAutoDrop();
+  if (page === 'stats')    startAutoRefresh();
+  if (page === 'dashboard') loadDashboardKpis();
+}
+
+// restore from hash
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = location.hash.replace('#', '') || 'dashboard';
+  const target = document.querySelector(`[data-page="${hash}"]`);
+  if (target) nav(target);
+  loadDashboardKpis();
+  initTheme();
+});
+
+/* ─── THEME ──────────────────────────────────────────────── */
+function initTheme() {
+  const saved = localStorage.getItem('capsmons_theme') || 'dark';
+  applyTheme(saved);
+  document.getElementById('themeToggle').addEventListener('change', e => {
+    const t = e.target.checked ? 'light' : 'dark';
+    localStorage.setItem('capsmons_theme', t);
+    applyTheme(t);
+  });
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  const cb = document.getElementById('themeToggle');
+  if (cb) cb.checked = (t === 'light');
+  const lbl = document.getElementById('themeLabel');
+  if (lbl) lbl.textContent = t === 'light' ? 'Dark mode' : 'Light mode';
+}
+
+/* ─── LIVE ───────────────────────────────────────────────── */
+async function setLive(v) {
+  const r = await fetch('/admin/set_live', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: v})
+  });
+  if (r.ok) location.reload();
+  else alert(await r.text());
+}
+
+/* ─── SEARCH VIEWER ──────────────────────────────────────── */
+let searchTimer;
+function searchViewer(q) {
+  clearTimeout(searchTimer);
+  const box = document.getElementById('searchResults');
+  const content = document.getElementById('searchResultContent');
+  if (!q || q.length < 2) { box.style.display = 'none'; return; }
+  searchTimer = setTimeout(async () => {
+    const r = await fetch(`/admin?q=${encodeURIComponent(q)}`);
+    // Simple: just redirect to admin with search
+    box.style.display = 'block';
+    content.innerHTML = `<a href="/admin?q=${encodeURIComponent(q)}" class="btn btn-cyan btn-sm">Rechercher "${q}"</a>`;
+  }, 300);
+}
+
+function openUser(login) {
+  nav(document.querySelector('[data-page="viewers"]'));
+  window.open(`/admin/user/${login}`, '_blank');
+}
+function openCollection(login) {
+  window.open(`/admin/user/${login}/collection`, '_blank');
+}
+function closeUserPanel() {
+  document.getElementById('userPanel').style.display = 'none';
+}
+
+/* ─── TABLE: SORT & FILTER ───────────────────────────────── */
+let sortState = {};
+function sortTable(tbodyId, col) {
+  const tbody = document.getElementById(tbodyId);
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const key = tbodyId + col;
+  const asc = sortState[key] !== true;
+  sortState[key] = asc;
+
+  // update header classes
+  const thead = tbody.closest('table').querySelector('thead');
+  thead.querySelectorAll('th').forEach((th, i) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (i === col) th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+  });
+
+  rows.sort((a, b) => {
+    const av = a.cells[col]?.textContent.trim() || '';
+    const bv = b.cells[col]?.textContent.trim() || '';
+    const an = parseFloat(av.replace(/[^\d.-]/g, ''));
+    const bn = parseFloat(bv.replace(/[^\d.-]/g, ''));
+    if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+    return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function filterTable(tbodyId, q) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+function filterCards(containerId, q) {
+  document.querySelectorAll(`#${containerId} .rp-card`).forEach(card => {
+    card.style.display = card.dataset.key.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+/* ─── DROPS ──────────────────────────────────────────────── */
+function setStatus(id, msg, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status-line ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
+}
+
+async function spawnCoop() {
+  const title = document.getElementById('coop_title').value.trim();
+  const media_url = document.getElementById('coop_media').value.trim();
+  const duration = parseInt(document.getElementById('coop_duration').value) || 20;
+  if (!title || !media_url) { setStatus('coop_status', '⛔ Titre et image requis', false); return; }
+  setStatus('coop_status', '…');
+  const r = await fetch('/admin/drop/spawn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ mode: 'coop', title, media_url, duration_seconds: duration, ticket_key: 'none', ticket_qty: 1, xp_bonus: 0 })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('coop_status', r.ok ? `✓ Drop COOP lancé (id ${j.drop_id}) — !grab` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+async function spawnDrop() {
+  const title = document.getElementById('d_title').value.trim();
+  const media_url = document.getElementById('d_media').value.trim();
+  const ticket_key = document.getElementById('d_ticket').value.trim();
+  if (!title || !media_url || !ticket_key) { setStatus('d_status', '⛔ Titre, image et ticket_key requis', false); return; }
+  setStatus('d_status', '…');
+  const r = await fetch('/admin/drop/spawn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      mode: document.getElementById('d_mode').value,
+      title, media_url,
+      duration_seconds: parseInt(document.getElementById('d_duration').value) || 15,
+      xp_bonus: parseInt(document.getElementById('d_xp').value) || 50,
+      ticket_key,
+      ticket_qty: parseInt(document.getElementById('d_qty').value) || 1,
+    })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('d_status', r.ok ? `✓ Drop lancé (id ${j.drop_id})` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+/* ─── AUTODROP ───────────────────────────────────────────── */
+async function loadAutoDrop() {
+  const r = await fetch('/admin/autodrop');
+  if (!r.ok) return;
+  const j = await r.json();
+  const s = j.settings || {};
+  const el = id => document.getElementById(id);
+  el('ad_enabled').checked = String(s.auto_drop_enabled || 'false') === 'true';
+  el('ad_min').value   = s.auto_drop_min_seconds || 900;
+  el('ad_max').value   = s.auto_drop_max_seconds || 1500;
+  el('ad_dmin').value  = s.auto_drop_duration_min_seconds || 10;
+  el('ad_dmax').value  = s.auto_drop_duration_max_seconds || 20;
+  el('ad_kind').value  = s.auto_drop_pick_kind || 'any';
+  el('ad_mode').value  = s.auto_drop_mode || 'random';
+  el('ad_qty').value   = s.auto_drop_ticket_qty || 1;
+  el('ad_fallback').value = s.auto_drop_fallback_media_url || '';
+}
+
+async function saveAutoDrop() {
+  const el = id => document.getElementById(id);
+  setStatus('ad_status', '…');
+  const r = await fetch('/admin/autodrop/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      enabled: el('ad_enabled').checked,
+      min_seconds: el('ad_min').value,
+      max_seconds: el('ad_max').value,
+      duration_min: el('ad_dmin').value,
+      duration_max: el('ad_dmax').value,
+      pick_kind: el('ad_kind').value,
+      mode: el('ad_mode').value,
+      ticket_qty: el('ad_qty').value,
+      fallback_media_url: el('ad_fallback').value
+    })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('ad_status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+async function testAutoDrop(statusId) {
+  setStatus(statusId, '…');
+  const r = await fetch('/admin/autodrop/test', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { setStatus(statusId, `⛔ ${JSON.stringify(j)}`, false); return; }
+  const p = j.picked || {};
+  setStatus(statusId, `✓ Drop lancé : ${p.item_name || p.item_key || '?'}`, true);
+}
+
+/* ─── EVENTSUB ───────────────────────────────────────────── */
+async function createEventSub() {
+  setStatus('eventsub_status', '…');
+  const r = await fetch('/admin/eventsub/subscribe_channel_points', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  setStatus('eventsub_status', r.ok ? `✓ ${j.message || 'Souscription créée'}` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+/* ─── DASHBOARD KPIs ─────────────────────────────────────── */
+async function loadDashboardKpis() {
+  try {
+    const r = await fetch('/admin/stats/json');
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = id => document.getElementById(id);
+    if (el('kpi-xp-today'))   el('kpi-xp-today').textContent   = d.xp_today   ?? '—';
+    if (el('kpi-active-24h')) el('kpi-active-24h').textContent = d.active_users_24h ?? '—';
+    if (el('kpi-active-15m')) el('kpi-active-15m').textContent = d.active_users_15m ?? '—';
+    if (el('kpi-events-24h')) el('kpi-events-24h').textContent = d.events_24h  ?? '—';
+    // XP chart
+    if (d.xp_by_day) {
+      const chart = document.getElementById('xpChart');
+      if (chart) {
+        chart.innerHTML = d.xp_by_day.map(row => `
+          <div class="bar-row">
+            <div class="bar-label">${row.day}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${row.pct}%"></div></div>
+            <div class="bar-val">${row.xp}</div>
+          </div>
+        `).join('');
       }
+    }
+  } catch(e) {}
+}
 
-
-      async function loadAutoDrop(){
-        const el = (id)=>document.getElementById(id);
-        const r = await fetch('/admin/autodrop');
-        const j = await r.json();
-        if(!r.ok){ el('ad_status').textContent = "Erreur chargement AutoDrop"; return; }
-
-        const s = j.settings || {};
-        el('ad_enabled').checked = (String(s.auto_drop_enabled||"false") === "true");
-        el('ad_min').value = s.auto_drop_min_seconds || 900;
-        el('ad_max').value = s.auto_drop_max_seconds || 1500;
-        el('ad_dmin').value = s.auto_drop_duration_min_seconds || 10;
-        el('ad_dmax').value = s.auto_drop_duration_max_seconds || 20;
-        el('ad_kind').value = s.auto_drop_pick_kind || "any";
-        el('ad_mode').value = s.auto_drop_mode || "random";
-        el('ad_qty').value = s.auto_drop_ticket_qty || 1;
-        el('ad_fallback').value = s.auto_drop_fallback_media_url || "";
-        el('ad_status').textContent = "";
-      }
-
-      async function saveAutoDrop(){
-        const el = (id)=>document.getElementById(id);
-
-        const payload = {
-          enabled: el('ad_enabled').checked,
-          min_seconds: el('ad_min').value,
-          max_seconds: el('ad_max').value,
-          duration_min: el('ad_dmin').value,
-          duration_max: el('ad_dmax').value,
-          pick_kind: el('ad_kind').value,
-          mode: el('ad_mode').value,
-          ticket_qty: el('ad_qty').value,
-          fallback_media_url: el('ad_fallback').value
-        };
-
-        const r = await fetch('/admin/autodrop/save', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(payload)
-        });
-        const j = await r.json();
-        el('ad_status').textContent = r.ok ? "✅ Enregistré" : ("⛔ " + JSON.stringify(j));
-      }
-
-      async function testAutoDrop(){
-        const el = (id)=>document.getElementById(id);
-        el('ad_status').textContent = "Test...";
-        const r = await fetch('/admin/autodrop/test', {method:'POST'});
-        const j = await r.json();
-        if(!r.ok){
-          el('ad_status').textContent = "⛔ " + JSON.stringify(j);
-          return;
-        }
-        const p = j.picked || {};
-        el('ad_status').textContent = `✅ Drop lancé: ${p.item_name || p.item_key || "?"}`;
-      }
-
-      loadAutoDrop();
-
-
-    </script>
-  </body>
-  </html>
+/* ─── AUTO-REFRESH (stats) ───────────────────────────────── */
+let refreshTimer = null;
+function startAutoRefresh() {
+  const cb = document.getElementById('autoRefreshCb');
+  if (!cb || !cb.checked) return;
+  clearInterval(refreshTimer);
+  const deadline = new Date(Date.now() + 30000);
+  const info = document.getElementById('nextRefreshInfo');
+  if (info) info.textContent = `Prochain refresh à ${deadline.toLocaleTimeString()}`;
+  refreshTimer = setInterval(() => {
+    if (document.getElementById('page-stats')?.classList.contains('active'))
+      location.reload();
+  }, 30000);
+}
+function toggleAutoRefresh() {
+  const cb = document.getElementById('autoRefreshCb');
+  if (cb.checked) startAutoRefresh();
+  else { clearInterval(refreshTimer); const info = document.getElementById('nextRefreshInfo'); if(info) info.textContent = 'Auto-refresh désactivé.'; }
+}
+</script>
+</body>
+</html>
