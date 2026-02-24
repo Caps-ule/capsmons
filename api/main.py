@@ -3264,341 +3264,1137 @@ def drop_poll_result(x_api_key: str | None = Header(default=None)):
         'ticket_key': ticket_key,
         'ticket_qty': int(ticket_qty),
     }
+# =============================================================================
+# OVERLAYS — Drop & Show
+# Remplace dans main.py :
+#   @app.get("/overlay/drop")  def overlay_drop_page()
+#   @app.get("/overlay/show")  def overlay_show_page()
+# =============================================================================
+
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
-    return HTMLResponse("""
-<!doctype html>
-<html><head><meta charset="utf-8"/>
+    return HTMLResponse("""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
-  .wrap{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:60px}
-  .card{display:none;gap:14px;align-items:center;background:rgba(10,15,20,.80);border:1px solid rgba(255,255,255,.12);
-        border-radius:18px;padding:16px 18px;min-width:820px}
-  .img{width:96px;height:96px;border-radius:16px;object-fit:contain;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)}
-  .title{font-size:22px;font-weight:900;color:#e6edf3}
-  .sub{font-size:13px;color:#9aa4b2;margin-top:2px}
-  .pill{display:inline-block;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:#9aa4b2;font-size:12px}
-  .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden;border:1px solid rgba(255,255,255,.12);margin-top:10px}
-  .fill{height:100%;width:0%;background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45))}
-</style></head>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: transparent;
+    overflow: hidden;
+    width: 100vw; height: 100vh;
+    font-family: 'Rajdhani', sans-serif;
+  }
+
+  /* ── PANEL CONTENEUR ── */
+  #panel {
+    position: fixed;
+    right: 0; top: 50%;
+    transform: translateY(-50%) translateX(380px);
+    width: 340px;
+    transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+    z-index: 10;
+    will-change: transform;
+  }
+  #panel.visible {
+    transform: translateY(-50%) translateX(0px);
+  }
+
+  /* ── CARD ── */
+  .card {
+    position: relative;
+    background: linear-gradient(145deg, #050d1a 0%, #08152a 60%, #060e1c 100%);
+    border-radius: 16px 0 0 16px;
+    overflow: hidden;
+    padding: 18px 16px 14px 18px;
+    border-left: 1px solid rgba(0,200,255,0.25);
+    border-top: 1px solid rgba(0,200,255,0.15);
+    border-bottom: 1px solid rgba(0,200,255,0.1);
+  }
+
+  /* Trait néon gauche */
+  .card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 10%; bottom: 10%;
+    width: 2px;
+    background: linear-gradient(180deg, transparent, #00e5ff, #ff2d78, transparent);
+    border-radius: 999px;
+    animation: borderPulse 2s ease-in-out infinite;
+  }
+  @keyframes borderPulse {
+    0%,100% { opacity: 0.6; }
+    50%      { opacity: 1; box-shadow: 0 0 12px #00e5ff; }
+  }
+
+  /* Grille scanline */
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0,229,255,0.015) 3px,
+      rgba(0,229,255,0.015) 4px
+    );
+    pointer-events: none;
+  }
+
+  /* Coin décoratif top-right */
+  .corner {
+    position: absolute;
+    top: 0; right: 0;
+    width: 40px; height: 40px;
+    border-bottom: 1px solid rgba(0,229,255,0.2);
+    border-left: 1px solid rgba(0,229,255,0.2);
+    border-radius: 0 0 0 14px;
+  }
+
+  /* ── MODE BADGE ── */
+  .mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid;
+    margin-bottom: 12px;
+  }
+  .mode-badge.first   { color: #ffd166; border-color: rgba(255,209,102,.4); background: rgba(255,209,102,.08); }
+  .mode-badge.random  { color: #7aa2ff; border-color: rgba(122,162,255,.4); background: rgba(122,162,255,.08); }
+  .mode-badge.coop    { color: #00ff9d; border-color: rgba(0,255,157,.4);   background: rgba(0,255,157,.08);  }
+  .mode-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    animation: modeDot 1.2s ease-in-out infinite;
+  }
+  .first  .mode-dot { background: #ffd166; box-shadow: 0 0 6px #ffd166; }
+  .random .mode-dot { background: #7aa2ff; box-shadow: 0 0 6px #7aa2ff; }
+  .coop   .mode-dot { background: #00ff9d; box-shadow: 0 0 6px #00ff9d; }
+  @keyframes modeDot { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── BODY ROW ── */
+  .body-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  /* ── IMAGE ── */
+  .img-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  #img {
+    width: 80px; height: 80px;
+    border-radius: 12px;
+    object-fit: contain;
+    display: block;
+    background: rgba(0,229,255,.04);
+    border: 1px solid rgba(0,229,255,.2);
+  }
+  .img-glow {
+    position: absolute;
+    inset: -4px;
+    border-radius: 16px;
+    background: radial-gradient(circle, rgba(0,229,255,.25) 0%, transparent 70%);
+    animation: imgGlow 1.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes imgGlow {
+    0%,100% { opacity: 0.5; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.05); }
+  }
+
+  /* ── TEXTS ── */
+  .texts { flex: 1; min-width: 0; }
+  .drop-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 14px;
+    font-weight: 900;
+    color: #e8f4ff;
+    line-height: 1.2;
+    letter-spacing: .04em;
+    text-shadow: 0 0 20px rgba(0,229,255,.4);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .drop-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #5a7a9a;
+    line-height: 1.4;
+  }
+  .drop-sub span { color: #00e5ff; }
+
+  /* ── TIMER ── */
+  .timer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .timer-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #3a5570;
+    letter-spacing: .06em;
+  }
+  #timer-val {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #00e5ff;
+    text-shadow: 0 0 10px rgba(0,229,255,.6);
+    transition: color .3s;
+  }
+  #timer-val.urgent { color: #ff2d78; text-shadow: 0 0 10px rgba(255,45,120,.6); animation: urgentFlash .5s ease-in-out infinite; }
+  @keyframes urgentFlash { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  /* ── PROGRESS BAR ── */
+  .progress-track {
+    height: 6px;
+    background: rgba(255,255,255,.06);
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.06);
+    margin-bottom: 10px;
+  }
+  #progress-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #00e5ff, #7aa2ff);
+    transform-origin: left;
+    transition: width 0.5s linear;
+    box-shadow: 0 0 8px rgba(0,229,255,.5);
+  }
+  #progress-fill.urgent {
+    background: linear-gradient(90deg, #ff2d78, #ff9d2d);
+    box-shadow: 0 0 8px rgba(255,45,120,.6);
+  }
+
+  /* ── COOP HITS ── */
+  .hits-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .hits-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #3a5570;
+    letter-spacing: .06em;
+    flex-shrink: 0;
+  }
+  .hits-dots {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .hit-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,255,157,.3);
+    background: rgba(0,255,157,.08);
+    transition: all .2s;
+  }
+  .hit-dot.filled {
+    background: #00ff9d;
+    border-color: #00ff9d;
+    box-shadow: 0 0 6px rgba(0,255,157,.8);
+  }
+  #hits-count {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    color: #00ff9d;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  /* ── COMMANDE ── */
+  .cmd-hint {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #2a4560;
+    letter-spacing: .08em;
+    text-align: center;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.04);
+  }
+  .cmd-hint code {
+    color: #00e5ff;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    text-shadow: 0 0 8px rgba(0,229,255,.5);
+  }
+
+  /* ── PARTICULES ── */
+  #particles {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .particle {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: particleFly linear forwards;
+  }
+  @keyframes particleFly {
+    0%   { opacity: 1; transform: translate(0,0) scale(1); }
+    100% { opacity: 0; transform: var(--tx, translate(0,-80px)) scale(0.2); }
+  }
+
+  /* ── ENTRÉE / SORTIE ── */
+  @keyframes slideIn {
+    from { transform: translateY(-50%) translateX(380px); }
+    to   { transform: translateY(-50%) translateX(0); }
+  }
+  @keyframes slideOut {
+    from { transform: translateY(-50%) translateX(0); }
+    to   { transform: translateY(-50%) translateX(400px); }
+  }
+</style>
+</head>
 <body>
-<div class="wrap">
-  <div id="card" class="card">
-    <img id="img" class="img" src="" alt="">
-    <div style="flex:1">
-      <div class="title" id="title"></div>
-      <div class="sub" id="line"></div>
-      <div class="bar"><div id="fill" class="fill"></div></div>
+
+<canvas id="particles"></canvas>
+
+<div id="panel">
+  <div class="card">
+    <div class="corner"></div>
+
+    <div id="mode-badge" class="mode-badge coop">
+      <div class="mode-dot"></div>
+      <span id="mode-label">COOP</span>
     </div>
-    <div style="text-align:right">
-      <div class="pill" id="mode"></div>
-      <div class="sub" id="timer" style="margin-top:8px"></div>
+
+    <div class="body-row">
+      <div class="img-wrap">
+        <img id="img" src="" alt="">
+        <div class="img-glow"></div>
+      </div>
+      <div class="texts">
+        <div class="drop-title" id="title">Capsule Mystère</div>
+        <div class="drop-sub" id="sub">Tape <span>!grab</span> pour participer</div>
+      </div>
+    </div>
+
+    <div class="timer-row">
+      <div class="timer-label">// TEMPS RESTANT</div>
+      <div id="timer-val">--s</div>
+    </div>
+    <div class="progress-track">
+      <div id="progress-fill"></div>
+    </div>
+
+    <div id="hits-section" class="hits-row" style="display:none">
+      <div class="hits-label">PARTICIPANTS</div>
+      <div id="hits-dots" class="hits-dots"></div>
+      <div id="hits-count">0</div>
+    </div>
+
+    <div class="cmd-hint" id="cmd-hint">
+      Tape <code>!grab</code> dans le chat
     </div>
   </div>
 </div>
+
 <audio id="dropSfx" preload="auto" src="/static/drop.mp3"></audio>
 
 <script>
-let lastDropId = null;
-const dropSfx = document.getElementById('dropSfx');
+const panel      = document.getElementById('panel');
+const titleEl    = document.getElementById('title');
+const subEl      = document.getElementById('sub');
+const imgEl      = document.getElementById('img');
+const timerEl    = document.getElementById('timer-val');
+const fillEl     = document.getElementById('progress-fill');
+const modeBadge  = document.getElementById('mode-badge');
+const modeLabel  = document.getElementById('mode-label');
+const hitsSection= document.getElementById('hits-section');
+const hitsDots   = document.getElementById('hits-dots');
+const hitsCount  = document.getElementById('hits-count');
+const cmdHint    = document.getElementById('cmd-hint');
+const dropSfx    = document.getElementById('dropSfx');
+const canvas     = document.getElementById('particles');
+const ctx        = canvas.getContext('2d');
 
-function playDropSfx(){
-  try{
+let showing = false;
+let lastDropId = null;
+let totalDuration = null;
+let spawnedInitial = false;
+
+// ── Canvas particules ──────────────────────────────────────
+function resizeCanvas() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+const particles = [];
+function spawnParticles(x, y, count, colors) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 3;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2,
+      radius: 2 + Math.random() * 3,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      life: 1,
+      decay: 0.018 + Math.random() * 0.02,
+      gravity: 0.08,
+    });
+  }
+}
+
+function drawParticles() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = p.color;
+    ctx.fill();
+    ctx.restore();
+  }
+  requestAnimationFrame(drawParticles);
+}
+drawParticles();
+
+// ── SFX ───────────────────────────────────────────────────
+function playDropSfx() {
+  try {
     dropSfx.currentTime = 0;
     const p = dropSfx.play();
-    if (p && p.catch) p.catch(()=>{});
-  }catch(e){}
+    if (p && p.catch) p.catch(() => {});
+  } catch(e) {}
 }
 
-let showing=false;
-function setShow(on){
-  const c=document.getElementById('card');
-  if(on && !showing){ c.style.display='flex'; showing=true; }
-  if(!on && showing){ c.style.display='none'; showing=false; }
+// ── Show / Hide ───────────────────────────────────────────
+function showPanel() {
+  if (showing) return;
+  showing = true;
+  panel.classList.add('visible');
+
+  // burst de particules depuis le bord droit
+  const px = window.innerWidth - 10;
+  const py = window.innerHeight / 2;
+  spawnParticles(px, py, 40, ['#00e5ff','#7aa2ff','#00ff9d','#ffffff']);
+  spawnedInitial = true;
 }
-async function tick(){
-  try{
-    const r = await fetch('/overlay/drop_state', {cache:'no-store'});
+
+function hidePanel() {
+  if (!showing) return;
+  showing = false;
+  panel.classList.remove('visible');
+  spawnedInitial = false;
+  totalDuration = null;
+}
+
+// ── Update mode badge ─────────────────────────────────────
+function setMode(mode) {
+  modeBadge.className = 'mode-badge ' + mode;
+  if (mode === 'first')  modeLabel.textContent = '⚡ PREMIER';
+  if (mode === 'random') modeLabel.textContent = '🎲 RANDOM';
+  if (mode === 'coop')   modeLabel.textContent = '🤝 COOP';
+}
+
+// ── Update hits dots ──────────────────────────────────────
+function updateHits(count, target) {
+  const show = target > 0;
+  hitsSection.style.display = show ? 'flex' : 'none';
+  if (!show) return;
+
+  const maxDots = Math.min(target, 20);
+  if (hitsDots.children.length !== maxDots) {
+    hitsDots.innerHTML = '';
+    for (let i = 0; i < maxDots; i++) {
+      const d = document.createElement('div');
+      d.className = 'hit-dot';
+      hitsDots.appendChild(d);
+    }
+  }
+  const dots = hitsDots.querySelectorAll('.hit-dot');
+  const prevFilled = hitsDots.querySelectorAll('.hit-dot.filled').length;
+  dots.forEach((d, i) => {
+    const filled = i < count;
+    if (filled && !d.classList.contains('filled')) {
+      d.classList.add('filled');
+      // micro burst sur le nouveau dot
+      const rect = d.getBoundingClientRect();
+      spawnParticles(rect.left + 4, rect.top + 4, 8, ['#00ff9d','#ffffff']);
+    } else if (!filled) {
+      d.classList.remove('filled');
+    }
+  });
+  hitsCount.textContent = count + (target ? '/' + target : '');
+}
+
+// ── Tick ──────────────────────────────────────────────────
+async function tick() {
+  try {
+    const r = await fetch('/overlay/drop_state', { cache: 'no-store' });
     const j = await r.json();
-    if(!j.show){ setShow(false); return; }
+
+    if (!j.show) { hidePanel(); return; }
 
     const d = j.drop;
+
+    // Nouveau drop
     if (d.id && d.id !== lastDropId) {
-  lastDropId = d.id;
-  playDropSfx();
-}
-
-    document.getElementById('img').src = d.media || '';
-    document.getElementById('title').textContent = d.title || 'Drop';
-    document.getElementById('timer').textContent = `⏳ ${d.remaining}s`;
-    document.getElementById('mode').textContent =
-      d.mode === 'first' ? '⚡ PREMIER' : (d.mode === 'random' ? '🎲 RANDOM' : '🤝 COOP');
-
-    if(d.mode === 'coop'){
-      document.getElementById('line').textContent = `Tape !hit — ${d.count}/${d.target} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
-      const pct = d.target ? Math.min(100, Math.floor((d.count/d.target)*100)) : 0;
-      document.getElementById('fill').style.width = pct + '%';
-    }else{
-      document.getElementById('line').textContent = `Tape !grab — participants: ${d.count} • +${d.xp_bonus} XP & ${d.ticket_qty} ${d.ticket_key}`;
-      document.getElementById('fill').style.width = '0%';
+      lastDropId = d.id;
+      totalDuration = d.remaining; // on capture la durée initiale
+      playDropSfx();
+      showPanel();
     }
 
-    setShow(true);
-  }catch(e){}
+    if (!showing) showPanel();
+
+    // Contenu
+    imgEl.src = d.media || '';
+    titleEl.textContent = d.title || 'DROP';
+
+    const remaining = d.remaining ?? 0;
+    const urgent = remaining <= 5;
+
+    // Timer
+    timerEl.textContent = remaining + 's';
+    timerEl.className = urgent ? 'urgent' : '';
+
+    // Progress (basé sur le temps restant)
+    if (!totalDuration) totalDuration = remaining;
+    const pct = totalDuration > 0 ? Math.max(0, (remaining / totalDuration) * 100) : 0;
+    fillEl.style.width = pct + '%';
+    fillEl.className = urgent ? 'urgent' : '';
+
+    // Mode
+    setMode(d.mode || 'coop');
+
+    // Sous-texte & hits
+    if (d.mode === 'coop') {
+      subEl.innerHTML = `Tape <span>!grab</span> — XP progressif selon les participants`;
+      cmdHint.innerHTML = `Tape <code>!grab</code> · ${d.count || 0} participant${(d.count||0) > 1 ? 's' : ''}`;
+      updateHits(d.count || 0, 0);
+    } else {
+      subEl.innerHTML = `Tape <span>!grab</span> · ${d.count || 0} participant${(d.count||0) > 1 ? 's' : ''}`;
+      cmdHint.innerHTML = d.mode === 'first'
+        ? `<code>!grab</code> · LE PREMIER GAGNE`
+        : `<code>!grab</code> · TIRAGE AU SORT`;
+      hitsSection.style.display = 'none';
+    }
+
+    // Particules continues si urgence
+    if (urgent && Math.random() < 0.3) {
+      const px = window.innerWidth - 350 + Math.random() * 20;
+      const py = window.innerHeight / 2 + (Math.random() - 0.5) * 100;
+      spawnParticles(px, py, 3, ['#ff2d78','#ff9d2d']);
+    }
+
+  } catch(e) {}
 }
+
 setInterval(tick, 500);
 tick();
 </script>
-</body></html>
+</body>
+</html>
 """)
 
 
 @app.get("/overlay/show", response_class=HTMLResponse)
 def overlay_show_page():
-    return HTMLResponse(r"""
-<!doctype html>
+    return HTMLResponse(r"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-  body{margin:0;background:transparent;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
-  .wrap{
-    position:fixed; inset:0;
-    display:flex; align-items:center; justify-content:center;
-    pointer-events:none;
-  }
-
-  /* Carte principale (animation) */
-  .card{
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    gap:14px;
-    padding:22px 26px;
-    border-radius:22px;
-    background:rgba(10,15,20,.78);
-    border:1px solid rgba(255,255,255,.12);
-    backdrop-filter: blur(8px);
-    min-width:480px;
-    max-width:480px;
-
-    opacity:0;
-    transform: translateY(10px) scale(0.98);
-    transition: opacity 500ms ease, transform 500ms ease;
-    will-change: opacity, transform;
-  }
-  .card.showing{
-    opacity:1;
-    transform: translateY(0) scale(1);
-  }
-
-  /* Bandeau viewer */
-  .viewerBar{
-    width:100%;
-    display:flex;
-    align-items:center;
-    gap:12px;
-    padding:10px 14px;
-    margin-bottom:6px;
-    border-radius:14px;
-    background:rgba(255,255,255,.06);
-    border:1px solid rgba(255,255,255,.10);
-  }
-
-  .avatar{
-    width:40px;
-    height:40px;
-    border-radius:10px;
-    object-fit:cover;
-    border:1px solid rgba(255,255,255,.15);
-  }
-
-  .viewerText{display:flex;flex-direction:column}
-  .viewerName{font-size:14px;font-weight:800;color:#e6edf3;line-height:1.1}
-  .viewerSub{font-size:11px;color:#9aa4b2}
-
-  /* CM très grand */
-  .cmimg{
-    width:420px;
-    height:420px;
-    object-fit:contain;
-    border-radius:24px;
-    background:rgba(255,255,255,.05);
-    border:1px solid rgba(255,255,255,.10);
-  }
-
-  /* Labels au-dessus des barres */
-  .labelRow{
-    width:420px;
-    display:flex;
-    align-items:baseline;
-    justify-content:space-between;
-    margin-top:6px;
-  }
-  .label{
-    font-size:13px;
-    font-weight:900;
-    color:#e6edf3;
-    letter-spacing:.2px;
-  }
-  .labelRight{
-    font-size:12px;
-    color:#9aa4b2;
-  }
-
-  /* Barres */
-  .barWrap{
-    width:420px;
-    height:14px;
-    border-radius:999px;
-    background:rgba(255,255,255,.10);
-    border:1px solid rgba(255,255,255,.12);
-    overflow:hidden;
-  }
-  .fill{
-    height:100%;
-    width:0%;
-    background:linear-gradient(90deg,#7aa2ff,rgba(122,162,255,.45));
-    transition: width 280ms ease;
-  }
-  /* Bonheur en rose */
-  .happinessFill{
-    background:linear-gradient(90deg,#ff4fb3,rgba(255,79,179,.35));
-  }
-
-  .cmname{
-    font-size:28px;
-    font-weight:900;
-    color:#e6edf3;
-    text-align:center;
-    line-height:1.1;
-  }
-</style>
-</head>
-
-<body>
-  <div class="wrap">
-    <div id="card" class="card">
-      <div class="viewerBar">
-        <img id="avatar" class="avatar" src="" alt="">
-        <div class="viewerText">
-          <div id="viewer" class="viewerName"></div>
-          <div class="viewerSub">a utilisé !show</div>
-        </div>
-      </div>
-
-      <img id="cmimg" class="cmimg" src="" alt="">
-
-      <!-- XP -->
-      <div class="labelRow">
-        <div class="label">⚡ XP</div>
-        <div id="xpLabel" class="labelRight"></div>
-      </div>
-      <div class="barWrap"><div id="fill" class="fill"></div></div>
-
-      <!-- Bonheur -->
-      <div class="labelRow" style="margin-top:10px;">
-        <div class="label">💗 Bonheur</div>
-        <div id="hLabel" class="labelRight"></div>
-      </div>
-      <div class="barWrap"><div id="hfill" class="fill happinessFill"></div></div>
-
-      <div id="cmname" class="cmname">CapsMons</div>
-    </div>
-  </div>
-
-  <audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
-
-<script>
-let showing = false;
-let hideTimer = null;
-const DISPLAY_MS = 7000;
-let lastSig = "";
-const sfx = document.getElementById('sfx');
-
-function playSfx(){
-  try{
-    sfx.currentTime = 0;
-    const p = sfx.play();
-    if (p && p.catch) p.catch(()=>{});
-  }catch(e){}
+body {
+  background: transparent;
+  overflow: hidden;
+  width: 100vw; height: 100vh;
+  font-family: 'Rajdhani', sans-serif;
 }
 
-function showCard(){
-  const card = document.getElementById('card');
+/* ── SCÈNE CENTRÉE ── */
+.scene {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* ── CARTE TCG ── */
+.tcg-card {
+  position: relative;
+  width: 320px;
+  /* ratio TCG standard ~1:1.4 */
+  height: 448px;
+
+  display: none;
+  flex-direction: column;
+
+  background: linear-gradient(160deg, #04090f 0%, #070e1d 40%, #050b18 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(0,229,255,0.3);
+  overflow: hidden;
+
+  opacity: 0;
+  transform: scale(0.85) rotateY(8deg);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.34,1.56,0.64,1);
+  will-change: transform, opacity;
+
+  box-shadow:
+    0 0 0 1px rgba(0,229,255,0.08),
+    0 0 30px rgba(0,229,255,0.15),
+    0 0 80px rgba(0,229,255,0.06),
+    inset 0 0 60px rgba(0,0,0,0.5);
+}
+.tcg-card.showing {
+  opacity: 1;
+  transform: scale(1) rotateY(0deg);
+}
+
+/* Reflet holographique animé */
+.tcg-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(0,229,255,.06) 40%,
+    rgba(255,45,120,.06) 50%,
+    rgba(0,255,157,.05) 60%,
+    transparent 70%
+  );
+  background-size: 200% 200%;
+  animation: holoShift 3s ease-in-out infinite;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 20;
+}
+@keyframes holoShift {
+  0%   { background-position: 0% 0%; opacity: .6; }
+  50%  { background-position: 100% 100%; opacity: 1; }
+  100% { background-position: 0% 0%; opacity: .6; }
+}
+
+/* Scanlines */
+.tcg-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 3px
+  );
+  pointer-events: none;
+  z-index: 21;
+  border-radius: 18px;
+}
+
+/* ── HEADER CARTE ── */
+.card-header {
+  position: relative;
+  padding: 12px 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
+  border-bottom: 1px solid rgba(0,229,255,0.1);
+  background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
+}
+
+.card-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 13px;
+  font-weight: 900;
+  color: #e8f4ff;
+  letter-spacing: .06em;
+  text-shadow: 0 0 15px rgba(0,229,255,.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.card-type {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  color: #00e5ff;
+  letter-spacing: .12em;
+  padding: 2px 8px;
+  border: 1px solid rgba(0,229,255,.3);
+  border-radius: 999px;
+  background: rgba(0,229,255,.06);
+  white-space: nowrap;
+}
+
+/* ── IMAGE ZONE ── */
+.card-img-wrap {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  margin: 0;
+}
+
+#cmimg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: saturate(1.1) contrast(1.05);
+}
+
+/* Vignette sur l'image */
+.card-img-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(0deg, rgba(4,9,15,1) 0%, transparent 30%),
+    linear-gradient(180deg, rgba(4,9,15,.4) 0%, transparent 20%);
+  pointer-events: none;
+}
+
+/* Lignes de grille HUD sur l'image */
+.card-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: .4;
+}
+.hud-line-h {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,229,255,.4) 20%, rgba(0,229,255,.4) 80%, transparent 100%);
+}
+.hud-line-v {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent 0%, rgba(0,229,255,.3) 20%, rgba(0,229,255,.3) 80%, transparent 100%);
+}
+
+/* Corner brackets */
+.corner-tl, .corner-tr, .corner-bl, .corner-br {
+  position: absolute;
+  width: 14px; height: 14px;
+  z-index: 4;
+}
+.corner-tl { top: 6px; left: 6px;   border-top: 1.5px solid #00e5ff; border-left: 1.5px solid #00e5ff; }
+.corner-tr { top: 6px; right: 6px;  border-top: 1.5px solid #ff2d78; border-right: 1.5px solid #ff2d78; }
+.corner-bl { bottom: 6px; left: 6px;  border-bottom: 1.5px solid #00e5ff; border-left: 1.5px solid #00e5ff; }
+.corner-br { bottom: 6px; right: 6px; border-bottom: 1.5px solid #ff2d78; border-right: 1.5px solid #ff2d78; }
+
+/* Viewer badge flottant sur l'image */
+.viewer-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(4,9,15,.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0,229,255,.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+#avatar {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid rgba(0,229,255,.3);
+  flex-shrink: 0;
+}
+.viewer-info { flex: 1; min-width: 0; }
+#viewer-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: #e8f4ff;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viewer-sub {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  color: #00e5ff;
+  margin-top: 1px;
+}
+
+/* ── STATS ZONE ── */
+.card-stats {
+  padding: 10px 14px 14px;
+  z-index: 5;
+  position: relative;
+  background: linear-gradient(0deg, rgba(0,229,255,.03) 0%, transparent 100%);
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+.stat-row:last-child { margin-bottom: 0; }
+
+.stat-label {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  color: #3a6080;
+  letter-spacing: .1em;
+  width: 58px;
+  flex-shrink: 0;
+}
+.stat-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(255,255,255,.06);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.05);
+}
+.stat-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s ease;
+}
+.stat-fill.xp  { background: linear-gradient(90deg, #7aa2ff, #00e5ff); box-shadow: 0 0 6px rgba(0,229,255,.4); }
+.stat-fill.hp  { background: linear-gradient(90deg, #ff4fb3, #ff2d78); box-shadow: 0 0 6px rgba(255,45,120,.4); }
+
+.stat-val {
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  color: #c8d8f0;
+  width: 54px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Lineage / stage badges */
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.tcg-badge {
+  display: inline-block;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 8px;
+  color: #5a8aaa;
+  letter-spacing: .1em;
+  padding: 2px 7px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 999px;
+  background: rgba(255,255,255,.03);
+}
+.tcg-badge.stage {
+  color: #00ff9d;
+  border-color: rgba(0,255,157,.3);
+  background: rgba(0,255,157,.06);
+  text-shadow: 0 0 8px rgba(0,255,157,.5);
+}
+
+/* ── GLITCH EFFECT (apparition) ── */
+@keyframes glitchIn {
+  0%   { clip-path: inset(40% 0 50% 0); transform: translate(-4px,0) skewX(-2deg); opacity:.8; }
+  10%  { clip-path: inset(10% 0 80% 0); transform: translate(4px,0)  skewX(2deg);  }
+  20%  { clip-path: inset(70% 0 10% 0); transform: translate(-2px,0); }
+  30%  { clip-path: inset(0% 0 0% 0);   transform: translate(0,0);   opacity:1; }
+  100% { clip-path: inset(0% 0 0% 0);   transform: translate(0,0);   opacity:1; }
+}
+.tcg-card.glitch-enter {
+  animation: glitchIn 0.35s steps(1) forwards;
+}
+
+/* ── PARTICULES CANVAS ── */
+#pcanvas {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+</style>
+</head>
+<body>
+
+<canvas id="pcanvas"></canvas>
+
+<div class="scene">
+  <div id="card" class="tcg-card">
+
+    <!-- Header -->
+    <div class="card-header">
+      <div class="card-name" id="cm-name">CAPSMÖNS</div>
+      <div class="card-type" id="cm-type">LINEAGE · STAGE I</div>
+    </div>
+
+    <!-- Image -->
+    <div class="card-img-wrap">
+      <img id="cmimg" src="" alt="">
+      <div class="card-hud">
+        <div class="hud-line-h" style="top:33%"></div>
+        <div class="hud-line-h" style="top:66%"></div>
+        <div class="hud-line-v" style="left:25%"></div>
+        <div class="hud-line-v" style="left:75%"></div>
+        <div class="corner-tl"></div>
+        <div class="corner-tr"></div>
+        <div class="corner-bl"></div>
+        <div class="corner-br"></div>
+      </div>
+
+      <!-- Viewer badge -->
+      <div class="viewer-badge">
+        <img id="avatar" src="" alt="">
+        <div class="viewer-info">
+          <div id="viewer-name">@viewer</div>
+          <div class="viewer-sub">// !show</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="card-stats">
+      <div class="stat-row">
+        <div class="stat-label">XP</div>
+        <div class="stat-track"><div id="xp-fill"  class="stat-fill xp"  style="width:0%"></div></div>
+        <div class="stat-val"  id="xp-val">0 XP</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-label">BONHEUR</div>
+        <div class="stat-track"><div id="hp-fill" class="stat-fill hp" style="width:0%"></div></div>
+        <div class="stat-val" id="hp-val">0%</div>
+      </div>
+
+      <div class="card-footer">
+        <span class="tcg-badge" id="lineage-badge">—</span>
+        <span class="tcg-badge stage" id="stage-badge">STAGE I</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
+
+<script>
+const card      = document.getElementById('card');
+const cmName    = document.getElementById('cm-name');
+const cmType    = document.getElementById('cm-type');
+const cmImg     = document.getElementById('cmimg');
+const avatar    = document.getElementById('avatar');
+const viewerName= document.getElementById('viewer-name');
+const xpFill    = document.getElementById('xp-fill');
+const xpVal     = document.getElementById('xp-val');
+const hpFill    = document.getElementById('hp-fill');
+const hpVal     = document.getElementById('hp-val');
+const lineageBadge = document.getElementById('lineage-badge');
+const stageBadge   = document.getElementById('stage-badge');
+const sfx       = document.getElementById('sfx');
+const pcanvas   = document.getElementById('pcanvas');
+const pctx      = pcanvas.getContext('2d');
+
+let showing = false;
+let hideTimer = null;
+let lastSig = '';
+const DISPLAY_MS = 8000;
+
+// ── Canvas ─────────────────────────────────────────────
+function resizeCanvas() { pcanvas.width = window.innerWidth; pcanvas.height = window.innerHeight; }
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+const particles = [];
+function spawnBurst(cx, cy) {
+  const colors = ['#00e5ff','#ff2d78','#00ff9d','#7aa2ff','#ffd166','#ffffff'];
+  for (let i = 0; i < 60; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 5;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1,
+      r: 1.5 + Math.random() * 3,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      life: 1,
+      decay: 0.014 + Math.random() * 0.016,
+      gravity: 0.06,
+    });
+  }
+  // quelques "sparks" allongées
+  for (let i = 0; i < 20; i++) {
+    const angle = -Math.PI/2 + (Math.random()-0.5)*1.2;
+    const speed = 4 + Math.random() * 8;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 1, rw: 4,
+      color: '#00e5ff',
+      life: 1, decay: 0.025, gravity: 0.1,
+    });
+  }
+}
+
+function drawParticles() {
+  pctx.clearRect(0, 0, pcanvas.width, pcanvas.height);
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += p.gravity;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i,1); continue; }
+    pctx.save();
+    pctx.globalAlpha = Math.pow(p.life, 1.5);
+    pctx.beginPath();
+    if (p.rw) {
+      pctx.ellipse(p.x, p.y, p.rw, p.r, Math.atan2(p.vy, p.vx), 0, Math.PI*2);
+    } else {
+      pctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    }
+    pctx.fillStyle = p.color;
+    pctx.shadowBlur = 8;
+    pctx.shadowColor = p.color;
+    pctx.fill();
+    pctx.restore();
+  }
+  requestAnimationFrame(drawParticles);
+}
+drawParticles();
+
+// ── SFX ───────────────────────────────────────────────
+function playSfx() {
+  try { sfx.currentTime = 0; const p = sfx.play(); if (p?.catch) p.catch(()=>{}); } catch(e){}
+}
+
+// ── Carte ─────────────────────────────────────────────
+function showCard() {
   if (!showing) {
     card.style.display = 'flex';
     void card.offsetWidth;
+    card.classList.add('glitch-enter');
+    setTimeout(() => card.classList.remove('glitch-enter'), 400);
     card.classList.add('showing');
     showing = true;
+
+    // Burst centré
+    const rect = card.getBoundingClientRect();
+    spawnBurst(rect.left + rect.width/2, rect.top + rect.height/2);
   }
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(hideCard, DISPLAY_MS);
 }
 
-function hideCard(){
-  const card = document.getElementById('card');
+function hideCard() {
   if (!showing) return;
-
   card.classList.remove('showing');
-  setTimeout(() => { card.style.display = 'none'; }, 230);
+  setTimeout(() => { card.style.display = 'none'; }, 400);
   showing = false;
   hideTimer = null;
 }
 
-async function tick(){
-  try{
-    const r = await fetch('/overlay/state', {cache:'no-store'});
+// ── Stage label ────────────────────────────────────────
+function stageLabel(s) {
+  const labels = { 0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III' };
+  return labels[s] || ('STAGE ' + s);
+}
+
+// ── Tick ───────────────────────────────────────────────
+async function tick() {
+  try {
+    const r = await fetch('/overlay/state', { cache: 'no-store' });
     const j = await r.json();
 
-    if(!j.show){
-      return;
-    }
+    if (!j.show) return;
 
-    const sig = `${j.viewer.name}|${j.cm.name}|${j.xp.total}|${(j.happiness && j.happiness.pct) || 0}`;
+    const sig = `${j.viewer?.name}|${j.cm?.name}|${j.xp?.total}|${j.happiness?.pct ?? 0}`;
     if (sig !== lastSig) {
       lastSig = sig;
       playSfx();
     }
 
     // Viewer
-    document.getElementById('viewer').textContent = `@${j.viewer.name}`;
-    document.getElementById('avatar').src = j.viewer.avatar || '';
+    viewerName.textContent = '@' + (j.viewer?.name || '?');
+    avatar.src = j.viewer?.avatar || '';
 
     // CM
-    document.getElementById('cmimg').src = j.cm.media || '';
-    document.getElementById('cmname').textContent = j.cm.name || 'CapsMons';
+    cmImg.src  = j.cm?.media || '';
+    cmName.textContent = (j.cm?.name || 'CAPSMÖNS').toUpperCase();
+
+    const stage = j.cm?.stage ?? 0;
+    const lineage = j.cm?.lineage_key || '—';
+    lineageBadge.textContent = lineage.toUpperCase();
+    stageBadge.textContent   = stageLabel(stage);
+    cmType.textContent       = `${lineage.toUpperCase()} · ${stageLabel(stage)}`;
 
     // XP
-    const pct = (j.xp.pct === null || j.xp.pct === undefined) ? 100 : j.xp.pct;
-    document.getElementById('fill').style.width = pct + '%';
-
-    const toNext = j.xp.to_next;
-    document.getElementById('xpLabel').textContent =
-      (toNext ? `${j.xp.total} XP • prochain: ${toNext} XP` : `${j.xp.total} XP • max`);
+    const xpPct = j.xp?.pct ?? 100;
+    const xpTotal = j.xp?.total ?? 0;
+    const toNext  = j.xp?.to_next;
+    xpFill.style.width = xpPct + '%';
+    xpVal.textContent  = toNext
+      ? `${xpTotal} / ${xpTotal + toNext}`
+      : `${xpTotal} MAX`;
 
     // Bonheur
-    const hpct = (j.happiness && j.happiness.pct !== undefined) ? j.happiness.pct : 0;
-    document.getElementById('hfill').style.width = hpct + '%';
-    document.getElementById('hLabel').textContent = `${hpct}%`;
+    const hpPct = j.happiness?.pct ?? 0;
+    hpFill.style.width = hpPct + '%';
+    hpVal.textContent  = hpPct + '%';
 
     showCard();
-
-  }catch(e){
-    // ignore
-  }
+  } catch(e) {}
 }
 
 setInterval(tick, 500);
 tick();
 </script>
-
 </body>
 </html>
 """)
-
 
 @app.get("/overlay/evolution", response_class=HTMLResponse)
 def overlay_evolution_page():
