@@ -1790,6 +1790,18 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
                 (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration),
             )
             drop_id = int(cur.fetchone()[0])
+
+
+            # ← AJOUTER ICI
+            if mode == "first":
+                announce_msg = f"⚡ Drop '{title}' — tapez !grab, LE PREMIER gagne ! ({duration}s)"
+            elif mode == "random":
+                announce_msg = f"🎲 Drop '{title}' — tapez !grab pour tenter votre chance ! ({duration}s)"
+            else:
+                announce_msg = f"🤝 Drop COOP '{title}' — tapez !grab, tout le monde gagne du XP ! ({duration}s)"
+            cur.execute("INSERT INTO bot_announcements (message) VALUES (%s);", (announce_msg,))
+            # ← FIN AJOUT
+
         conn.commit()
 
     return {'ok': True, 'drop_id': drop_id}
