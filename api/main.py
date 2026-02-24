@@ -308,7 +308,19 @@ def _spawn_drop_db(cur, mode: str, title: str, media_url: str, duration: int, ti
         """,
         (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration),
     )
-    return int(cur.fetchone()[0])
+    drop_id = int(cur.fetchone()[0])
+
+    # Annonce au lancement
+    if mode == "first":
+        announce_msg = f"⚡ Drop '{title}' — tapez !grab, LE PREMIER gagne ! ({duration}s)"
+    elif mode == "random":
+        announce_msg = f"🎲 Drop '{title}' — tapez !grab pour tenter votre chance ! ({duration}s)"
+    else:
+        announce_msg = f"🤝 Drop COOP '{title}' — tapez !grab, tout le monde gagne du XP ! ({duration}s)"
+
+    cur.execute("INSERT INTO bot_announcements (message) VALUES (%s);", (announce_msg,))
+
+    return drop_id
 
 
 def handle_channel_points_redemption(ev: dict) -> None:
