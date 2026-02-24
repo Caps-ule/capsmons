@@ -1618,16 +1618,19 @@ def init_db():
                   viewer_avatar TEXT,
                   cm_key TEXT,
                   stage INT,
-                  -- Nouvelle forme
                   name TEXT,
                   image_url TEXT,
                   sound_url TEXT,
-                  -- Ancienne forme (ajoutée pour la transition visuelle)
                   old_name TEXT,
                   old_image_url TEXT,
                   old_stage INT,
+                  consumed_at TIMESTAMP,
                   expires_at TIMESTAMP NOT NULL
                 );
+                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_name TEXT;
+                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_image_url TEXT;
+                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_stage INT;
+                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMP;
 
 
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
@@ -2374,7 +2377,6 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
     new_stage = int(payload.get("stage", 1))
     old_stage = new_stage - 1
 
-    # Noms passés directement depuis add_xp (évite une requête de trop)
     new_name      = payload.get("new_name", "")
     new_image_url = payload.get("new_image_url", "")
     new_sound_url = payload.get("new_sound_url", "")
@@ -2385,40 +2387,34 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
         with conn.cursor() as cur:
             display, avatar = twitch_user_profile(login)
 
-            # Si les noms ne sont pas passés, les chercher en DB
+            # Récupérer cm_key du CM actif
+            cur.execute("""
+                SELECT cm_key FROM creatures_v2
+                WHERE twitch_login = %s AND is_active = TRUE LIMIT 1;
+            """, (login,))
+            r = cur.fetchone()
+            cm_key = r[0] if r else ""
+
+            # Si noms pas fournis, chercher en DB
             if not new_name:
                 cur.execute("""
-                    SELECT f.name, f.image_url, COALESCE(f.sound_url,''), cr.cm_key
-                    FROM creatures_v2 cr
-                    JOIN cm_forms f ON f.cm_key = cr.cm_key AND f.stage = %s
-                    WHERE cr.twitch_login = %s AND cr.is_active = TRUE
-                    LIMIT 1;
-                """, (new_stage, login))
-                row = cur.fetchone()
-                if row:
-                    new_name, new_image_url, new_sound_url, cm_key = row
-                else:
-                    return {"ok": False, "detail": "no new form"}
-            else:
-                # Récupérer cm_key depuis creatures_v2
-                cur.execute("""
-                    SELECT cm_key FROM creatures_v2
-                    WHERE twitch_login = %s AND is_active = TRUE LIMIT 1;
-                """, (login,))
-                r = cur.fetchone()
-                cm_key = r[0] if r else ""
+                    SELECT name, image_url, COALESCE(sound_url,'')
+                    FROM cm_forms WHERE cm_key = %s AND stage = %s;
+                """, (cm_key, new_stage))
+                nf = cur.fetchone()
+                if nf:
+                    new_name, new_image_url, new_sound_url = nf
 
-            # Ancienne forme : chercher si pas fournie
             if not old_name and old_stage >= 1:
                 cur.execute("""
                     SELECT name, image_url FROM cm_forms
                     WHERE cm_key = %s AND stage = %s;
                 """, (cm_key, old_stage))
-                old_row = cur.fetchone()
-                if old_row:
-                    old_name, old_image_url = old_row
+                of = cur.fetchone()
+                if of:
+                    old_name, old_image_url = of
 
-            # Durée = 30s (animation 20s + marge de polling)
+            # expires_at = 30s, consumed_at = NULL (sera mis à jour par le state endpoint)
             cur.execute("""
                 INSERT INTO overlay_evolutions
                   (twitch_login, viewer_display, viewer_avatar,
@@ -2428,7 +2424,7 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                         now() + interval '30 seconds');
             """, (login, display, avatar,
-                  cm_key, new_stage, new_name, new_image_url, new_sound_url or "",
+                  cm_key, new_stage, new_name or "", new_image_url or "", new_sound_url or "",
                   old_name or "", old_image_url or "", old_stage))
 
         conn.commit()
@@ -4620,7 +4616,7 @@ body {
   font-family: 'Rajdhani', sans-serif;
 }
 
-/* ─── Ancré à gauche comme le !show ─── */
+/* ─── Ancré à gauche, glisse depuis le bord ─── */
 .scene {
   position: fixed;
   left: 0; top: 50%;
@@ -4634,15 +4630,15 @@ body {
   transform: translateY(-50%) translateX(0px);
 }
 
-/* ─── Carte principale ─── */
+/* ─── Carte ─── */
 .evo-card {
   position: relative;
   width: 400px;
   background: linear-gradient(160deg, #04090f 0%, #070e1d 40%, #050b18 100%);
   border-radius: 0 20px 20px 0;
   border-right: 1px solid rgba(0,229,255,0.3);
-  border-top: 1px solid rgba(0,229,255,0.2);
-  border-bottom: 1px solid rgba(0,229,255,0.1);
+  border-top:   1px solid rgba(0,229,255,0.2);
+  border-bottom:1px solid rgba(0,229,255,0.1);
   overflow: hidden;
   box-shadow:
     0 0 0 1px rgba(0,229,255,0.05),
@@ -4650,7 +4646,7 @@ body {
     0 0 120px rgba(0,229,255,0.06);
 }
 
-/* Trait néon gauche (identique au drop overlay) */
+/* Trait néon gauche */
 .evo-card::before {
   content: '';
   position: absolute;
@@ -4662,18 +4658,16 @@ body {
   z-index: 20;
 }
 @keyframes neonPulse {
-  0%,100% { opacity: 0.7; }
-  50% { opacity: 1; box-shadow: 0 0 14px #00e5ff; }
+  0%,100% { opacity:.7; }
+  50% { opacity:1; box-shadow: 0 0 14px #00e5ff; }
 }
 
 /* Scanlines */
 .evo-card::after {
   content: '';
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   background: repeating-linear-gradient(
-    to bottom,
-    transparent 0px, transparent 2px,
+    to bottom, transparent 0px, transparent 2px,
     rgba(0,0,0,0.07) 2px, rgba(0,0,0,0.07) 3px
   );
   pointer-events: none;
@@ -4682,15 +4676,11 @@ body {
 
 /* Reflet holographique */
 .holo {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   background: linear-gradient(
     115deg,
-    transparent 30%,
-    rgba(0,229,255,.05) 40%,
-    rgba(255,45,120,.05) 50%,
-    rgba(0,255,157,.04) 60%,
-    transparent 70%
+    transparent 30%, rgba(0,229,255,.05) 40%,
+    rgba(255,45,120,.05) 50%, rgba(0,255,157,.04) 60%, transparent 70%
   );
   background-size: 200% 200%;
   animation: holoShift 3s ease-in-out infinite;
@@ -4706,193 +4696,135 @@ body {
 
 /* ─── Header viewer ─── */
 .evo-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: flex; align-items: center; gap: 10px;
   padding: 12px 18px 10px 18px;
   border-bottom: 1px solid rgba(0,229,255,0.1);
   background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
-  position: relative;
-  z-index: 5;
+  position: relative; z-index: 5;
 }
 .evo-avatar {
-  width: 36px; height: 36px;
-  border-radius: 50%;
+  width: 36px; height: 36px; border-radius: 50%;
   border: 2px solid rgba(0,229,255,0.4);
-  object-fit: cover;
-  flex-shrink: 0;
+  object-fit: cover; flex-shrink: 0;
 }
 .evo-viewer-name {
   font-family: 'Share Tech Mono', monospace;
-  font-size: 11px;
-  color: #00e5ff;
-  letter-spacing: .1em;
+  font-size: 11px; color: #00e5ff; letter-spacing: .1em;
 }
 .evo-badge {
   margin-left: auto;
   font-family: 'Orbitron', monospace;
-  font-size: 8px;
-  font-weight: 900;
-  color: #ff2d78;
-  letter-spacing: .18em;
-  text-transform: uppercase;
+  font-size: 8px; font-weight: 900;
+  color: #ff2d78; letter-spacing: .18em; text-transform: uppercase;
   text-shadow: 0 0 14px rgba(255,45,120,.8);
   animation: badgePulse 1.2s ease-in-out infinite;
 }
-@keyframes badgePulse {
-  0%,100% { opacity:1; }
-  50% { opacity:.45; }
-}
+@keyframes badgePulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
 
-/* ─── Zone image principale ─── */
+/* ─── Zone image ─── */
 .img-stage {
-  position: relative;
-  height: 320px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative; height: 320px;
+  display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
-
-/* Fond ambiant animé */
 .img-bg {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   background: radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.08) 0%, transparent 70%);
-  transition: background 0.8s ease;
-  z-index: 1;
+  z-index: 1; transition: background 0.5s ease;
 }
 .img-bg.glitch-mode {
   animation: bgGlitch 0.1s steps(1) infinite;
 }
 @keyframes bgGlitch {
-  0%   { background: radial-gradient(ellipse at 50% 60%, rgba(255,45,120,.1) 0%, transparent 70%); }
-  33%  { background: radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.12) 0%, transparent 70%); }
-  66%  { background: radial-gradient(ellipse at 50% 60%, rgba(0,255,157,.08) 0%, transparent 70%); }
-  100% { background: radial-gradient(ellipse at 50% 60%, rgba(255,45,120,.1) 0%, transparent 70%); }
+  0%  { background: radial-gradient(ellipse at 50% 60%, rgba(255,45,120,.1)  0%, transparent 70%); }
+  33% { background: radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.12)  0%, transparent 70%); }
+  66% { background: radial-gradient(ellipse at 50% 60%, rgba(0,255,157,.08)  0%, transparent 70%); }
 }
-
-/* Images des CMs */
 .cm-img {
   position: absolute;
   width: 240px; height: 240px;
-  object-fit: contain;
-  z-index: 3;
+  object-fit: contain; z-index: 3;
   image-rendering: pixelated;
   transition: opacity 0.35s ease, filter 0.35s ease;
   filter: drop-shadow(0 0 22px rgba(0,229,255,.45));
 }
-.cm-img.hidden { opacity: 0; }
+.cm-img.hidden { opacity: 0; pointer-events: none; }
 .cm-img.glitching {
   filter: drop-shadow(0 0 30px rgba(255,45,120,.9));
   animation: imgGlitch 0.12s steps(1) infinite;
 }
 @keyframes imgGlitch {
-  0%   { clip-path:inset(8% 0 78% 0);  transform:translate(-5px, 1px) scaleX(1.02); }
-  15%  { clip-path:inset(62% 0 18% 0); transform:translate(5px,-2px); }
-  30%  { clip-path:inset(35% 0 45% 0); transform:translate(-3px, 3px) scaleX(.98); }
-  45%  { clip-path:inset(4% 0 72% 0);  transform:translate(6px, 0); }
-  60%  { clip-path:inset(78% 0 4% 0);  transform:translate(-2px,-3px); }
-  75%  { clip-path:inset(20% 0 60% 0); transform:translate(4px, 1px); }
-  90%  { clip-path:inset(50% 0 28% 0); transform:translate(-4px, 2px); }
-  100% { clip-path:inset(0);           transform:translate(0,0); }
+  0%  { clip-path:inset(8%  0 78% 0); transform:translate(-5px, 1px) scaleX(1.02); }
+  15% { clip-path:inset(62% 0 18% 0); transform:translate( 5px,-2px); }
+  30% { clip-path:inset(35% 0 45% 0); transform:translate(-3px, 3px) scaleX(.98); }
+  45% { clip-path:inset(4%  0 72% 0); transform:translate( 6px, 0); }
+  60% { clip-path:inset(78% 0  4% 0); transform:translate(-2px,-3px); }
+  75% { clip-path:inset(20% 0 60% 0); transform:translate( 4px, 1px); }
+  90% { clip-path:inset(50% 0 28% 0); transform:translate(-4px, 2px); }
+  100%{ clip-path:inset(0);           transform:translate(0,0); }
 }
-
-/* Canvas étincelles */
 #sparkCanvas {
-  position: absolute;
-  inset: 0;
+  position: absolute; inset: 0;
   width: 100%; height: 100%;
-  z-index: 5;
-  pointer-events: none;
+  z-index: 5; pointer-events: none;
 }
-
-/* Ligne de scan animée pendant le glitch */
 .scan-sweep {
-  position: absolute;
-  left: 0; right: 0; height: 2px;
+  position: absolute; left: 0; right: 0; height: 2px;
   background: linear-gradient(90deg, transparent, rgba(0,229,255,.7), rgba(255,45,120,.5), transparent);
-  z-index: 6;
-  opacity: 0;
-  pointer-events: none;
+  z-index: 6; opacity: 0; pointer-events: none;
 }
 .scan-sweep.running {
   opacity: 1;
-  animation: scanSweep 0.6s linear infinite;
+  animation: scanSweep 0.5s linear infinite;
 }
-@keyframes scanSweep {
-  from { top: 0; }
-  to   { top: 100%; }
-}
+@keyframes scanSweep { from{top:0;} to{top:100%;} }
 
 /* ─── Footer noms ─── */
 .evo-footer {
   padding: 12px 18px 16px;
   border-top: 1px solid rgba(0,229,255,0.1);
   background: rgba(0,0,0,.25);
-  position: relative;
-  z-index: 5;
+  position: relative; z-index: 5;
 }
-.name-transition {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 5px;
+.name-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 5px;
 }
 .name-old {
-  font-family: 'Orbitron', monospace;
-  font-size: 11px;
-  color: #4a6a88;
-  text-decoration: line-through;
-  opacity: 0;
-  transition: opacity .4s ease;
+  font-family: 'Orbitron', monospace; font-size: 11px;
+  color: #4a6a88; text-decoration: line-through;
+  opacity: 0; transition: opacity .4s ease;
 }
 .name-old.show { opacity: .7; }
-.name-arrow {
-  color: #ff2d78;
-  font-size: 14px;
-  opacity: 0;
-  transition: opacity .4s ease;
+.name-arr {
+  color: #ff2d78; font-size: 14px;
+  opacity: 0; transition: opacity .4s ease;
   text-shadow: 0 0 10px rgba(255,45,120,.6);
 }
-.name-arrow.show { opacity: 1; }
+.name-arr.show { opacity: 1; }
 .name-new {
-  font-family: 'Orbitron', monospace;
-  font-size: 16px;
-  font-weight: 900;
-  color: #e8f4ff;
-  text-shadow: 0 0 18px rgba(0,229,255,.55);
-  opacity: 0;
-  transition: opacity .5s ease;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: 'Orbitron', monospace; font-size: 16px; font-weight: 900;
+  color: #e8f4ff; text-shadow: 0 0 18px rgba(0,229,255,.55);
+  opacity: 0; transition: opacity .5s ease;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .name-new.show { opacity: 1; }
 .evo-sub {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 9px;
-  color: #00e5ff;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  opacity: 0;
-  transition: opacity .5s ease;
+  font-family: 'Share Tech Mono', monospace; font-size: 9px;
+  color: #00e5ff; letter-spacing: .14em; text-transform: uppercase;
+  opacity: 0; transition: opacity .5s ease;
 }
 .evo-sub.show { opacity: 1; }
 </style>
 </head>
 <body>
-
 <div class="scene" id="scene">
   <div class="evo-card">
     <div class="holo"></div>
-
     <div class="evo-header">
       <img class="evo-avatar" id="avatar" src="" alt="">
       <div class="evo-viewer-name" id="viewerName"></div>
-      <div class="evo-badge">✦ ÉVOLUTION ✦</div>
+      <div class="evo-badge">&#x2726; ÉVOLUTION &#x2726;</div>
     </div>
-
     <div class="img-stage">
       <div class="img-bg" id="imgBg"></div>
       <canvas id="sparkCanvas"></canvas>
@@ -4900,11 +4832,10 @@ body {
       <img class="cm-img hidden" id="imgNew" src="" alt="">
       <div class="scan-sweep" id="scanSweep"></div>
     </div>
-
     <div class="evo-footer">
-      <div class="name-transition">
+      <div class="name-row">
         <div class="name-old" id="nameOld"></div>
-        <div class="name-arrow" id="nameArrow">→</div>
+        <div class="name-arr" id="nameArr">&#x2192;</div>
         <div class="name-new" id="nameNew"></div>
       </div>
       <div class="evo-sub" id="evoSub">FORME DÉBLOQUÉE</div>
@@ -4917,173 +4848,142 @@ body {
 </audio>
 
 <script>
-// ─── Configuration timing ───────────────────────────────────────────────────
-const T_OLD   = 8000;   // ancien CM affiché
-const T_GLIT  = 4000;   // glitch
-const T_NEW   = 8000;   // nouveau CM + étincelles
-const POLL_MS = 1500;
+const T_OLD  = 8000;
+const T_GLIT = 4000;
+const T_NEW  = 8000;
+const POLL   = 1500;
 
 let busy = false;
-let lastId = null;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function $  (id)   { return document.getElementById(id); }
+function $(id)     { return document.getElementById(id); }
 
-// ─── Étincelles / confettis ──────────────────────────────────────────────────
+/* ─── Étincelles ─────────────────────────────────────────────────────────── */
 const canvas = $('sparkCanvas');
 const ctx    = canvas.getContext('2d');
-let sparks   = [];
-let sparkRaf = null;
-let sparkInterval = null;
-
-const SPARK_COLORS = ['#00e5ff','#ff2d78','#00ff9d','#ffd166','#ffffff','#7aa2ff'];
+let sparks   = [], sparkRaf = null, sparkTimer = null;
+const COLORS = ['#00e5ff','#ff2d78','#00ff9d','#ffd166','#ffffff','#7aa2ff'];
 
 function resizeCanvas() {
-  const stage    = canvas.parentElement;
-  canvas.width   = stage.offsetWidth;
-  canvas.height  = stage.offsetHeight;
+  const s = canvas.parentElement;
+  canvas.width = s.offsetWidth; canvas.height = s.offsetHeight;
 }
 
-function spawnBurst(n = 80) {
-  const cx = canvas.width  * 0.5;
-  const cy = canvas.height * 0.55;
-  for (let i = 0; i < n; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const spd   = 1.8 + Math.random() * 6;
+function burst(n=80) {
+  const cx = canvas.width*.5, cy = canvas.height*.55;
+  for (let i=0;i<n;i++) {
+    const a=Math.random()*Math.PI*2, spd=2+Math.random()*6;
     sparks.push({
-      x: cx + (Math.random()-.5) * 30,
-      y: cy + (Math.random()-.5) * 30,
-      vx: Math.cos(angle) * spd,
-      vy: Math.sin(angle) * spd - 2,
-      ay: 0.13,
-      color: SPARK_COLORS[Math.floor(Math.random() * SPARK_COLORS.length)],
-      alpha: 1,
-      decay: 0.013 + Math.random() * 0.016,
-      size:  2.5 + Math.random() * 5,
-      shape: Math.random() < 0.45 ? 'rect' : 'circle',
-      rot:   Math.random() * Math.PI * 2,
-      rotV:  (Math.random() - .5) * 0.25,
+      x:cx+(Math.random()-.5)*30, y:cy+(Math.random()-.5)*30,
+      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd-2, ay:0.13,
+      color:COLORS[0|Math.random()*COLORS.length],
+      alpha:1, decay:.013+Math.random()*.016,
+      size:2.5+Math.random()*5,
+      shape:Math.random()<.45?'rect':'circle',
+      rot:Math.random()*Math.PI*2, rotV:(Math.random()-.5)*.25,
     });
   }
 }
 
-function spawnContinuous() { spawnBurst(6); }
-
-function tickSparks() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  sparks = sparks.filter(s => s.alpha > 0.02);
+function drawSparks() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  sparks = sparks.filter(s=>s.alpha>.02);
   for (const s of sparks) {
     ctx.save();
-    ctx.globalAlpha = s.alpha;
-    ctx.fillStyle   = s.color;
-    ctx.shadowColor = s.color;
-    ctx.shadowBlur  = 8;
-    ctx.translate(s.x, s.y);
-    ctx.rotate(s.rot);
-    if (s.shape === 'rect') {
-      ctx.fillRect(-s.size * .5, -s.size * .25, s.size, s.size * .45);
-    } else {
-      ctx.beginPath();
-      ctx.arc(0, 0, s.size * .5, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.globalAlpha=s.alpha; ctx.fillStyle=s.color;
+    ctx.shadowColor=s.color; ctx.shadowBlur=8;
+    ctx.translate(s.x,s.y); ctx.rotate(s.rot);
+    if (s.shape==='rect') ctx.fillRect(-s.size*.5,-s.size*.25,s.size,s.size*.45);
+    else { ctx.beginPath(); ctx.arc(0,0,s.size*.5,0,Math.PI*2); ctx.fill(); }
     ctx.restore();
-    s.x   += s.vx; s.y   += s.vy;
-    s.vx  *= 0.97; s.vy  += s.ay;
-    s.rot += s.rotV;
-    s.alpha -= s.decay;
+    s.x+=s.vx; s.y+=s.vy; s.vx*=.97; s.vy+=s.ay;
+    s.rot+=s.rotV; s.alpha-=s.decay;
   }
-  sparkRaf = requestAnimationFrame(tickSparks);
+  sparkRaf = requestAnimationFrame(drawSparks);
 }
 
 function startSparks() {
-  resizeCanvas();
-  sparks = [];
-  spawnBurst(90);
-  if (!sparkRaf) tickSparks();
-  sparkInterval = setInterval(spawnContinuous, 200);
+  resizeCanvas(); sparks=[];
+  burst(90);
+  if (!sparkRaf) drawSparks();
+  sparkTimer = setInterval(()=>burst(6), 200);
 }
 
 function stopSparks() {
-  clearInterval(sparkInterval);
-  sparkInterval = null;
-  if (sparkRaf) { cancelAnimationFrame(sparkRaf); sparkRaf = null; }
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  sparks = [];
+  clearInterval(sparkTimer); sparkTimer=null;
+  if (sparkRaf) { cancelAnimationFrame(sparkRaf); sparkRaf=null; }
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  sparks=[];
 }
 
-// ─── Animation principale ────────────────────────────────────────────────────
+/* ─── Animation ──────────────────────────────────────────────────────────── */
 async function playEvo(data) {
   busy = true;
+  const {viewer, old_form, new_form} = data;
+  const hasOld = !!(old_form && old_form.image);
 
-  const { viewer, old_form, new_form } = data;
-  const hasOld = old_form && old_form.image;
+  // Remplir
+  $('avatar').src                = viewer.avatar || '';
+  $('viewerName').textContent    = '\u0040' + (viewer.name || '');
+  $('imgOld').src                = hasOld ? old_form.image : '';
+  $('imgNew').src                = new_form.image || '';
+  $('nameOld').textContent       = hasOld ? (old_form.name || '') : '';
+  $('nameNew').textContent       = new_form.name  || '';
 
-  // Remplir les données
-  $('avatar').src          = viewer.avatar || '';
-  $('viewerName').textContent = '\u0040' + (viewer.name || '');
-  $('imgOld').src          = hasOld ? old_form.image : '';
-  $('imgNew').src          = new_form.image || '';
-  $('nameOld').textContent = hasOld ? (old_form.name || '') : '';
-  $('nameNew').textContent = new_form.name || '';
-
-  // Reset états
-  [$('nameOld'), $('nameArrow'), $('nameNew'), $('evoSub')].forEach(e => e.classList.remove('show'));
-  $('imgOld').classList.remove('glitching');
-  $('imgNew').classList.remove('glitching');
+  // Reset
+  ['nameOld','nameArr','nameNew','evoSub'].forEach(id=>$(id).classList.remove('show'));
+  $('imgOld').classList.remove('glitching'); $('imgOld').classList.add('hidden');
+  $('imgNew').classList.remove('glitching'); $('imgNew').classList.add('hidden');
   $('imgBg').classList.remove('glitch-mode');
   $('scanSweep').classList.remove('running');
   stopSparks();
 
   // Musique
-  const audio = $('evoAudio');
-  try { audio.currentTime = 0; audio.volume = 0.88; await audio.play(); } catch(e) {}
+  try { const a=$('evoAudio'); a.currentTime=0; a.volume=.88; await a.play(); } catch(e) {}
 
-  // Entrée depuis la gauche
+  // Entrée
   $('scene').classList.add('visible');
-  await sleep(200);
+  await sleep(300);
 
   if (!hasOld) {
-    // Cas éclosion : juste le nouveau CM + étincelles
+    // Éclosion directe
     $('imgNew').classList.remove('hidden');
     $('nameNew').classList.add('show');
     $('evoSub').classList.add('show');
-    await sleep(300);
+    await sleep(200);
     startSparks();
     await sleep(T_NEW);
   } else {
-    // ── PHASE 1 : Ancien CM (8s) ────────────────────────────────────────────
+    // Phase 1 : ancien CM
     $('imgOld').classList.remove('hidden');
     $('nameOld').classList.add('show');
     await sleep(T_OLD);
 
-    // ── PHASE 2 : Glitch (4s) ───────────────────────────────────────────────
+    // Phase 2 : glitch
     $('imgOld').classList.add('glitching');
     $('imgBg').classList.add('glitch-mode');
     $('scanSweep').classList.add('running');
-
-    // À mi-glitch : switcher les images
     await sleep(T_GLIT / 2);
+
+    // Swap au milieu du glitch
     $('imgOld').classList.add('hidden');
     $('imgOld').classList.remove('glitching');
     $('imgNew').classList.remove('hidden');
     $('imgNew').classList.add('glitching');
     await sleep(T_GLIT / 2);
 
-    // ── PHASE 3 : Nouveau CM + étincelles (8s) ──────────────────────────────
+    // Phase 3 : nouveau CM + étincelles
     $('imgNew').classList.remove('glitching');
     $('imgBg').classList.remove('glitch-mode');
     $('scanSweep').classList.remove('running');
-
-    $('nameArrow').classList.add('show');
+    $('nameArr').classList.add('show');
     $('nameNew').classList.add('show');
     $('evoSub').classList.add('show');
-
     startSparks();
     await sleep(T_NEW);
   }
 
-  // ── Sortie ───────────────────────────────────────────────────────────────
+  // Sortie
   stopSparks();
   $('scene').style.transition = 'transform 0.6s cubic-bezier(0.55, 0, 1, 0.45)';
   $('scene').classList.remove('visible');
@@ -5093,21 +4993,22 @@ async function playEvo(data) {
   $('scene').style.transition = '';
   $('imgOld').classList.add('hidden');
   $('imgNew').classList.add('hidden');
-  [$('nameOld'), $('nameArrow'), $('nameNew'), $('evoSub')].forEach(e => e.classList.remove('show'));
+  ['nameOld','nameArr','nameNew','evoSub'].forEach(id=>$(id).classList.remove('show'));
+
   busy = false;
 }
 
-// ─── Polling ─────────────────────────────────────────────────────────────────
+/* ─── Polling ────────────────────────────────────────────────────────────── */
 async function poll() {
   if (busy) return;
   try {
-    const r = await fetch('/overlay/evolution_state', { cache: 'no-store' });
+    const r = await fetch('/overlay/evolution_state', {cache:'no-store'});
     const j = await r.json();
     if (j.active) await playEvo(j);
   } catch(e) {}
 }
 
-setInterval(poll, POLL_MS);
+setInterval(poll, POLL);
 poll();
 </script>
 </body>
@@ -5307,27 +5208,36 @@ def overlay_state():
 def overlay_evolution_state():
     with get_db() as conn:
         with conn.cursor() as cur:
+            # Sélectionner UNIQUEMENT les entrées pas encore consommées
             cur.execute("""
-                SELECT twitch_login, viewer_display, viewer_avatar,
+                SELECT id, twitch_login, viewer_display, viewer_avatar,
                        name, image_url, COALESCE(sound_url,''),
                        COALESCE(old_name,''), COALESCE(old_image_url,'')
                 FROM overlay_evolutions
                 WHERE expires_at > now()
+                  AND consumed_at IS NULL
                 ORDER BY id DESC
                 LIMIT 1;
             """)
             row = cur.fetchone()
 
-    if not row:
-        return {"active": False}
+            if not row:
+                return {"active": False}
 
-    login, display, avatar, new_name, new_img, sound, old_name, old_img = row
+            evo_id, login, display, avatar, new_name, new_img, sound, old_name, old_img = row
+
+            # Marquer immédiatement comme consommé pour éviter le double déclenchement
+            cur.execute("""
+                UPDATE overlay_evolutions
+                SET consumed_at = now()
+                WHERE id = %s;
+            """, (evo_id,))
+
+        conn.commit()
+
     return {
         "active": True,
-        "viewer": {
-            "name": display or login or "",
-            "avatar": avatar or "",
-        },
+        "viewer": {"name": display or login or "", "avatar": avatar or ""},
         "old_form": {"name": old_name, "image": old_img},
         "new_form": {"name": new_name, "image": new_img, "sound": sound},
     }
@@ -5418,29 +5328,25 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                             WHERE id=%s;
                         """, (cm_key, creature_id))
 
-            # Récupérer old + new form pour l'overlay et l'annonce chat
+            # overlay evolution : récupérer old + new forme
             if stage_changed and new_stage >= 1:
-                # Nouvelle forme
                 cur.execute("""
                     SELECT name, image_url, COALESCE(sound_url,'')
                     FROM cm_forms WHERE cm_key=%s AND stage=%s;
                 """, (cm_key, new_stage))
-                new_form = cur.fetchone()
-
-                # Ancienne forme (stage précédent, si elle existe)
-                old_form_name = ""
+                nf = cur.fetchone()
+                old_form_name  = ""
                 old_form_image = ""
                 if prev_stage >= 1:
                     cur.execute("""
                         SELECT name, image_url FROM cm_forms
                         WHERE cm_key=%s AND stage=%s;
                     """, (cm_key, prev_stage))
-                    old_form = cur.fetchone()
-                    if old_form:
-                        old_form_name, old_form_image = old_form
-
-                if new_form:
-                    new_form_name, new_image_url, new_sound_url = new_form
+                    of = cur.fetchone()
+                    if of:
+                        old_form_name, old_form_image = of
+                if nf:
+                    new_form_name, new_image_url, new_sound_url = nf
                     evo_payload = {
                         "twitch_login": login,
                         "stage": new_stage,

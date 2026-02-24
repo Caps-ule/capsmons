@@ -669,21 +669,17 @@ class Bot(commands.Bot):
                         before = int(data.get("stage_before", 0))
                         after  = int(data.get("stage_after",  before))
 
-                        # annonce uniquement si évolution
                         if after > before:
                             intro      = await rp_get("evolve.announce") or "✨ Évolution !"
-                            old_fname  = data.get("old_form_name", "").strip()
-                            new_fname  = data.get("new_form_name", "").strip()
-                            cm_assigned = data.get("cm_assigned", "")
+                            old_fname  = (data.get("old_form_name") or "").strip()
+                            new_fname  = (data.get("new_form_name") or "").strip()
+                            cm_assigned = data.get("cm_assigned") or ""
 
-                            # Construction du message avec noms de formes si dispo
                             if old_fname and new_fname:
                                 msg = f"{intro} @{message.author.name} — {old_fname} ➜ {new_fname} !"
                             elif new_fname:
-                                # Éclosion (pas d'ancienne forme)
                                 msg = f"{intro} @{message.author.name} — {new_fname} est né !"
                             else:
-                                # Fallback stages
                                 msg = f"{intro} @{message.author.name} {stage_label(before)} ➜ {stage_label(after)}"
 
                             if cm_assigned and not new_fname:
