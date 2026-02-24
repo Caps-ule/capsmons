@@ -3294,7 +3294,7 @@ def overlay_drop_page():
     position: fixed;
     right: 0; top: 50%;
     transform: translateY(-50%) translateX(380px);
-    width: 340px;
+    width: 400px;
     transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
     z-index: 10;
     will-change: transform;
