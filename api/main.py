@@ -5442,7 +5442,7 @@ def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = 
     return RedirectResponse(url="/admin/points?msg=Souscription créée", status_code=302)
 
 
-    
+
 # =============================================================================
 # ADMIN SPA — Route unifiée + Stats par stream
 # =============================================================================
@@ -5865,13 +5865,7 @@ def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
                 drops_count = int(cur.fetchone()[0])
 
                 # xp par source (ventilation)
-                cur.execute("""
-                    SELECT source, SUM(amount)::int
-                    FROM xp_events
-                    WHERE created_at BETWEEN %s AND COALESCE(%s, now())
-                    GROUP BY 1 ORDER BY 2 DESC;
-                """, (started_at, ended_at))
-                xp_by_source = [{"source": r[0] or "?", "xp": r[1]} for r in cur.fetchall()]
+                xp_by_source = []
 
                 result.append({
                     "id": sid,
