@@ -1081,6 +1081,8 @@ def grant_xp(login: str, amount: int):
                         updated_at=now()
                     WHERE twitch_login=%s AND cm_key=%s;
                 """, (new_stage, login, cm_key))
+                if new_stage > prev_stage:
+                    _record_discovery(cur, login, cm_key, new_stage, "owned")
 
             _ensure_quests(cur, login)
             _quest_progress(cur, login, 'xp', amount)
@@ -1178,6 +1180,21 @@ def _quest_reward(cur, login: str) -> list:
         cur.execute("UPDATE quest_assignments SET rewarded=TRUE WHERE id=%s;", (qa_id,))
         rewards.append({"quest_key": quest_key, "label": label, "xp": xp, "item_key": item_key})
     return rewards
+
+
+def _record_discovery(cur, login: str, cm_key: str, stage: int, status: str = "owned") -> None:
+    """Enregistre une forme découverte. Si elle existe déjà en 'owned', ne la rétrograde pas."""
+    if stage < 1 or not cm_key or cm_key == "egg":
+        return
+    cur.execute("""
+        INSERT INTO cm_discoveries (twitch_login, cm_key, stage, status)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (twitch_login, cm_key, stage) DO UPDATE
+            SET status = CASE
+                WHEN cm_discoveries.status = 'owned' THEN 'owned'
+                ELSE EXCLUDED.status
+            END;
+    """, (login, cm_key, stage, status))
 
 
 # =============================================================================
@@ -1681,6 +1698,30 @@ def init_db():
               msg_type TEXT,
               sub_type TEXT,
               received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """)
+
+            # Découvertes de formes (découplées de la possession pour les échanges futurs)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS cm_discoveries (
+                twitch_login  TEXT NOT NULL,
+                cm_key        TEXT NOT NULL REFERENCES cms(key) ON DELETE CASCADE,
+                stage         INT  NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'owned'
+                              CHECK (status IN ('owned', 'discovered')),
+                discovered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (twitch_login, cm_key, stage)
+            );
+            CREATE INDEX IF NOT EXISTS idx_cm_discoveries_login
+                ON cm_discoveries(twitch_login);
+
+            -- Présence hebdomadaire pour les quêtes
+            CREATE TABLE IF NOT EXISTS viewer_presence (
+                twitch_login TEXT NOT NULL,
+                week_start   DATE NOT NULL,
+                seconds      INT  NOT NULL DEFAULT 0,
+                updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (twitch_login, week_start)
             );
             """)
             cur.execute("""
@@ -5546,6 +5587,12 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                         "image_url": image_url,
                         "sound_url": sound_url,
                     }
+                # Enregistrer la découverte de cette nouvelle forme
+                _record_discovery(cur, login, cm_key, new_stage, "owned")
+                # Si c'était l'éclosion (stage 1), aussi enregistrer les formes précédentes
+                # comme "discovered" (elles ont existé comme œuf mais sont découvertes rétroactivement)
+                if new_stage == 1 and cm_key != "egg":
+                    pass  # stage 1 = première vraie forme, pas de stade antérieur à noter
 
         conn.commit()
 
@@ -6109,26 +6156,44 @@ def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=N
     if not clean:
         return {"ok": True, "inserted": 0}
 
+    tick_seconds = int(os.environ.get("PRESENCE_TICK_SECONDS", "300"))
+    week = _current_week_start()
+
     with get_db() as conn:
         session_id = get_current_session_id(conn)
         if not session_id:
             return {"ok": True, "inserted": 0}
 
         with conn.cursor() as cur:
-            # insert ignore duplicate (PK session_id,twitch_login)
             inserted = 0
             for u in clean:
+                # Présence dans la session
                 try:
                     cur.execute("""
                         INSERT INTO stream_participants (session_id, twitch_login)
                         VALUES (%s, %s)
                         ON CONFLICT DO NOTHING;
                     """, (session_id, u))
-                    # psycopg: rowcount=1 si insert
                     if cur.rowcount == 1:
                         inserted += 1
                 except Exception:
                     pass
+
+                # Tracker la présence hebdo + quêtes
+                try:
+                    cur.execute("""
+                        INSERT INTO viewer_presence (twitch_login, week_start, seconds)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (twitch_login, week_start)
+                        DO UPDATE SET seconds    = viewer_presence.seconds + EXCLUDED.seconds,
+                                      updated_at = now();
+                    """, (u, week, tick_seconds))
+                    _ensure_quests(cur, u)
+                    _quest_progress(cur, u, 'presence', tick_seconds)
+                    _quest_reward(cur, u)
+                except Exception:
+                    pass
+
         conn.commit()
 
     return {"ok": True, "inserted": inserted, "session_id": session_id}
@@ -6279,6 +6344,7 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
                 ;""", (login, cm_key, cm_lineage, (not has_active), acquired_from))
 
             # si le CM existait déjà, on ne change rien (important : “ne changer que le nécessaire”)
+            # La découverte de la forme 1 sera enregistrée à l'éclosion via grant_xp
 
         conn.commit()
 
@@ -6955,22 +7021,34 @@ def _render_user_page(login: str, d: dict) -> str:
     for sec in sections:
         cms_grid = ""
         for c in sec["cms"]:
-            owned_cls  = "owned" if c["owned"] else "locked"
-            active_cls = "active" if c["is_active"] else ""
-            best = next((f for f in reversed(c["forms"]) if f["image_url"] and c["owned"]), None)
-            img_tag = f'<img src="{best["image_url"]}" alt="{c["name"]}">' if best else '<div class="silhouette">?</div>'
-            dots = "".join(f'<div class="stage-dot {"has" if c["max_stage"] >= st and c["owned"] else ""}"></div>' for st in [1,2,3])
-            cms_grid += f"""
-            <div class="album-card {owned_cls} {active_cls}" title="{c['name']}">
+            if c["discovered"]:
+                # Afficher une carte par forme découverte
+                for form in c["forms"]:
+                    active_cls = "active" if c["is_active"] and form["stage"] == max(f["stage"] for f in c["forms"]) else ""
+                    owned_cls  = "owned" if c["is_currently_owned"] else "discovered"
+                    status_lbl = "" if c["is_currently_owned"] else '<div class="disc-badge">Découvert</div>'
+                    stage_name = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                    img_tag    = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
+                    cms_grid += f"""
+            <div class="album-card {owned_cls} {active_cls}" title="{form['name']}">
+              {status_lbl}
               <div class="album-img-wrap">{img_tag}</div>
-              <div class="album-name">{"???" if not c["owned"] else c["name"]}</div>
-              <div class="album-stages">{dots}</div>
+              <div class="album-name">{form['name']}</div>
+              <div class="album-stage-lbl">Stage {stage_name}</div>
+            </div>"""
+            else:
+                # Silhouette pour CM non découvert
+                cms_grid += f"""
+            <div class="album-card locked" title="???">
+              <div class="album-img-wrap"><div class="silhouette">?</div></div>
+              <div class="album-name">???</div>
+              <div class="album-stage-lbl">—</div>
             </div>"""
         album_html += f"""
         <div class="album-section">
           <div class="section-header">
             <div class="section-title">{sec['lineage_name'].upper()}</div>
-            <div class="section-count">{sec['owned_count']}/{len(sec['cms'])}</div>
+            <div class="section-count">{sec['owned_forms']}/{sec['total_forms']} formes</div>
           </div>
           <div class="album-grid">{cms_grid}</div>
         </div>"""
@@ -6978,7 +7056,7 @@ def _render_user_page(login: str, d: dict) -> str:
     rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
     week_str = _current_week_start().strftime("%d/%m/%Y")
     completed_count = sum(1 for q in quests if q["completed"])
-    album_pct = int((d["owned_total"] / max(1, d["total_cms"])) * 100)
+    album_pct = int((d["owned_forms"] / max(1, d["total_forms"])) * 100)
 
     return f"""<!doctype html>
 <html lang="fr"><head>
@@ -7057,15 +7135,16 @@ a{{color:var(--cyan);text-decoration:none}}
 .album-card{{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px;text-align:center;transition:border-color .2s,transform .15s;position:relative}}
 .album-card.owned{{border-color:rgba(0,229,255,.2)}}
 .album-card.owned.active{{border-color:rgba(0,255,157,.4);box-shadow:0 0 12px rgba(0,255,157,.15)}}
-.album-card.locked{{opacity:.4;filter:grayscale(.5)}}
+.album-card.discovered{{border-color:rgba(255,209,102,.2);opacity:.75}}
+.album-card.locked{{opacity:.3;filter:grayscale(.8)}}
+.album-card{{position:relative}}
+.disc-badge{{position:absolute;top:4px;right:4px;font-family:var(--font-mono);font-size:8px;color:var(--amber);background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.3);border-radius:4px;padding:1px 4px;line-height:1.4}}
 .album-card:hover{{transform:translateY(-2px)}}
 .album-img-wrap{{width:60px;height:60px;margin:0 auto 6px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center}}
 .album-img-wrap img{{width:100%;height:100%;object-fit:contain}}
 .silhouette{{font-size:24px;color:var(--muted)}}
-.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.album-stages{{display:flex;justify-content:center;gap:3px}}
-.stage-dot{{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15)}}
-.stage-dot.has{{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 4px rgba(0,229,255,.6)}}
+.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.album-stage-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
 .album-progress-bar{{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;margin:6px 0 4px}}
 .album-progress-fill{{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:999px;transition:width .8s ease}}
 .album-stats-row{{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
@@ -7099,7 +7178,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
   <div class="card">
     <div class="card-title">// ALBUM CAPSMONS</div>
     <div class="album-progress-bar"><div class="album-progress-fill" style="width:{album_pct}%"></div></div>
-    <div class="album-stats-row"><span>{d['owned_total']} possédés</span><span>{d['total_cms']} total</span></div>
+    <div class="album-stats-row"><span>{d['owned_forms']} formes débloquées</span><span>{d['total_forms']} formes au total</span></div>
     {album_html}
   </div>
 </div>
@@ -7145,17 +7224,28 @@ def user_profile_page(login: str):
             """, (login,))
             owned_list = [{"cm_key":r[0],"lineage_key":r[1],"stage":int(r[2] or 0),"xp_total":int(r[3] or 0),"is_active":bool(r[4]),"name":r[5],"image_url":r[6]} for r in cur.fetchall()]
 
+            # Album : toutes les formes découvertes (cm_discoveries), classées par lignée
             cur.execute("""
-                SELECT c.key, c.name, c.lineage_key, l.name,
-                       COALESCE(c.media_url,''),
-                       f1.name, f1.image_url, f2.name, f2.image_url, f3.name, f3.image_url
+                SELECT
+                    d.cm_key, d.stage, d.status, d.discovered_at,
+                    f.name, f.image_url,
+                    c.lineage_key, l.name AS lineage_name
+                FROM cm_discoveries d
+                JOIN cm_forms f  ON f.cm_key = d.cm_key AND f.stage = d.stage
+                JOIN cms c       ON c.key = d.cm_key
+                JOIN lineages l  ON l.key = c.lineage_key
+                WHERE d.twitch_login = %s
+                ORDER BY l.name, d.cm_key, d.stage;
+            """, (login,))
+            discoveries_rows = cur.fetchall()
+
+            # Pour l'album "non découvert" : toutes les formes du catalogue
+            cur.execute("""
+                SELECT c.key, c.name, c.lineage_key, l.name
                 FROM cms c JOIN lineages l ON l.key=c.lineage_key
-                LEFT JOIN cm_forms f1 ON f1.cm_key=c.key AND f1.stage=1
-                LEFT JOIN cm_forms f2 ON f2.cm_key=c.key AND f2.stage=2
-                LEFT JOIN cm_forms f3 ON f3.cm_key=c.key AND f3.stage=3
-                WHERE c.is_enabled=TRUE ORDER BY c.lineage_key, c.key;
+                WHERE c.is_enabled=TRUE ORDER BY l.name, c.key;
             """)
-            all_cms = cur.fetchall()
+            all_cms_catalog = cur.fetchall()
 
             cur.execute("""
                 SELECT qa.quest_key, qc.label, qc.description, qc.type, qc.target,
@@ -7185,25 +7275,78 @@ def user_profile_page(login: str):
             xp_rank = int(rank_row[0]) if rank_row else None
 
     from collections import defaultdict
-    album_by_lineage = defaultdict(list)
-    for r in all_cms:
-        cm_key = r[0]
-        entry = {
-            "key": cm_key, "name": r[1], "lineage_key": r[2], "lineage_name": r[3], "media_url": r[4],
-            "forms": [{"stage":1,"name":r[5] or "","image_url":r[6] or ""},{"stage":2,"name":r[7] or "","image_url":r[8] or ""},{"stage":3,"name":r[9] or "","image_url":r[10] or ""}],
-            "owned": cm_key in owned_cms,
-            "is_active": any(o["cm_key"]==cm_key and o["is_active"] for o in owned_list),
-            "max_stage": max((o["stage"] for o in owned_list if o["cm_key"]==cm_key), default=0),
-        }
-        album_by_lineage[r[3]].append(entry)
 
-    album_sections = [{"lineage_name":ln,"cms":cms_list,"owned_count":sum(1 for c in cms_list if c["owned"])} for ln,cms_list in sorted(album_by_lineage.items())]
-    total_cms   = sum(len(s["cms"]) for s in album_sections)
-    owned_total = sum(s["owned_count"] for s in album_sections)
+    # --- Construire l'album à partir des découvertes ---
+    # Index des CM actifs pour le badge "actif"
+    active_cm_keys = {o["cm_key"] for o in owned_list if o["is_active"]}
+
+    # Regrouper les formes découvertes par (lineage_name, cm_key)
+    disc_by_lineage = defaultdict(lambda: defaultdict(list))
+    for r in discoveries_rows:
+        cm_key_d, stage_d, status_d, discovered_at_d, fname, fimg, lineage_key_d, lineage_name_d = r
+        disc_by_lineage[lineage_name_d][cm_key_d].append({
+            "stage": int(stage_d),
+            "status": status_d,
+            "name": fname,
+            "image_url": fimg,
+            "is_active": cm_key_d in active_cm_keys,
+        })
+
+    # Index du catalogue complet pour afficher les silhouettes
+    catalog_by_lineage = defaultdict(list)
+    for r in all_cms_catalog:
+        catalog_by_lineage[r[3]].append({"key": r[0], "name": r[1]})
+
+    # Construire les sections avec silhouettes pour les CM non découverts
+    all_lineage_names = sorted(set(
+        list(disc_by_lineage.keys()) + list(catalog_by_lineage.keys())
+    ))
+
+    album_sections = []
+    total_forms = 0
+    owned_forms = 0
+
+    for lineage_name in all_lineage_names:
+        cms_in_section = []
+        discovered_cms = set(disc_by_lineage[lineage_name].keys())
+
+        for cm_info in catalog_by_lineage.get(lineage_name, []):
+            cm_key_c = cm_info["key"]
+            if cm_key_c in disc_by_lineage[lineage_name]:
+                forms = sorted(disc_by_lineage[lineage_name][cm_key_c], key=lambda x: x["stage"])
+                is_currently_owned = cm_key_c in owned_cms
+                cms_in_section.append({
+                    "cm_key": cm_key_c,
+                    "discovered": True,
+                    "forms": forms,
+                    "is_active": cm_key_c in active_cm_keys,
+                    "is_currently_owned": is_currently_owned,
+                })
+                owned_forms += len(forms)
+            else:
+                # CM non découvert : silhouette
+                cms_in_section.append({
+                    "cm_key": cm_key_c,
+                    "discovered": False,
+                    "forms": [],
+                    "is_active": False,
+                    "is_currently_owned": False,
+                })
+            total_forms += 3  # 3 formes possibles par CM (stages 1,2,3)
+
+        section_owned = sum(len(c["forms"]) for c in cms_in_section if c["discovered"])
+        section_total = sum(3 for _ in catalog_by_lineage.get(lineage_name, []))
+        album_sections.append({
+            "lineage_name": lineage_name,
+            "cms": cms_in_section,
+            "owned_forms": section_owned,
+            "total_forms": section_total,
+        })
 
     page_data = {
         "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
-        "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
+        "album_sections": album_sections,
+        "owned_forms": owned_forms, "total_forms": total_forms,
         "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
     }
     return HTMLResponse(_render_user_page(login, page_data))
