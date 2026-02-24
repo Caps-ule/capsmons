@@ -3859,9 +3859,9 @@ body {
 /* ── CARTE TCG ── */
 .tcg-card {
   position: relative;
-  width: 320px;
+  width: 429px;
   /* ratio TCG standard ~1:1.4 */
-  height: 448px;
+  height: 600px;
 
   display: none;
   flex-direction: column;
