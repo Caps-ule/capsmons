@@ -1082,8 +1082,102 @@ def grant_xp(login: str, amount: int):
                     WHERE twitch_login=%s AND cm_key=%s;
                 """, (new_stage, login, cm_key))
 
+            _ensure_quests(cur, login)
+            _quest_progress(cur, login, 'xp', amount)
+            _quest_check_top10(cur, login)
+
         conn.commit()
 
+
+
+# =============================================================================
+# Quêtes hebdomadaires — helpers
+# =============================================================================
+
+import datetime as _dt
+
+def _current_week_start() -> "_dt.date":
+    today = _dt.date.today()
+    return today - _dt.timedelta(days=today.weekday())
+
+def _ensure_quests(cur, login: str) -> None:
+    import random as _random
+    week = _current_week_start()
+    cur.execute("SELECT quest_key FROM quest_assignments WHERE twitch_login=%s AND week_start=%s;", (login, week))
+    existing = {r[0] for r in cur.fetchall()}
+    if len(existing) >= 3:
+        return
+    cur.execute("SELECT key, is_fixed FROM quest_catalog WHERE is_active=TRUE ORDER BY id;")
+    catalog = cur.fetchall()
+    fixed   = [r[0] for r in catalog if r[1] and r[0] not in existing]
+    random_ = [r[0] for r in catalog if not r[1] and r[0] not in existing]
+    to_assign = []
+    for k in fixed[:2]:
+        if k not in existing:
+            to_assign.append(k)
+    if random_:
+        pick = _random.choice(random_)
+        if pick not in existing and pick not in to_assign:
+            to_assign.append(pick)
+    for k in to_assign:
+        cur.execute(
+            "INSERT INTO quest_assignments (twitch_login, quest_key, week_start) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING;",
+            (login, k, week)
+        )
+
+def _quest_progress(cur, login: str, quest_type: str, delta: int = 1) -> None:
+    week = _current_week_start()
+    cur.execute("""
+        UPDATE quest_assignments qa
+        SET progress = LEAST(
+                (SELECT target FROM quest_catalog WHERE key = qa.quest_key),
+                qa.progress + %s),
+            completed = (qa.progress + %s >= (SELECT target FROM quest_catalog WHERE key = qa.quest_key)),
+            completed_at = CASE
+                WHEN NOT qa.completed
+                 AND qa.progress + %s >= (SELECT target FROM quest_catalog WHERE key = qa.quest_key)
+                THEN now() ELSE qa.completed_at END
+        WHERE qa.twitch_login = %s
+          AND qa.week_start   = %s
+          AND qa.completed    = FALSE
+          AND (SELECT type FROM quest_catalog WHERE key = qa.quest_key) = %s;
+    """, (delta, delta, delta, login, week, quest_type))
+
+def _quest_check_top10(cur, login: str) -> None:
+    cur.execute("""
+        SELECT rank FROM (
+            SELECT twitch_login, RANK() OVER (ORDER BY xp_total DESC) as rank
+            FROM creatures_v2 WHERE is_active = TRUE
+        ) r WHERE twitch_login = %s;
+    """, (login,))
+    row = cur.fetchone()
+    if row and int(row[0]) <= 10:
+        _quest_progress(cur, login, 'top10', 1)
+
+def _quest_reward(cur, login: str) -> list:
+    week = _current_week_start()
+    cur.execute("""
+        SELECT qa.id, qa.quest_key, qc.reward_xp, qc.reward_item_key,
+               qc.reward_item_qty, qc.reward_badge, qc.label
+        FROM quest_assignments qa
+        JOIN quest_catalog qc ON qc.key = qa.quest_key
+        WHERE qa.twitch_login=%s AND qa.week_start=%s
+          AND qa.completed=TRUE AND qa.rewarded=FALSE;
+    """, (login, week))
+    rows = cur.fetchall()
+    rewards = []
+    for row in rows:
+        qa_id, quest_key, xp, item_key, item_qty, badge, label = row
+        if xp and xp > 0:
+            cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s,%s);", (login, xp))
+            cur.execute("UPDATE creatures_v2 SET xp_total=xp_total+%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (xp, login))
+        if item_key and item_qty > 0:
+            cur.execute("INSERT INTO inventory (twitch_login, item_key, qty) VALUES (%s,%s,%s) ON CONFLICT (twitch_login, item_key) DO UPDATE SET qty=inventory.qty+EXCLUDED.qty, updated_at=now();", (login, item_key, item_qty))
+        if badge:
+            cur.execute("INSERT INTO user_badges (twitch_login, badge_key) VALUES (%s,%s) ON CONFLICT DO NOTHING;", (login, badge))
+        cur.execute("UPDATE quest_assignments SET rewarded=TRUE WHERE id=%s;", (qa_id,))
+        rewards.append({"quest_key": quest_key, "label": label, "xp": xp, "item_key": item_key})
+    return rewards
 
 
 # =============================================================================
@@ -1588,6 +1682,58 @@ def init_db():
               sub_type TEXT,
               received_at TIMESTAMPTZ NOT NULL DEFAULT now()
             );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS quest_catalog (
+                id           SERIAL PRIMARY KEY,
+                key          TEXT UNIQUE NOT NULL,
+                label        TEXT NOT NULL,
+                description  TEXT NOT NULL DEFAULT '',
+                type         TEXT NOT NULL,
+                target       INT NOT NULL DEFAULT 1,
+                is_fixed     BOOLEAN NOT NULL DEFAULT FALSE,
+                reward_xp    INT NOT NULL DEFAULT 0,
+                reward_item_key  TEXT,
+                reward_item_qty  INT NOT NULL DEFAULT 1,
+                reward_badge TEXT,
+                is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS quest_assignments (
+                id           BIGSERIAL PRIMARY KEY,
+                twitch_login TEXT NOT NULL,
+                quest_key    TEXT NOT NULL REFERENCES quest_catalog(key),
+                week_start   DATE NOT NULL,
+                progress     INT NOT NULL DEFAULT 0,
+                completed    BOOLEAN NOT NULL DEFAULT FALSE,
+                completed_at TIMESTAMPTZ,
+                rewarded     BOOLEAN NOT NULL DEFAULT FALSE,
+                UNIQUE (twitch_login, quest_key, week_start)
+            );
+            CREATE INDEX IF NOT EXISTS idx_quest_assignments_login_week
+                ON quest_assignments(twitch_login, week_start);
+            CREATE TABLE IF NOT EXISTS user_badges (
+                twitch_login TEXT NOT NULL,
+                badge_key    TEXT NOT NULL,
+                earned_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (twitch_login, badge_key)
+            );
+            """)
+            cur.execute("""
+            INSERT INTO quest_catalog
+              (key, label, description, type, target, is_fixed, reward_xp, reward_item_key, reward_item_qty, reward_badge)
+            VALUES
+              ('presence_60min',  'Présence 60 min',   'Rester au moins 60 min en stream cette semaine', 'presence', 3600, TRUE,  50, NULL,             0, 'badge_present'),
+              ('drops_3',         'Chasseur de drops', 'Participer à 3 drops cette semaine',             'drops',       3, TRUE,  30, 'bonbon_2',       1, NULL),
+              ('candy_5',         'Gourmand',          'Faire manger 5 bonbons à ton CM',                'candy',       5, FALSE, 40, 'grande_capsule',  1, NULL),
+              ('xp_200',          'Grind XP',          'Gagner 200 XP en une semaine',                   'xp',        200, FALSE, 60, 'bonbon_2',       3, 'badge_grinder'),
+              ('top10',           'Élite',             'Atteindre le top 10 du classement XP',           'top10',       1, FALSE,100, NULL,             0, 'badge_elite'),
+              ('show_3',          'Vedette',           'Utiliser !show 3 fois cette semaine',             'show',        3, FALSE, 25, 'bonbon_2',       1, NULL),
+              ('coop_2',          'Esprit d''équipe',  'Participer à 2 drops COOP',                      'coop',        2, FALSE, 35, 'bonbon_2',       2, 'badge_coop'),
+              ('drops_5',         'Drop Addict',       'Participer à 5 drops cette semaine',             'drops',       5, FALSE, 50, 'grande_capsule',  1, NULL),
+              ('candy_10',        'Très gourmand',     'Faire manger 10 bonbons à ton CM',               'candy',      10, FALSE, 80, 'grande_capsule',  2, 'badge_gourmand'),
+              ('presence_120min', 'Fidèle',            'Rester au moins 2h en stream cette semaine',     'presence', 7200, FALSE, 75, NULL,             0, 'badge_loyal')
+            ON CONFLICT (key) DO NOTHING;
             """)
 
 
@@ -3198,6 +3344,12 @@ def drop_join(payload: dict, x_api_key: str | None = Header(default=None)):
                 cur.execute('INSERT INTO drop_participants (drop_id, twitch_login) VALUES (%s,%s);', (drop_id, login))
             except Exception:
                 joined = False
+
+            if joined:
+                _ensure_quests(cur, login)
+                _quest_progress(cur, login, 'drops', 1)
+                if mode == 'coop':
+                    _quest_progress(cur, login, 'coop', 1)
 
             cur.execute('SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;', (drop_id,))
             count = int(cur.fetchone()[0])
@@ -5726,6 +5878,9 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
 
             # Bonheur (piloté par items.happiness_gain)
             # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
+            if happiness_gain > 0:
+                _ensure_quests(cur, login)
+                _quest_progress(cur, login, 'candy', 1)
             new_happiness = max(0, min(100, active_h + happiness_gain))
 
             cur.execute(
@@ -5862,6 +6017,13 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                 happiness,
                 duration,
             ))
+        conn.commit()
+
+    # Tracking quête !show
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            _ensure_quests(cur, login)
+            _quest_progress(cur, login, 'show', 1)
         conn.commit()
 
     return {"ok": True}
@@ -6704,3 +6866,368 @@ def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
                 })
 
     return result
+
+
+# =============================================================================
+# USER PAGES — /u/{login}
+# =============================================================================
+
+def _stage_roman(n):
+    return {0: "Œuf", 1: "I", 2: "II", 3: "III"}.get(n, str(n))
+
+def _render_user_page(login: str, d: dict) -> str:
+    active   = d["active_cm"]
+    quests   = d["quests"]
+    badges   = d["badges"]
+    sections = d["album_sections"]
+    stats    = d["stats"]
+
+    if active and active.get("image_url"):
+        cm_card = f"""
+        <div class="cm-active-card">
+          <div class="cm-active-img-wrap">
+            <img src="{active['image_url']}" alt="{active['name']}" class="cm-active-img">
+            <div class="cm-active-glow"></div>
+          </div>
+          <div class="cm-active-info">
+            <div class="cm-active-name">{active['name']}</div>
+            <div class="cm-active-meta">
+              <span class="badge-pill c">{(active['lineage_key'] or '').upper()}</span>
+              <span class="badge-pill g">STAGE {_stage_roman(active['stage'])}</span>
+            </div>
+            <div class="stat-row" style="margin-top:10px">
+              <div class="stat-lbl">XP</div>
+              <div class="stat-track"><div class="stat-fill xp" style="width:{min(100, int((active['xp_total'] % 500)/5))}%"></div></div>
+              <div class="stat-val">{active['xp_total']}</div>
+            </div>
+            <div class="stat-row">
+              <div class="stat-lbl">BONHEUR</div>
+              <div class="stat-track"><div class="stat-fill hp" style="width:{active['happiness']}%"></div></div>
+              <div class="stat-val">{active['happiness']}%</div>
+            </div>
+          </div>
+        </div>"""
+    else:
+        cm_card = '<div class="cm-active-card empty"><div class="empty-msg">Pas encore de CM actif</div></div>'
+
+    def quest_icon(t):
+        return {"presence":"⏱","drops":"▽","candy":"🍬","xp":"⚡","top10":"🏆","show":"✨","coop":"🤝"}.get(t,"◈")
+
+    quest_cards = ""
+    for q in quests:
+        pct = int((q["progress"] / max(1, q["target"])) * 100)
+        done = "done" if q["completed"] else ""
+        rewards = []
+        if q["reward_xp"]:       rewards.append(f"<span class='r-xp'>+{q['reward_xp']} XP</span>")
+        if q["reward_item_key"]: rewards.append(f"<span class='r-item'>{q['reward_item_qty']}× {q['reward_item_key']}</span>")
+        if q["reward_badge"]:    rewards.append(f"<span class='r-badge'>🏅 badge</span>")
+        quest_cards += f"""
+        <div class="quest-card {done}">
+          <div class="quest-header">
+            <div class="quest-icon">{quest_icon(q['type'])}</div>
+            <div class="quest-body">
+              <div class="quest-label">{q['label']}</div>
+              <div class="quest-desc">{q['description']}</div>
+            </div>
+            {'<div class="quest-check">✓</div>' if q["completed"] else ''}
+          </div>
+          <div class="quest-progress-row">
+            <div class="quest-track"><div class="quest-fill" style="width:{pct}%"></div></div>
+            <div class="quest-count">{q['progress']}/{q['target']}</div>
+          </div>
+          <div class="quest-rewards">{"".join(rewards)}</div>
+        </div>"""
+
+    badge_labels = {
+        "badge_present":  ("⏱","Présent"),  "badge_grinder": ("⚡","Grinder"),
+        "badge_elite":    ("🏆","Élite"),    "badge_coop":    ("🤝","Teamplayer"),
+        "badge_loyal":    ("💙","Fidèle"),   "badge_gourmand":("🍬","Gourmand"),
+    }
+    if badges:
+        badges_html = "".join(
+            f'<div class="badge-item"><div class="badge-icon">{badge_labels.get(b["key"],("🏅",b["key"]))[0]}</div>'
+            f'<div class="badge-name">{badge_labels.get(b["key"],("🏅",b["key"]))[1]}</div></div>'
+            for b in badges)
+    else:
+        badges_html = '<div class="muted-sm">Aucun badge pour l\'instant</div>'
+
+    album_html = ""
+    for sec in sections:
+        cms_grid = ""
+        for c in sec["cms"]:
+            owned_cls  = "owned" if c["owned"] else "locked"
+            active_cls = "active" if c["is_active"] else ""
+            best = next((f for f in reversed(c["forms"]) if f["image_url"] and c["owned"]), None)
+            img_tag = f'<img src="{best["image_url"]}" alt="{c["name"]}">' if best else '<div class="silhouette">?</div>'
+            dots = "".join(f'<div class="stage-dot {"has" if c["max_stage"] >= st and c["owned"] else ""}"></div>' for st in [1,2,3])
+            cms_grid += f"""
+            <div class="album-card {owned_cls} {active_cls}" title="{c['name']}">
+              <div class="album-img-wrap">{img_tag}</div>
+              <div class="album-name">{"???" if not c["owned"] else c["name"]}</div>
+              <div class="album-stages">{dots}</div>
+            </div>"""
+        album_html += f"""
+        <div class="album-section">
+          <div class="section-header">
+            <div class="section-title">{sec['lineage_name'].upper()}</div>
+            <div class="section-count">{sec['owned_count']}/{len(sec['cms'])}</div>
+          </div>
+          <div class="album-grid">{cms_grid}</div>
+        </div>"""
+
+    rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
+    week_str = _current_week_start().strftime("%d/%m/%Y")
+    completed_count = sum(1 for q in quests if q["completed"])
+    album_pct = int((d["owned_total"] / max(1, d["total_cms"])) * 100)
+
+    return f"""<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>@{login} — CapsMons</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{{--bg:#060b12;--panel:#0a1220;--border:rgba(0,229,255,.12);--cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffd166;--text:#d8eaf8;--muted:#4a6a88;--font-head:'Orbitron',monospace;--font-ui:'Rajdhani',sans-serif;--font-mono:'Share Tech Mono',monospace;--radius:14px}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh}}
+a{{color:var(--cyan);text-decoration:none}}
+.wrap{{max-width:1100px;margin:0 auto;padding:24px 16px 60px}}
+.top-bar{{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}}
+.site-brand{{font-family:var(--font-head);font-size:11px;color:var(--muted);letter-spacing:.15em}}
+.page-title{{font-family:var(--font-head);font-size:20px;color:var(--cyan);text-shadow:0 0 20px rgba(0,229,255,.4)}}
+.grid-2{{display:grid;grid-template-columns:340px 1fr;gap:16px;margin-bottom:16px}}
+@media(max-width:760px){{.grid-2{{grid-template-columns:1fr}}}}
+.card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px}}
+.card-title{{font-family:var(--font-head);font-size:10px;letter-spacing:.14em;color:var(--muted);margin-bottom:14px}}
+.cm-active-card{{display:flex;gap:16px;align-items:flex-start}}
+.cm-active-card.empty{{justify-content:center;align-items:center;min-height:120px}}
+.empty-msg{{color:var(--muted);font-family:var(--font-mono);font-size:13px}}
+.cm-active-img-wrap{{position:relative;flex-shrink:0}}
+.cm-active-img{{width:96px;height:96px;border-radius:12px;object-fit:contain;background:rgba(0,229,255,.04);border:1px solid var(--border);display:block}}
+.cm-active-glow{{position:absolute;inset:-6px;border-radius:18px;background:radial-gradient(circle,rgba(0,229,255,.18) 0%,transparent 70%);animation:glow 2s ease-in-out infinite;pointer-events:none}}
+@keyframes glow{{0%,100%{{opacity:.5}}50%{{opacity:1}}}}
+.cm-active-info{{flex:1}}
+.cm-active-name{{font-family:var(--font-head);font-size:15px;color:var(--text);margin-bottom:8px}}
+.cm-active-meta{{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px}}
+.badge-pill{{font-family:var(--font-mono);font-size:9px;padding:2px 8px;border-radius:999px;border:1px solid}}
+.badge-pill.c{{color:var(--cyan);border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.06)}}
+.badge-pill.g{{color:var(--green);border-color:rgba(0,255,157,.3);background:rgba(0,255,157,.06)}}
+.stat-row{{display:flex;align-items:center;gap:8px;margin-bottom:6px}}
+.stat-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted);width:60px;flex-shrink:0}}
+.stat-track{{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+.stat-fill{{height:100%;border-radius:999px;transition:width .5s ease}}
+.stat-fill.xp{{background:linear-gradient(90deg,#7aa2ff,var(--cyan))}}
+.stat-fill.hp{{background:linear-gradient(90deg,#ff4fb3,var(--magenta))}}
+.stat-val{{font-family:var(--font-mono);font-size:10px;color:var(--muted);width:50px;text-align:right}}
+.kpi-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}}
+.kpi-card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center}}
+.kpi-val{{font-family:var(--font-head);font-size:22px;font-weight:900;margin-bottom:4px}}
+.kpi-val.c{{color:var(--cyan);text-shadow:0 0 15px rgba(0,229,255,.4)}}
+.kpi-val.g{{color:var(--green);text-shadow:0 0 15px rgba(0,255,157,.3)}}
+.kpi-val.m{{color:var(--magenta);text-shadow:0 0 15px rgba(255,45,120,.3)}}
+.kpi-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted);letter-spacing:.1em}}
+.quests-grid{{display:flex;flex-direction:column;gap:10px}}
+.quest-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:12px}}
+.quest-card.done{{border-color:rgba(0,255,157,.25);background:rgba(0,255,157,.03)}}
+.quest-header{{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}}
+.quest-icon{{font-size:20px;width:28px;text-align:center;flex-shrink:0}}
+.quest-body{{flex:1}}
+.quest-label{{font-size:14px;font-weight:700;color:var(--text)}}
+.quest-desc{{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:2px}}
+.quest-check{{font-size:18px;color:var(--green);text-shadow:0 0 10px rgba(0,255,157,.6)}}
+.quest-progress-row{{display:flex;align-items:center;gap:8px;margin-bottom:6px}}
+.quest-track{{flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+.quest-fill{{height:100%;background:linear-gradient(90deg,var(--cyan),#7aa2ff);border-radius:999px;transition:width .5s}}
+.quest-card.done .quest-fill{{background:linear-gradient(90deg,var(--green),#00e5ff)}}
+.quest-count{{font-family:var(--font-mono);font-size:10px;color:var(--muted);flex-shrink:0}}
+.quest-rewards{{display:flex;gap:6px;flex-wrap:wrap}}
+.r-xp{{font-family:var(--font-mono);font-size:10px;color:var(--cyan);padding:2px 7px;border:1px solid rgba(0,229,255,.3);border-radius:999px}}
+.r-item{{font-family:var(--font-mono);font-size:10px;color:var(--amber);padding:2px 7px;border:1px solid rgba(255,209,102,.3);border-radius:999px}}
+.r-badge{{font-family:var(--font-mono);font-size:10px;color:var(--magenta);padding:2px 7px;border:1px solid rgba(255,45,120,.3);border-radius:999px}}
+.badges-row{{display:flex;gap:10px;flex-wrap:wrap}}
+.badge-item{{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;border:1px solid rgba(255,209,102,.2);border-radius:10px;background:rgba(255,209,102,.04);min-width:60px}}
+.badge-icon{{font-size:22px}}
+.badge-name{{font-family:var(--font-mono);font-size:9px;color:var(--amber);letter-spacing:.08em}}
+.muted-sm{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
+.album-section{{margin-bottom:24px}}
+.section-header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}}
+.section-title{{font-family:var(--font-head);font-size:11px;color:var(--cyan);letter-spacing:.14em}}
+.section-count{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
+.album-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px}}
+.album-card{{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px;text-align:center;transition:border-color .2s,transform .15s;position:relative}}
+.album-card.owned{{border-color:rgba(0,229,255,.2)}}
+.album-card.owned.active{{border-color:rgba(0,255,157,.4);box-shadow:0 0 12px rgba(0,255,157,.15)}}
+.album-card.locked{{opacity:.4;filter:grayscale(.5)}}
+.album-card:hover{{transform:translateY(-2px)}}
+.album-img-wrap{{width:60px;height:60px;margin:0 auto 6px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center}}
+.album-img-wrap img{{width:100%;height:100%;object-fit:contain}}
+.silhouette{{font-size:24px;color:var(--muted)}}
+.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.album-stages{{display:flex;justify-content:center;gap:3px}}
+.stage-dot{{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15)}}
+.stage-dot.has{{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 4px rgba(0,229,255,.6)}}
+.album-progress-bar{{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;margin:6px 0 4px}}
+.album-progress-fill{{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:999px;transition:width .8s ease}}
+.album-stats-row{{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
+.week-badge{{font-family:var(--font-mono);font-size:10px;color:var(--muted);padding:4px 10px;border:1px solid var(--border);border-radius:999px}}
+body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 60% 40% at 50% 0%,rgba(0,229,255,.04) 0%,transparent 70%)}}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <div><div class="site-brand">CAPSMONS</div><div class="page-title">@{login}</div></div>
+    <div class="week-badge">Semaine du {week_str}</div>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi-card"><div class="kpi-val c">{stats['xp_total']:,}</div><div class="kpi-lbl">XP TOTAL</div></div>
+    <div class="kpi-card"><div class="kpi-val g">{stats['drops_total']}</div><div class="kpi-lbl">DROPS</div></div>
+    <div class="kpi-card"><div class="kpi-val m">{rank_str}</div><div class="kpi-lbl">CLASSEMENT</div></div>
+  </div>
+  <div class="grid-2">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card"><div class="card-title">// MON CAPSMÖN ACTIF</div>{cm_card}</div>
+      <div class="card"><div class="card-title">// BADGES</div><div class="badges-row">{badges_html}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>// QUÊTES DE LA SEMAINE</span>
+        <span style="color:var(--green);font-size:11px">{completed_count}/{len(quests)} complétées</span>
+      </div>
+      <div class="quests-grid">{quest_cards or '<div class="muted-sm">Aucune quête assignée</div>'}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">// ALBUM CAPSMONS</div>
+    <div class="album-progress-bar"><div class="album-progress-fill" style="width:{album_pct}%"></div></div>
+    <div class="album-stats-row"><span>{d['owned_total']} possédés</span><span>{d['total_cms']} total</span></div>
+    {album_html}
+  </div>
+</div>
+<script>setInterval(()=>location.reload(),60000);</script>
+</body></html>"""
+
+
+@app.get("/u/{login}", response_class=HTMLResponse)
+def user_profile_page(login: str):
+    login = login.strip().lower()
+    week  = _current_week_start()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (login,))
+            if not cur.fetchone():
+                return HTMLResponse(f"<html><body style='background:#060b12;color:#d8eaf8;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh'><div>Viewer introuvable : @{login}</div></body></html>", status_code=404)
+            _ensure_quests(cur, login)
+            _quest_reward(cur, login)
+        conn.commit()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.cm_key, c.lineage_key, c.stage, c.xp_total, c.happiness,
+                       COALESCE(f.name, c.cm_key), COALESCE(f.image_url,'')
+                FROM creatures_v2 c
+                LEFT JOIN cm_forms f ON f.cm_key=c.cm_key AND f.stage=c.stage
+                WHERE c.twitch_login=%s AND c.is_active=TRUE LIMIT 1;
+            """, (login,))
+            row = cur.fetchone()
+            active_cm = {"cm_key":row[0],"lineage_key":row[1],"stage":int(row[2] or 0),"xp_total":int(row[3] or 0),"happiness":int(row[4] or 0),"name":row[5],"image_url":row[6]} if row else None
+
+            cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
+            owned_cms = {r[0] for r in cur.fetchall()}
+
+            cur.execute("""
+                SELECT c.cm_key, c.lineage_key, c.stage, c.xp_total, c.is_active,
+                       COALESCE(f.name, c.cm_key), COALESCE(f.image_url,'')
+                FROM creatures_v2 c
+                LEFT JOIN cm_forms f ON f.cm_key=c.cm_key AND f.stage=c.stage
+                WHERE c.twitch_login=%s ORDER BY c.is_active DESC, c.xp_total DESC;
+            """, (login,))
+            owned_list = [{"cm_key":r[0],"lineage_key":r[1],"stage":int(r[2] or 0),"xp_total":int(r[3] or 0),"is_active":bool(r[4]),"name":r[5],"image_url":r[6]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT c.key, c.name, c.lineage_key, l.name,
+                       COALESCE(c.media_url,''),
+                       f1.name, f1.image_url, f2.name, f2.image_url, f3.name, f3.image_url
+                FROM cms c JOIN lineages l ON l.key=c.lineage_key
+                LEFT JOIN cm_forms f1 ON f1.cm_key=c.key AND f1.stage=1
+                LEFT JOIN cm_forms f2 ON f2.cm_key=c.key AND f2.stage=2
+                LEFT JOIN cm_forms f3 ON f3.cm_key=c.key AND f3.stage=3
+                WHERE c.is_enabled=TRUE ORDER BY c.lineage_key, c.key;
+            """)
+            all_cms = cur.fetchall()
+
+            cur.execute("""
+                SELECT qa.quest_key, qc.label, qc.description, qc.type, qc.target,
+                       qa.progress, qa.completed, qa.rewarded,
+                       qc.reward_xp, qc.reward_item_key, qc.reward_item_qty, qc.reward_badge
+                FROM quest_assignments qa
+                JOIN quest_catalog qc ON qc.key=qa.quest_key
+                WHERE qa.twitch_login=%s AND qa.week_start=%s
+                ORDER BY qc.is_fixed DESC, qa.completed ASC;
+            """, (login, week))
+            quests = [{"key":r[0],"label":r[1],"description":r[2],"type":r[3],"target":int(r[4]),"progress":int(r[5]),"completed":bool(r[6]),"rewarded":bool(r[7]),"reward_xp":int(r[8] or 0),"reward_item_key":r[9],"reward_item_qty":int(r[10] or 0),"reward_badge":r[11]} for r in cur.fetchall()]
+
+            cur.execute("SELECT badge_key, earned_at FROM user_badges WHERE twitch_login=%s ORDER BY earned_at DESC;", (login,))
+            badges = [{"key":r[0],"earned_at":r[1].strftime("%d/%m/%Y")} for r in cur.fetchall()]
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE twitch_login=%s;", (login,))
+            xp_total_all = int(cur.fetchone()[0])
+
+            cur.execute("SELECT COUNT(DISTINCT drop_id) FROM drop_participants WHERE twitch_login=%s;", (login,))
+            drops_total = int(cur.fetchone()[0])
+
+            cur.execute("""
+                SELECT rank FROM (SELECT twitch_login, RANK() OVER (ORDER BY xp_total DESC) as rank
+                FROM creatures_v2 WHERE is_active=TRUE) r WHERE twitch_login=%s;
+            """, (login,))
+            rank_row = cur.fetchone()
+            xp_rank = int(rank_row[0]) if rank_row else None
+
+    from collections import defaultdict
+    album_by_lineage = defaultdict(list)
+    for r in all_cms:
+        cm_key = r[0]
+        entry = {
+            "key": cm_key, "name": r[1], "lineage_key": r[2], "lineage_name": r[3], "media_url": r[4],
+            "forms": [{"stage":1,"name":r[5] or "","image_url":r[6] or ""},{"stage":2,"name":r[7] or "","image_url":r[8] or ""},{"stage":3,"name":r[9] or "","image_url":r[10] or ""}],
+            "owned": cm_key in owned_cms,
+            "is_active": any(o["cm_key"]==cm_key and o["is_active"] for o in owned_list),
+            "max_stage": max((o["stage"] for o in owned_list if o["cm_key"]==cm_key), default=0),
+        }
+        album_by_lineage[r[3]].append(entry)
+
+    album_sections = [{"lineage_name":ln,"cms":cms_list,"owned_count":sum(1 for c in cms_list if c["owned"])} for ln,cms_list in sorted(album_by_lineage.items())]
+    total_cms   = sum(len(s["cms"]) for s in album_sections)
+    owned_total = sum(s["owned_count"] for s in album_sections)
+
+    page_data = {
+        "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
+        "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
+        "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
+    }
+    return HTMLResponse(_render_user_page(login, page_data))
+
+
+@app.get("/u/{login}/quests.json")
+def user_quests_json(login: str):
+    login = login.strip().lower()
+    week  = _current_week_start()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (login,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="User not found")
+            _ensure_quests(cur, login)
+            rewards = _quest_reward(cur, login)
+        conn.commit()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT qa.quest_key, qc.label, qc.type, qc.target, qa.progress,
+                       qa.completed, qa.rewarded, qc.reward_xp, qc.reward_item_key, qc.reward_item_qty
+                FROM quest_assignments qa JOIN quest_catalog qc ON qc.key=qa.quest_key
+                WHERE qa.twitch_login=%s AND qa.week_start=%s ORDER BY qc.is_fixed DESC, qa.completed ASC;
+            """, (login, week))
+            quests = [{"key":r[0],"label":r[1],"type":r[2],"target":r[3],"progress":r[4],"completed":r[5],"rewarded":r[6],"reward_xp":r[7],"reward_item_key":r[8],"reward_item_qty":r[9]} for r in cur.fetchall()]
+    return {"quests": quests, "rewards_given": rewards, "week_start": str(week)}
