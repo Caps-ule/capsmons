@@ -4759,6 +4759,609 @@ fetchList().then(loop);
 </html>""")
 
 
+
+# =============================================================================
+# PREVIEW — Simulateur overlays pour réseaux sociaux
+# =============================================================================
+
+@app.get("/preview/data")
+def preview_data(credentials: HTTPBasicCredentials = Depends(security)):
+    """Retourne la liste de tous les CMs avec leurs formes pour le simulateur."""
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.key, c.name,
+                       json_agg(
+                         json_build_object(
+                           'stage', f.stage,
+                           'name', f.name,
+                           'image_url', COALESCE(f.image_url,''),
+                           'sound_url', COALESCE(f.sound_url,'')
+                         ) ORDER BY f.stage
+                       ) AS forms
+                FROM cms c
+                JOIN cm_forms f ON f.cm_key = c.key
+                WHERE c.is_enabled = TRUE
+                GROUP BY c.key, c.name
+                ORDER BY c.name;
+            """)
+            rows = cur.fetchall()
+    return {"cms": [{"key": r[0], "name": r[1], "forms": r[2]} for r in rows]}
+
+
+@app.post("/preview/push_show")
+def preview_push_show(
+    payload: dict,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    """Injecte un show fictif dans overlay_events (dure 30s)."""
+    require_admin(credentials)
+
+    viewer   = str(payload.get("viewer", "preview")).strip().lower() or "preview"
+    avatar   = str(payload.get("avatar", "")).strip()
+    cm_key   = str(payload.get("cm_key", "")).strip()
+    stage    = int(payload.get("stage", 1))
+    cm_name  = str(payload.get("cm_name", "")).strip()
+    image_url= str(payload.get("image_url", "")).strip()
+    xp_total = int(payload.get("xp_total", 100))
+    happiness= int(payload.get("happiness", 80))
+
+    if not cm_key or not image_url:
+        raise HTTPException(400, "cm_key et image_url requis")
+
+    stage_start, next_xp = stage_bounds(stage)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO overlay_events
+                  (twitch_login, viewer_display, viewer_avatar,
+                   cm_key, cm_name, cm_media_url,
+                   xp_total, stage, stage_start_xp, next_stage_xp,
+                   happiness, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                        now() + interval '30 seconds');
+            """, (viewer, viewer, avatar,
+                  cm_key, cm_name, image_url,
+                  xp_total, stage, stage_start, next_xp,
+                  happiness))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/preview/push_evolution")
+def preview_push_evolution(
+    payload: dict,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    """Injecte une évolution fictive dans overlay_evolutions (dure 30s)."""
+    require_admin(credentials)
+
+    viewer    = str(payload.get("viewer", "preview")).strip() or "preview"
+    cm_key    = str(payload.get("cm_key", "")).strip()
+    stage     = int(payload.get("stage", 2))
+    name      = str(payload.get("name", "")).strip()
+    image_url = str(payload.get("image_url", "")).strip()
+    sound_url = str(payload.get("sound_url", "")).strip()
+
+    if not image_url:
+        raise HTTPException(400, "image_url requis")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO overlay_evolutions
+                  (twitch_login, viewer_display, viewer_avatar,
+                   cm_key, stage, name, image_url, sound_url, expires_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,
+                        now() + interval '30 seconds');
+            """, (viewer, viewer, "",
+                  cm_key, stage, name, image_url, sound_url))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/preview", response_class=HTMLResponse)
+def preview_page(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    return HTMLResponse(_render_preview_page())
+
+
+def _render_preview_page() -> str:
+    return """<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CapsMöns — Preview Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060810;--panel:#0a0d18;--panel2:#0d1121;
+  --border:#1a2540;--border2:#243060;
+  --cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffb700;
+  --text:#c8d4f0;--muted:#5a6a90;
+  --font-head:'Orbitron',monospace;
+  --font-ui:'Rajdhani',sans-serif;
+  --font-mono:'Share Tech Mono',monospace;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;display:flex;flex-direction:column}
+body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px);pointer-events:none;z-index:9999}
+
+/* ── Topbar ── */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
+.topbar-logo{font-family:var(--font-head);font-size:16px;font-weight:900;color:var(--cyan);text-shadow:0 0 20px rgba(0,229,255,.4);letter-spacing:.1em}
+.topbar-badge{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:10px}
+.back-link{font-family:var(--font-mono);font-size:11px;color:var(--muted);text-decoration:none}
+.back-link:hover{color:var(--cyan)}
+
+/* ── Layout ── */
+.layout{flex:1;display:grid;grid-template-columns:340px 1fr;gap:0;overflow:hidden}
+
+/* ── Panneau gauche (contrôles) ── */
+.controls{background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:20px}
+.ctrl-section{margin-bottom:24px}
+.ctrl-title{font-family:var(--font-head);font-size:11px;letter-spacing:.14em;color:var(--cyan);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.form-group{margin-bottom:12px}
+.form-label{font-family:var(--font-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+input[type=text],input[type=number],select{
+  width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;color:var(--text);
+  font-family:var(--font-mono);font-size:13px;outline:none;
+  transition:border-color .2s;
+}
+input:focus,select:focus{border-color:rgba(0,229,255,.5)}
+input::placeholder{color:var(--muted)}
+select option{background:#0a0d18}
+
+/* Range custom */
+.range-wrap{display:flex;align-items:center;gap:10px}
+input[type=range]{flex:1;accent-color:var(--cyan);height:4px}
+.range-val{font-family:var(--font-mono);font-size:12px;color:var(--cyan);min-width:36px;text-align:right}
+
+/* Tabs show/evo */
+.tabs{display:flex;gap:2px;margin-bottom:20px;background:var(--panel2);border-radius:10px;padding:3px}
+.tab{flex:1;padding:10px;text-align:center;font-family:var(--font-head);font-size:10px;font-weight:700;letter-spacing:.1em;cursor:pointer;border-radius:8px;color:var(--muted);transition:all .15s}
+.tab.active{background:var(--cyan);color:#060810}
+
+/* Boutons */
+.btn{border:none;border-radius:8px;padding:11px 20px;font-family:var(--font-head);font-size:11px;font-weight:700;letter-spacing:.08em;cursor:pointer;transition:opacity .15s,transform .1s;width:100%;margin-bottom:8px}
+.btn:hover{opacity:.85;transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-cyan{background:var(--cyan);color:#060810}
+.btn-magenta{background:var(--magenta);color:#fff}
+.btn-green{background:var(--green);color:#060810}
+.btn-dim{background:var(--border2);color:var(--text)}
+
+/* Status */
+.status{font-family:var(--font-mono);font-size:11px;min-height:16px;margin-top:4px}
+.ok{color:var(--green)}.err{color:var(--magenta)}
+
+/* ── Zone preview (droite) ── */
+.preview-area{display:flex;flex-direction:column;overflow:hidden}
+.preview-toolbar{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--panel2);border-bottom:1px solid var(--border);flex-shrink:0}
+.preview-toolbar-label{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.bg-btns{display:flex;gap:6px}
+.bg-btn{padding:6px 14px;border-radius:6px;font-family:var(--font-mono);font-size:11px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:var(--panel);transition:all .15s}
+.bg-btn.active{border-color:var(--cyan);color:var(--cyan);background:rgba(0,229,255,.08)}
+.btn-capture{margin-left:auto;background:var(--magenta);color:#fff;border:none;border-radius:8px;padding:8px 20px;font-family:var(--font-head);font-size:11px;font-weight:700;cursor:pointer;transition:opacity .15s,transform .1s;letter-spacing:.08em}
+.btn-capture:hover{opacity:.85;transform:translateY(-1px)}
+
+/* Stage / canvas preview */
+.preview-stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;transition:background .3s}
+.preview-stage.bg-dark{background:#060810}
+.preview-stage.bg-cyber{background:linear-gradient(135deg,#060810 0%,#0a1628 40%,#060c1a 100%)}
+.preview-stage.bg-transparent{background:repeating-conic-gradient(#1a2540 0% 25%,#0d1525 0% 50%) 0 0/20px 20px}
+
+/* Iframe overlay */
+.overlay-frame{
+  border:none;background:transparent;
+  pointer-events:none;
+  transform-origin:center center;
+}
+
+/* CM preview card (à gauche dans le contrôleur) */
+.cm-mini{display:flex;align-items:center;gap:10px;padding:10px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;margin-bottom:14px}
+.cm-mini img{width:48px;height:48px;object-fit:contain;border-radius:8px;image-rendering:pixelated}
+.cm-mini-info{flex:1;min-width:0}
+.cm-mini-name{font-family:var(--font-head);font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cm-mini-stage{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:2px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <span class="topbar-logo">CAPSMÖNS</span>
+    <span class="topbar-badge">// Preview Studio</span>
+  </div>
+  <a href="/admin" class="back-link">← Retour admin</a>
+</div>
+
+<div class="layout">
+
+  <!-- ── Panneau contrôles ── -->
+  <div class="controls">
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" id="tab-show" onclick="switchTab('show')">◈ SHOW</div>
+      <div class="tab" id="tab-evo" onclick="switchTab('evo')">◇ ÉVOLUTION</div>
+    </div>
+
+    <!-- ══ SHOW ══ -->
+    <div id="panel-show">
+      <div class="ctrl-section">
+        <div class="ctrl-title">◎ VIEWER FICTIF</div>
+        <div class="form-group">
+          <div class="form-label">Pseudo Twitch</div>
+          <input type="text" id="show-viewer" value="capsule_fan" placeholder="pseudo_twitch">
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-title">◈ CAPSMÖNS</div>
+        <div class="cm-mini" id="show-cm-preview">
+          <div style="width:48px;height:48px;border-radius:8px;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:20px">?</div>
+          <div class="cm-mini-info">
+            <div class="cm-mini-name" id="show-cm-name-preview">Sélectionner un CM</div>
+            <div class="cm-mini-stage" id="show-cm-stage-preview">—</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">CapsMöns</div>
+          <select id="show-cm-select" onchange="onCMChange()"></select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Forme (Stage)</div>
+          <select id="show-form-select" onchange="onFormChange()"></select>
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-title">◉ STATS</div>
+        <div class="form-group">
+          <div class="form-label">XP Total</div>
+          <input type="number" id="show-xp" value="150" min="0" max="9999" oninput="updateXPSlider()">
+        </div>
+        <div class="form-group">
+          <div class="form-label">Bonheur : <span id="show-hap-val">80</span>%</div>
+          <div class="range-wrap">
+            <input type="range" id="show-hap" min="0" max="100" value="80"
+                   oninput="document.getElementById('show-hap-val').textContent=this.value">
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-cyan" onclick="pushShow()">▶ Simuler le Show</button>
+      <div class="status" id="show-status"></div>
+    </div>
+
+    <!-- ══ ÉVOLUTION ══ -->
+    <div id="panel-evo" style="display:none">
+      <div class="ctrl-section">
+        <div class="ctrl-title">◎ VIEWER FICTIF</div>
+        <div class="form-group">
+          <div class="form-label">Pseudo Twitch</div>
+          <input type="text" id="evo-viewer" value="capsule_fan" placeholder="pseudo_twitch">
+        </div>
+      </div>
+
+      <div class="ctrl-section">
+        <div class="ctrl-title">◇ NOUVELLE FORME</div>
+        <div class="cm-mini" id="evo-cm-preview">
+          <div style="width:48px;height:48px;border-radius:8px;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:20px">?</div>
+          <div class="cm-mini-info">
+            <div class="cm-mini-name" id="evo-cm-name-preview">Sélectionner un CM</div>
+            <div class="cm-mini-stage" id="evo-cm-stage-preview">—</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">CapsMöns</div>
+          <select id="evo-cm-select" onchange="onEvoCMChange()"></select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Forme d'arrivée</div>
+          <select id="evo-form-select" onchange="onEvoFormChange()"></select>
+        </div>
+      </div>
+
+      <button class="btn btn-magenta" onclick="pushEvo()">⚡ Simuler l'Évolution</button>
+      <div class="status" id="evo-status"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Zone preview ── -->
+  <div class="preview-area">
+    <div class="preview-toolbar">
+      <span class="preview-toolbar-label">Fond :</span>
+      <div class="bg-btns">
+        <button class="bg-btn active" onclick="setBg(this,'bg-dark')">◼ Sombre</button>
+        <button class="bg-btn" onclick="setBg(this,'bg-cyber')">◈ Cyberpunk</button>
+        <button class="bg-btn" onclick="setBg(this,'bg-transparent')">⬡ Grille</button>
+      </div>
+      <button class="btn-capture" onclick="captureOverlay()">📷 Capturer PNG</button>
+    </div>
+    <div class="preview-stage bg-dark" id="preview-stage">
+      <iframe id="overlay-frame" class="overlay-frame"
+              src="/overlay/show"
+              scrolling="no"
+              allowtransparency="true">
+      </iframe>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── État global ──────────────────────────────────────────────────────────────
+let cmsData  = [];
+let activeTab = 'show';
+
+// ── Chargement des CMs ───────────────────────────────────────────────────────
+async function loadCMs() {
+  try {
+    const r = await fetch('/preview/data');
+    const d = await r.json();
+    cmsData = d.cms || [];
+    buildCMSelects();
+    onCMChange();
+    onEvoCMChange();
+  } catch(e) {
+    console.error('loadCMs:', e);
+  }
+}
+
+function buildCMSelects() {
+  const html = cmsData.map(c =>
+    `<option value="${c.key}">${c.name}</option>`
+  ).join('');
+  document.getElementById('show-cm-select').innerHTML = html;
+  document.getElementById('evo-cm-select').innerHTML  = html;
+}
+
+function getFormsFor(cmKey) {
+  const cm = cmsData.find(c => c.key === cmKey);
+  return cm ? cm.forms : [];
+}
+
+function buildFormSelect(selectId, cmKey, minStage = 1) {
+  const forms = getFormsFor(cmKey).filter(f => f.stage >= minStage);
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = forms.map(f =>
+    `<option value="${f.stage}" data-name="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url}">
+      Stage ${f.stage} — ${f.name}
+    </option>`
+  ).join('');
+}
+
+// ── Show ─────────────────────────────────────────────────────────────────────
+function onCMChange() {
+  const cmKey = document.getElementById('show-cm-select').value;
+  buildFormSelect('show-form-select', cmKey, 0);
+  onFormChange();
+}
+
+function onFormChange() {
+  const cmKey = document.getElementById('show-cm-select').value;
+  const sel   = document.getElementById('show-form-select');
+  const opt   = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  const name = opt.dataset.name;
+  const img  = opt.dataset.img;
+  const stage = parseInt(opt.value);
+  const cm    = cmsData.find(c => c.key === cmKey);
+
+  // Mise à jour mini-preview
+  document.getElementById('show-cm-name-preview').textContent  = name || cm?.name || '—';
+  document.getElementById('show-cm-stage-preview').textContent = `Stage ${stage} · ${cmKey}`;
+  const previewEl = document.getElementById('show-cm-preview');
+  if (img) {
+    previewEl.innerHTML = `
+      <img src="${img}" onerror="this.style.display='none'">
+      <div class="cm-mini-info">
+        <div class="cm-mini-name">${name}</div>
+        <div class="cm-mini-stage">Stage ${stage} · ${cmKey}</div>
+      </div>`;
+  }
+}
+
+async function pushShow() {
+  const cmKey  = document.getElementById('show-cm-select').value;
+  const sel    = document.getElementById('show-form-select');
+  const opt    = sel.options[sel.selectedIndex];
+  if (!opt) { setStatus('show', 'Aucune forme disponible', true); return; }
+
+  const body = {
+    viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
+    cm_key:    cmKey,
+    stage:     parseInt(opt.value),
+    cm_name:   opt.dataset.name,
+    image_url: opt.dataset.img,
+    xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
+    happiness: parseInt(document.getElementById('show-hap').value) || 0,
+  };
+
+  await apiPost('/preview/push_show', body, 'show', '✓ Show injecté ! (30s)');
+
+  // Switcher l'iframe sur show si besoin
+  switchFrame('show');
+}
+
+// ── Évolution ────────────────────────────────────────────────────────────────
+function onEvoCMChange() {
+  const cmKey = document.getElementById('evo-cm-select').value;
+  buildFormSelect('evo-form-select', cmKey, 1); // stage >= 1
+  onEvoFormChange();
+}
+
+function onEvoFormChange() {
+  const cmKey = document.getElementById('evo-cm-select').value;
+  const sel   = document.getElementById('evo-form-select');
+  const opt   = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  const name  = opt.dataset.name;
+  const img   = opt.dataset.img;
+  const stage = parseInt(opt.value);
+
+  document.getElementById('evo-cm-name-preview').textContent  = name || '—';
+  document.getElementById('evo-cm-stage-preview').textContent = `Stage ${stage} · ${cmKey}`;
+  const previewEl = document.getElementById('evo-cm-preview');
+  if (img) {
+    previewEl.innerHTML = `
+      <img src="${img}" onerror="this.style.display='none'">
+      <div class="cm-mini-info">
+        <div class="cm-mini-name">${name}</div>
+        <div class="cm-mini-stage">Stage ${stage} · ${cmKey}</div>
+      </div>`;
+  }
+}
+
+async function pushEvo() {
+  const cmKey = document.getElementById('evo-cm-select').value;
+  const sel   = document.getElementById('evo-form-select');
+  const opt   = sel.options[sel.selectedIndex];
+  if (!opt) { setStatus('evo', 'Aucune forme disponible', true); return; }
+
+  const body = {
+    viewer:    document.getElementById('evo-viewer').value.trim() || 'preview',
+    cm_key:    cmKey,
+    stage:     parseInt(opt.value),
+    name:      opt.dataset.name,
+    image_url: opt.dataset.img,
+    sound_url: opt.dataset.snd || '',
+  };
+
+  await apiPost('/preview/push_evolution', body, 'evo', '✓ Évolution injectée ! (30s)');
+  switchFrame('evo');
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+async function apiPost(url, body, tab, successMsg) {
+  setStatus(tab, '⟳ En cours…', false);
+  try {
+    const r = await fetch(url, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) {
+      setStatus(tab, successMsg, false);
+    } else {
+      setStatus(tab, '✕ ' + (d.detail || r.status), true);
+    }
+  } catch(e) {
+    setStatus(tab, '✕ Erreur réseau', true);
+  }
+}
+
+function setStatus(tab, msg, isErr) {
+  const el = document.getElementById(tab + '-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.className   = 'status ' + (isErr ? 'err' : 'ok');
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-show').classList.toggle('active', tab === 'show');
+  document.getElementById('tab-evo').classList.toggle('active',  tab === 'evo');
+  document.getElementById('panel-show').style.display = tab === 'show' ? '' : 'none';
+  document.getElementById('panel-evo').style.display  = tab === 'evo'  ? '' : 'none';
+}
+
+// ── Iframe switch ─────────────────────────────────────────────────────────────
+let currentFrame = 'show';
+function switchFrame(type) {
+  if (currentFrame === type) {
+    // Recharger pour forcer le refresh de l'overlay
+    const f = document.getElementById('overlay-frame');
+    const src = type === 'show' ? '/overlay/show' : '/overlay/evolution';
+    if (f.src !== location.origin + src) {
+      f.src = src;
+    }
+    return;
+  }
+  currentFrame = type;
+  const f = document.getElementById('overlay-frame');
+  f.src = type === 'show' ? '/overlay/show' : '/overlay/evolution';
+  resizeFrame();
+}
+
+// ── Redimensionnement iframe selon le type ────────────────────────────────────
+function resizeFrame() {
+  const stage = document.getElementById('preview-stage');
+  const frame = document.getElementById('overlay-frame');
+  const W = stage.clientWidth;
+  const H = stage.clientHeight;
+
+  if (currentFrame === 'evolution') {
+    // Overlay évolution : carré centré
+    const size = Math.min(W, H) * 0.75;
+    frame.style.width  = size + 'px';
+    frame.style.height = size + 'px';
+    frame.style.transform = '';
+  } else {
+    // Overlay show : 800×400 scaled
+    const OW = 800, OH = 400;
+    const scale = Math.min((W * 0.85) / OW, (H * 0.85) / OH);
+    frame.style.width  = OW + 'px';
+    frame.style.height = OH + 'px';
+    frame.style.transform = `scale(${scale})`;
+  }
+}
+
+window.addEventListener('resize', resizeFrame);
+resizeFrame();
+
+// ── Fond ─────────────────────────────────────────────────────────────────────
+function setBg(btn, cls) {
+  document.querySelectorAll('.bg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const stage = document.getElementById('preview-stage');
+  stage.className = 'preview-stage ' + cls;
+}
+
+// ── Capture PNG ──────────────────────────────────────────────────────────────
+async function captureOverlay() {
+  const btn = document.querySelector('.btn-capture');
+  btn.textContent = '⟳ Capture…';
+  btn.disabled = true;
+  try {
+    const stage = document.getElementById('preview-stage');
+    const canvas = await html2canvas(stage, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: null,
+      logging: false,
+    });
+    const link = document.createElement('a');
+    const ts   = new Date().toISOString().slice(0,19).replace(/[T:]/g, '-');
+    link.download = `capsmons-${currentFrame}-${ts}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    btn.textContent = '✓ Téléchargé !';
+    setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
+  } catch(e) {
+    btn.textContent = '✕ Erreur';
+    btn.disabled = false;
+    console.error(e);
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+loadCMs();
+</script>
+</body>
+</html>"""
+
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
     return HTMLResponse("""<!doctype html>
