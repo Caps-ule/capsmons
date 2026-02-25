@@ -534,6 +534,85 @@
       z-index: 9999;
     }
     [data-theme="light"] #main::before { display: none; }
+
+    /* ─── MEDIA LIBRARY ─────────────────────────────────────── */
+    .upload-zone {
+      border: 2px dashed var(--border2);
+      border-radius: 10px;
+      padding: 28px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      background: var(--bg2);
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag { border-color: var(--cyan); background: rgba(0,229,255,.04); }
+    .upload-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+    .upload-zone-text { font-family: var(--font-mono); font-size: 13px; color: var(--muted); pointer-events: none; }
+    .upload-zone-text strong { color: var(--cyan); }
+
+    .media-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .media-item {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      transition: border-color .15s;
+    }
+    .media-item:hover { border-color: var(--cyan); }
+    .media-thumb {
+      width: 100%; height: 100px;
+      object-fit: contain;
+      background: var(--bg2);
+      padding: 6px;
+      display: block;
+      image-rendering: pixelated;
+    }
+    .media-audio-icon {
+      width: 100%; height: 100px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px;
+      background: var(--bg2);
+    }
+    .media-info {
+      padding: 6px 8px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .media-actions {
+      display: flex; gap: 4px;
+      padding: 0 6px 6px;
+    }
+    .media-actions button { flex: 1; }
+    .media-empty { color: var(--muted); font-family: var(--font-mono); font-size: 13px; padding: 20px; text-align: center; }
+
+    /* Bouton inline upload à côté d'un input URL */
+    .url-field-wrap { display: flex; gap: 6px; align-items: center; flex: 1; }
+    .url-field-wrap input { flex: 1; min-width: 0; }
+    .btn-upload-inline {
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .btn-upload-inline input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0;
+    }
+    .upload-progress {
+      height: 3px; background: var(--bg3); border-radius: 99px; overflow: hidden; margin-top: 4px;
+    }
+    .upload-progress-bar {
+      height: 100%; width: 0; background: var(--cyan);
+      transition: width .3s ease;
+    }
   </style>
 </head>
 
@@ -572,6 +651,9 @@
   <div class="nav-item" data-page="rp" onclick="nav(this)">
     <span class="icon">◉</span> Phrases RP
   </div>
+  <div class="nav-item" data-page="medias" onclick="nav(this)">
+    <span class="icon">◫</span> Médias
+  </div>
 
   <div class="nav-section">// GAMEPLAY</div>
   <div class="nav-item" data-page="drops" onclick="nav(this)">
@@ -582,11 +664,6 @@
   </div>
   <div class="nav-item" data-page="points" onclick="nav(this)">
     <span class="icon">◈</span> Channel Points
-  </div>
-
-  <div class="nav-section">// ANALYTICS</div>
-  <div class="nav-item" data-page="streams" onclick="nav(this)">
-    <span class="icon">📡</span> Streams
   </div>
 
   <div class="sidebar-footer">
@@ -927,7 +1004,13 @@
                   <form method="post" action="/admin/cms/action" class="row" style="gap:6px">
                     <input type="hidden" name="action" value="update_media_url">
                     <input type="hidden" name="key" value="{{ cm.key }}">
-                    <input type="text" name="media_url" value="{{ cm.media_url }}" placeholder="https://…" style="min-width:280px">
+                    <div class="url-field-wrap" style="flex:1">
+                      <input type="text" name="media_url" value="{{ cm.media_url }}" placeholder="https://…" class="url-input">
+                      <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader une image">
+                        ⬆
+                        <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, this.closest('.url-field-wrap').querySelector('.url-input'))">
+                      </label>
+                    </div>
                     <button type="submit" class="btn btn-dim btn-sm">✓</button>
                   </form>
                 </td>
@@ -965,7 +1048,7 @@
       {% endif %}
       <div class="muted mono" style="margin-bottom:14px">// Chaque CM doit avoir 3 formes : stage 1 (éclosion), 2 (evo1), 3 (evo2)</div>
 
-      {% for it in forms_items %}
+      {% for it in items %}
       <div class="card">
         <div class="card-title">{{ it.cm_name }} <span class="pill" style="margin-left:6px">{{ it.key }}</span> <span class="pill">{{ it.lineage_key }}</span></div>
         <div class="row" style="gap:16px;align-items:flex-start">
@@ -981,11 +1064,23 @@
               </div>
               <div class="form-group">
                 <div class="form-label">IMAGE URL</div>
-                <input type="text" name="image_url" placeholder="https://…" value="{{ st.image_url }}">
+                <div class="url-field-wrap">
+                  <input type="text" name="image_url" placeholder="https://…" value="{{ st.image_url }}" class="url-input">
+                  <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader une image">
+                    ⬆
+                    <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, this.closest('.form-group').querySelector('.url-input'))">
+                  </label>
+                </div>
               </div>
               <div class="form-group">
                 <div class="form-label">SOUND URL</div>
-                <input type="text" name="sound_url" placeholder="https://… (optionnel)" value="{{ st.sound_url }}">
+                <div class="url-field-wrap">
+                  <input type="text" name="sound_url" placeholder="https://… (optionnel)" value="{{ st.sound_url }}" class="url-input">
+                  <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader un son">
+                    ⬆
+                    <input type="file" accept=".mp3,.ogg,.wav" onchange="uploadInline(this, this.closest('.form-group').querySelector('.url-input'))">
+                  </label>
+                </div>
               </div>
               <div class="row" style="gap:8px;margin-top:4px">
                 <button type="submit" class="btn btn-cyan btn-sm">✓ Save</button>
@@ -999,6 +1094,46 @@
         </div>
       </div>
       {% endfor %}
+    </div>
+
+
+    <!-- ══════════ PAGE: MÉDIAS ══════════ -->
+    <div class="page" id="page-medias">
+      <div class="card accent-c">
+        <div class="card-title">⬆ UPLOADER UN FICHIER</div>
+        <div class="muted mono" style="margin-bottom:12px">// Images : PNG, JPG, JPEG, GIF, WEBP · Sons : MP3, OGG, WAV · Max 8 Mo</div>
+
+        <div class="upload-zone" id="mainDropZone">
+          <input type="file" id="mainFileInput" accept=".png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav" multiple>
+          <div class="upload-zone-text">
+            <div style="font-size:28px;margin-bottom:8px">⬆</div>
+            <div>Glisser-déposer ici ou <strong>cliquer pour choisir</strong></div>
+            <div style="margin-top:4px;font-size:11px">Images & sons acceptés</div>
+          </div>
+        </div>
+        <div class="upload-progress" id="mainUploadProgress" style="display:none;margin-top:8px">
+          <div class="upload-progress-bar" id="mainUploadBar"></div>
+        </div>
+        <div class="status-line" id="mainUploadStatus" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px">
+          <div class="card-title" style="margin:0">📁 BIBLIOTHÈQUE</div>
+          <div class="row" style="gap:8px">
+            <select id="mediaFilterType" onchange="filterMediaGrid()" style="font-size:12px">
+              <option value="all">Tout</option>
+              <option value="image">Images</option>
+              <option value="audio">Sons</option>
+            </select>
+            <input type="text" id="mediaSearch" placeholder="Rechercher…" oninput="filterMediaGrid()" style="font-size:12px;min-width:180px">
+            <button class="btn btn-dim btn-sm" onclick="loadMediaLibrary()">↺ Rafraîchir</button>
+          </div>
+        </div>
+        <div id="mediaGrid" class="media-grid">
+          <div class="media-empty">Chargement…</div>
+        </div>
+      </div>
     </div>
 
     <!-- ══════════ PAGE: RP ══════════ -->
@@ -1025,7 +1160,7 @@
       </div>
 
       <div id="rp-cards">
-        {% for item in rp_items %}
+        {% for item in items %}
         <div class="card rp-card" data-key="{{ item.key }}">
           <div class="row" style="justify-content:space-between;margin-bottom:10px">
             <div>
@@ -1212,80 +1347,20 @@
     <!-- ══════════ PAGE: CHANNEL POINTS ══════════ -->
     <div class="page" id="page-points">
       <div class="card">
-        <div class="card-title">◈ CHANNEL POINTS — REWARD IDs</div>
-        <form method="post" action="/admin/points/save">
-          <div class="form-row">
-            <label class="toggle-switch">
-              <input type="checkbox" name="cp_enabled" value="true" {% if cp.cp_enabled == 'true' %}checked{% endif %}>
-              <div class="toggle-track"></div>
-              <span>Activer la boutique</span>
-            </label>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <div class="form-label">DROP COOP (reward_id)</div>
-              <input type="text" name="cp_reward_drop_coop_id" value="{{ cp.cp_reward_drop_coop_id }}" style="min-width:340px">
-            </div>
-            <div class="form-group">
-              <div class="form-label">CAPSULE XP (reward_id)</div>
-              <input type="text" name="cp_reward_capsule_id" value="{{ cp.cp_reward_capsule_id }}" style="min-width:340px">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <div class="form-label">BONBON (reward_id)</div>
-              <input type="text" name="cp_reward_candy_id" value="{{ cp.cp_reward_candy_id }}" style="min-width:340px">
-            </div>
-            <div class="form-group">
-              <div class="form-label">ŒUF (reward_id)</div>
-              <input type="text" name="cp_reward_egg_id" value="{{ cp.cp_reward_egg_id }}" style="min-width:340px">
-            </div>
-          </div>
-          <hr class="sep">
-          <div class="form-row">
-            <div class="form-group">
-              <div class="form-label">ITEM KEY CAPSULE</div>
-              <input type="text" name="cp_capsule_item_key" value="{{ cp.cp_capsule_item_key }}">
-            </div>
-            <div class="form-group">
-              <div class="form-label">ITEM KEY BONBON</div>
-              <input type="text" name="cp_candy_item_key" value="{{ cp.cp_candy_item_key }}">
-            </div>
-            <div class="form-group">
-              <div class="form-label">ITEM KEY ŒUF</div>
-              <input type="text" name="cp_egg_item_key" value="{{ cp.cp_egg_item_key }}" placeholder="vide = pick pondéré">
-            </div>
-          </div>
-          <hr class="sep">
-          <div class="form-row">
-            <div class="form-group">
-              <div class="form-label">DROP PICK KIND</div>
-              <select name="cp_drop_pick_kind">
-                {% for k in ['any','xp','candy','egg'] %}
-                <option value="{{ k }}" {% if cp.cp_drop_pick_kind == k %}selected{% endif %}>{{ k }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="form-group">
-              <div class="form-label">DURÉE (s)</div>
-              <input type="number" name="cp_drop_duration_seconds" value="{{ cp.cp_drop_duration_seconds }}" style="width:100px">
-            </div>
-            <div class="form-group">
-              <div class="form-label">FALLBACK ICON URL</div>
-              <input type="text" name="cp_drop_fallback_icon_url" value="{{ cp.cp_drop_fallback_icon_url }}" style="min-width:300px">
-            </div>
-          </div>
-          <div class="row" style="margin-top:8px">
-            <button type="submit" class="btn btn-cyan">✓ Sauvegarder</button>
-          </div>
-        </form>
+        <div class="card-title">◈ CHANNEL POINTS</div>
+        <div class="muted mono" style="margin-bottom:16px">// Configuration des récompenses Twitch</div>
+
+        <div id="points_form_content">
+          <!-- Chargé dynamiquement depuis /admin/points -->
+          <div class="muted">Chargement…</div>
+        </div>
       </div>
 
       <div class="card accent-g">
         <div class="card-title">CONNEXION TWITCH OAuth</div>
         <div class="row">
           <a href="/admin/twitch/connect" class="btn btn-cyan">🔗 Se connecter avec Twitch</a>
-          <div class="muted">Broadcaster ID : <code>{{ broadcaster_user_id or '—' }}</code></div>
+          <div class="muted">Broadcaster ID : <code id="broadcasterIdDisplay">{{ broadcaster_user_id or '—' }}</code></div>
         </div>
       </div>
 
@@ -1295,41 +1370,6 @@
           <button class="btn btn-magenta" onclick="createEventSub()">(Re)créer la souscription EventSub</button>
           <div class="status-line" id="eventsub_status"></div>
         </div>
-      </div>
-    </div>
-
-    <!-- ══════════ PAGE: STREAMS ══════════ -->
-    <div class="page" id="page-streams">
-
-      <!-- KPIs comparatifs (chargés en JS) -->
-      <div class="kpi-grid" id="stream-kpi-grid" style="display:none">
-        <div class="kpi-card c">
-          <div class="kpi-label">STREAMS TOTAL</div>
-          <div class="kpi-val" id="sk-total">—</div>
-        </div>
-        <div class="kpi-card g">
-          <div class="kpi-label">XP MOYEN / STREAM</div>
-          <div class="kpi-val" id="sk-xp-avg">—</div>
-        </div>
-        <div class="kpi-card m">
-          <div class="kpi-label">VIEWERS UNIQUES MOY.</div>
-          <div class="kpi-val" id="sk-viewers-avg">—</div>
-        </div>
-        <div class="kpi-card a">
-          <div class="kpi-label">DROPS MOYEN / STREAM</div>
-          <div class="kpi-val" id="sk-drops-avg">—</div>
-        </div>
-      </div>
-
-      <!-- Comparaison bar chart (chargé en JS) -->
-      <div class="card" id="stream-compare-card" style="display:none">
-        <div class="card-title">XP PAR STREAM (20 derniers)</div>
-        <div id="stream-xp-chart"></div>
-      </div>
-
-      <!-- Liste détaillée streams -->
-      <div id="streams-list">
-        <div class="muted mono" style="padding:20px">// Chargement des streams…</div>
       </div>
     </div>
 
@@ -1352,13 +1392,13 @@ const pageTitles = {
   drops:     '▽ DROPS',
   autodrop:  '⟳ AUTODROP',
   points:    '◈ CHANNEL POINTS',
-  streams:   '📡 STREAMS',
 };
 
 function nav(el) {
   const page = el.dataset.page;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   el.classList.add('active');
+  if (page === 'medias') { initMainUploadZone(); loadMediaLibrary(); }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.getElementById('pageTitle').textContent = pageTitles[page] || page.toUpperCase();
@@ -1367,7 +1407,6 @@ function nav(el) {
   if (page === 'autodrop') loadAutoDrop();
   if (page === 'stats')    startAutoRefresh();
   if (page === 'dashboard') loadDashboardKpis();
-  if (page === 'streams')  loadStreams();
 }
 
 // restore from hash
@@ -1623,96 +1662,204 @@ function toggleAutoRefresh() {
   else { clearInterval(refreshTimer); const info = document.getElementById('nextRefreshInfo'); if(info) info.textContent = 'Auto-refresh désactivé.'; }
 }
 
-/* ─── STREAMS ────────────────────────────────────────────── */
-async function loadStreams() {
-  const container = document.getElementById('streams-list');
-  const kpiGrid   = document.getElementById('stream-kpi-grid');
-  const cmpCard   = document.getElementById('stream-compare-card');
-  container.innerHTML = '<div class="muted mono" style="padding:20px">// Chargement…</div>';
 
-  let streams = [];
+/* ═══════════════════════════════════════════════════
+   MEDIA LIBRARY
+═══════════════════════════════════════════════════ */
+
+let _allMediaFiles = [];
+
+async function loadMediaLibrary() {
+  const grid = document.getElementById('mediaGrid');
+  if (!grid) return;
+  grid.innerHTML = '<div class="media-empty">Chargement…</div>';
   try {
-    const r = await fetch('/admin/streams/json');
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    streams = await r.json();
+    const r = await fetch('/admin/uploads/list');
+    const d = await r.json();
+    _allMediaFiles = d.files || [];
+    renderMediaGrid(_allMediaFiles);
   } catch(e) {
-    container.innerHTML = `<div class="muted mono" style="padding:20px;color:var(--magenta)">⛔ Erreur : ${e}</div>`;
-    return;
+    grid.innerHTML = '<div class="media-empty">Erreur de chargement</div>';
   }
-
-  if (!streams.length) {
-    container.innerHTML = '<div class="muted mono" style="padding:20px">Aucun stream enregistré.</div>';
-    return;
-  }
-
-  // KPIs synthèse
-  const finished  = streams.filter(s => !s.is_live);
-  const avgXp     = finished.length ? Math.round(finished.reduce((a,s)=>a+s.xp_total,0)/finished.length) : 0;
-  const avgViewers= finished.length ? Math.round(finished.reduce((a,s)=>a+s.viewers_uniques,0)/finished.length) : 0;
-  const avgDrops  = finished.length ? (finished.reduce((a,s)=>a+s.drops_count,0)/finished.length).toFixed(1) : 0;
-  document.getElementById('sk-total').textContent       = streams.length;
-  document.getElementById('sk-xp-avg').textContent      = avgXp.toLocaleString();
-  document.getElementById('sk-viewers-avg').textContent = avgViewers;
-  document.getElementById('sk-drops-avg').textContent   = avgDrops;
-  kpiGrid.style.display = 'grid';
-
-  // Bar chart XP
-  const chartStreams = [...streams].reverse();
-  const maxXp = Math.max(...chartStreams.map(s=>s.xp_total), 1);
-  document.getElementById('stream-xp-chart').innerHTML = chartStreams.map(s=>`
-    <div class="bar-row">
-      <div class="bar-label" style="width:120px;font-size:11px">${s.started_label}${s.is_live?' 🔴':''}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.round((s.xp_total/maxXp)*100)}%"></div></div>
-      <div class="bar-val">${s.xp_total.toLocaleString()}</div>
-    </div>
-  `).join('');
-  cmpCard.style.display = 'block';
-
-  // Liste détaillée
-  container.innerHTML = streams.map(s=>`
-    <div class="card ${s.is_live?'accent-g':''}" style="margin-bottom:12px">
-      <div class="row" style="justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <div>
-          <div style="font-family:var(--font-head);font-size:12px;color:${s.is_live?'var(--green)':'var(--cyan)'}">
-            ${s.is_live?'🔴 EN COURS':'STREAM #'+s.id}
-          </div>
-          <div style="font-size:13px;color:var(--muted);margin-top:2px;font-family:var(--font-mono)">
-            ${s.started_label} → ${s.ended_label} · ${s.duration}
-          </div>
-        </div>
-        <div class="row" style="gap:6px">
-          <span class="badge badge-info">⚡ ${s.xp_total.toLocaleString()} XP</span>
-          <span class="badge badge-ok">👥 ${s.viewers_uniques} viewers</span>
-          <span class="badge badge-warn">▽ ${s.drops_count} drops</span>
-          <span class="badge badge-dim">📊 ${s.events_total} events</span>
-        </div>
-      </div>
-      <div class="row" style="gap:20px;align-items:flex-start">
-        <div style="flex:1;min-width:160px">
-          <div class="form-label" style="margin-bottom:6px">TOP VIEWERS</div>
-          ${s.top_viewers.length ? s.top_viewers.map(v=>`
-            <div class="bar-row" style="margin:3px 0">
-              <div class="bar-label" style="width:100px;font-size:11px">${v.login}</div>
-              <div class="bar-track" style="height:8px">
-                <div class="bar-fill" style="width:${Math.round((v.xp/(s.top_viewers[0]?.xp||1))*100)}%;height:8px"></div>
-              </div>
-              <div class="bar-val" style="font-size:11px">${v.xp}</div>
-            </div>
-          `).join('') : '<span class="muted" style="font-size:12px">—</span>'}
-        </div>
-        <div style="flex:1;min-width:160px">
-          <div class="form-label" style="margin-bottom:6px">XP PAR SOURCE</div>
-          ${s.xp_by_source.slice(0,6).map(src=>`
-            <div class="row" style="gap:6px;margin:3px 0;font-size:12px">
-              <code style="flex:1">${src.source}</code>
-              <span class="badge badge-dim" style="font-size:11px">${src.xp}</span>
-            </div>
-          `).join('')||'<span class="muted" style="font-size:12px">—</span>'}
-        </div>
-      </div>
-    </div>
-  `).join('');
 }
+
+function filterMediaGrid() {
+  const type   = document.getElementById('mediaFilterType')?.value || 'all';
+  const search = (document.getElementById('mediaSearch')?.value || '').toLowerCase();
+  const filtered = _allMediaFiles.filter(f =>
+    (type === 'all' || f.type === type) &&
+    f.filename.toLowerCase().includes(search)
+  );
+  renderMediaGrid(filtered);
+}
+
+function renderMediaGrid(files) {
+  const grid = document.getElementById('mediaGrid');
+  if (!grid) return;
+  if (!files.length) {
+    grid.innerHTML = '<div class="media-empty">Aucun fichier</div>';
+    return;
+  }
+  grid.innerHTML = files.map(f => {
+    const thumb = f.type === 'image'
+      ? `<img class="media-thumb" src="${f.url}" loading="lazy" alt="${f.filename}">`
+      : `<div class="media-audio-icon">🔊</div>`;
+    const kb = (f.size / 1024).toFixed(0);
+    return `
+      <div class="media-item" data-type="${f.type}" data-name="${f.filename}">
+        ${thumb}
+        <div class="media-info" title="${f.filename}">${f.filename}</div>
+        <div class="media-info" style="margin-top:-4px">${kb} Ko</div>
+        <div class="media-actions">
+          <button class="btn btn-cyan btn-sm" onclick="copyUrl('${f.url}')" title="Copier l'URL">📋 Copier</button>
+          <button class="btn btn-magenta btn-sm" onclick="deleteMedia('${f.filename}', this)" title="Supprimer">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function copyUrl(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('URL copiée !');
+  } catch(e) {
+    prompt('Copier cette URL :', url);
+  }
+}
+
+async function deleteMedia(filename, btn) {
+  if (!confirm(`Supprimer "${filename}" ?`)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/admin/uploads/${encodeURIComponent(filename)}`, {method: 'DELETE'});
+    if (r.ok) {
+      _allMediaFiles = _allMediaFiles.filter(f => f.filename !== filename);
+      renderMediaGrid(_allMediaFiles);
+      showToast('Fichier supprimé');
+    } else {
+      const d = await r.json();
+      showToast('Erreur : ' + (d.detail || r.status), true);
+    }
+  } catch(e) { showToast('Erreur réseau', true); btn.disabled = false; }
+}
+
+/* ─── Upload drag-drop zone principale ─── */
+function initMainUploadZone() {
+  const zone   = document.getElementById('mainDropZone');
+  const input  = document.getElementById('mainFileInput');
+  if (!zone || !input) return;
+
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag');
+    uploadFiles(Array.from(e.dataTransfer.files), null,
+      document.getElementById('mainUploadStatus'),
+      document.getElementById('mainUploadBar'),
+      document.getElementById('mainUploadProgress'));
+  });
+
+  input.addEventListener('change', () => {
+    uploadFiles(Array.from(input.files), null,
+      document.getElementById('mainUploadStatus'),
+      document.getElementById('mainUploadBar'),
+      document.getElementById('mainUploadProgress'));
+    input.value = '';
+  });
+}
+
+/* ─── Upload inline (bouton ⬆ à côté d'un input) ─── */
+async function uploadInline(fileInput, targetInput) {
+  if (!fileInput.files.length) return;
+  const file = fileInput.files[0];
+  fileInput.value = '';
+
+  // Mini status sous l'input
+  const wrap = fileInput.closest('.url-field-wrap') || fileInput.closest('.form-group');
+  let statusEl = wrap?.querySelector('.inline-upload-status');
+  if (!statusEl && wrap) {
+    statusEl = document.createElement('div');
+    statusEl.className = 'status-line inline-upload-status';
+    statusEl.style.cssText = 'font-size:11px;margin-top:3px';
+    wrap.appendChild(statusEl);
+  }
+  if (statusEl) { statusEl.textContent = '⟳ Upload…'; statusEl.className = 'status-line inline-upload-status'; }
+
+  const url = await uploadSingleFile(file);
+  if (url) {
+    if (targetInput) targetInput.value = url;
+    if (statusEl) { statusEl.textContent = '✓ ' + url.split('/').pop(); statusEl.className = 'status-line ok inline-upload-status'; }
+    showToast('Uploadé : ' + url.split('/').pop());
+    // Rafraîchir la bibliothèque si elle est chargée
+    if (_allMediaFiles.length > 0) loadMediaLibrary();
+  } else {
+    if (statusEl) { statusEl.textContent = '✕ Échec upload'; statusEl.className = 'status-line err inline-upload-status'; }
+  }
+}
+
+/* ─── Fonction upload générique ─── */
+async function uploadSingleFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/admin/upload', { method: 'POST', body: fd });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showToast('Erreur : ' + (d.detail || r.status), true);
+      return null;
+    }
+    const d = await r.json();
+    return d.url || null;
+  } catch(e) {
+    showToast('Erreur réseau', true);
+    return null;
+  }
+}
+
+async function uploadFiles(files, targetInput, statusEl, barEl, progressWrap) {
+  if (!files.length) return;
+  if (progressWrap) progressWrap.style.display = 'block';
+  const results = [];
+  for (let i = 0; i < files.length; i++) {
+    const pct = Math.round((i / files.length) * 100);
+    if (barEl) barEl.style.width = pct + '%';
+    if (statusEl) { statusEl.textContent = `⟳ Upload ${i+1}/${files.length}…`; statusEl.className = 'status-line'; }
+    const url = await uploadSingleFile(files[i]);
+    if (url) results.push(url);
+  }
+  if (barEl) barEl.style.width = '100%';
+  if (progressWrap) setTimeout(() => { progressWrap.style.display = 'none'; if(barEl) barEl.style.width = '0'; }, 1200);
+
+  if (results.length) {
+    if (statusEl) { statusEl.textContent = `✓ ${results.length} fichier(s) uploadé(s)`; statusEl.className = 'status-line ok'; }
+    if (targetInput) targetInput.value = results[results.length - 1];
+    loadMediaLibrary();
+  } else {
+    if (statusEl) { statusEl.textContent = '✕ Aucun fichier uploadé'; statusEl.className = 'status-line err'; }
+  }
+}
+
+/* ─── Toast ─── */
+let _toastTimer = null;
+function showToast(msg, isError = false) {
+  let t = document.getElementById('_adminToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_adminToast';
+    t.style.cssText = `position:fixed;bottom:24px;right:24px;padding:10px 18px;border-radius:8px;
+      font-family:var(--font-mono);font-size:13px;z-index:99999;
+      transition:opacity .3s;box-shadow:0 4px 20px rgba(0,0,0,.4);`;
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background  = isError ? 'rgba(255,45,120,.9)' : 'rgba(0,229,255,.9)';
+  t.style.color       = '#060810';
+  t.style.opacity     = '1';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
+}
+
 </script>
 </body>
 </html>

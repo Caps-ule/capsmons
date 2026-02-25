@@ -41,7 +41,7 @@ import requests
 import psycopg
 import httpx
 
-from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -60,6 +60,14 @@ TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
 # =============================================================================
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Créer le dossier uploads si inexistant
+_UPLOADS_DIR = os.path.join("static", "uploads")
+os.makedirs(_UPLOADS_DIR, exist_ok=True)
+
+_ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_ALLOWED_AUDIO_EXT = {".mp3", ".ogg", ".wav"}
+_ALLOWED_EXT = _ALLOWED_IMAGE_EXT | _ALLOWED_AUDIO_EXT
 
 security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
@@ -5230,6 +5238,77 @@ tick();
 # =============================================================================
 
 
+# =============================================================================
+# ADMIN: Upload de médias (images/sons) vers /static/uploads/
+# =============================================================================
+
+@app.post("/admin/upload")
+async def admin_upload(
+    file: UploadFile = File(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+
+    import pathlib, uuid as _uuid
+
+    orig   = pathlib.Path(file.filename or "file")
+    ext    = orig.suffix.lower()
+    if ext not in _ALLOWED_EXT:
+        raise HTTPException(400, f"Extension non autorisée : {ext}. Acceptées : {', '.join(sorted(_ALLOWED_EXT))}")
+
+    # Nom de fichier unique pour éviter les collisions
+    unique_name = f"{orig.stem}_{_uuid.uuid4().hex[:8]}{ext}"
+    dest        = os.path.join(_UPLOADS_DIR, unique_name)
+
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:  # 8 Mo max
+        raise HTTPException(400, "Fichier trop volumineux (max 8 Mo)")
+
+    with open(dest, "wb") as f:
+        f.write(data)
+
+    url = f"/static/uploads/{unique_name}"
+    return {"ok": True, "url": url, "filename": unique_name, "size": len(data)}
+
+
+@app.get("/admin/uploads/list")
+def admin_uploads_list(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+
+    import pathlib
+    files = []
+    p = pathlib.Path(_UPLOADS_DIR)
+    for f in sorted(p.iterdir(), key=lambda x: -x.stat().st_mtime):
+        if f.suffix.lower() in _ALLOWED_EXT:
+            stat = f.stat()
+            ext  = f.suffix.lower()
+            files.append({
+                "filename": f.name,
+                "url":      f"/static/uploads/{f.name}",
+                "size":     stat.st_size,
+                "mtime":    int(stat.st_mtime),
+                "type":     "image" if ext in _ALLOWED_IMAGE_EXT else "audio",
+            })
+    return {"files": files}
+
+
+@app.delete("/admin/uploads/{filename}")
+def admin_upload_delete(
+    filename: str,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    import pathlib, re
+    # Sécurité : no path traversal
+    if not re.match(r'^[\w\-\.]+$', filename) or ".." in filename:
+        raise HTTPException(400, "Nom de fichier invalide")
+    dest = pathlib.Path(_UPLOADS_DIR) / filename
+    if not dest.exists():
+        raise HTTPException(404, "Fichier introuvable")
+    dest.unlink()
+    return {"ok": True}
+
+
 @app.post("/admin/cms/action")
 def admin_cms_action(
     action: str = Form(...),
@@ -6954,43 +7033,23 @@ def _render_user_page(login: str, d: dict) -> str:
     album_html = ""
     for sec in sections:
         cms_grid = ""
-        section_total_forms  = 0
-        section_owned_forms  = 0
         for c in sec["cms"]:
-            if c["owned"]:
-                # CM possédé : une carte par forme qui existe
-                for form in c["forms"]:
-                    if not form["name"] and not form["image_url"]:
-                        continue  # forme inexistante dans cm_forms
-                    section_total_forms += 1
-                    section_owned_forms += 1
-                    active_cls = "active" if c["is_active"] and form["stage"] == c["max_stage"] else ""
-                    stage_lbl  = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
-                    img_tag    = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
-                    cms_grid += f"""
-            <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
+            owned_cls  = "owned" if c["owned"] else "locked"
+            active_cls = "active" if c["is_active"] else ""
+            best = next((f for f in reversed(c["forms"]) if f["image_url"] and c["owned"]), None)
+            img_tag = f'<img src="{best["image_url"]}" alt="{c["name"]}">' if best else '<div class="silhouette">?</div>'
+            dots = "".join(f'<div class="stage-dot {"has" if c["max_stage"] >= st and c["owned"] else ""}"></div>' for st in [1,2,3])
+            cms_grid += f"""
+            <div class="album-card {owned_cls} {active_cls}" title="{c['name']}">
               <div class="album-img-wrap">{img_tag}</div>
-              <div class="album-name">{form['name']}</div>
-              <div class="album-stage-lbl">Stage {stage_lbl}</div>
-            </div>"""
-            else:
-                # CM non possédé : une silhouette par forme qui existe dans cm_forms
-                for form in c["forms"]:
-                    if not form["name"] and not form["image_url"]:
-                        continue  # forme inexistante, on ne l'affiche pas
-                    section_total_forms += 1
-                    stage_lbl = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
-                    cms_grid += f"""
-            <div class="album-card locked" title="??? — Stage {stage_lbl}">
-              <div class="album-img-wrap"><div class="silhouette">?</div></div>
-              <div class="album-name">???</div>
-              <div class="album-stage-lbl">Stage {stage_lbl}</div>
+              <div class="album-name">{"???" if not c["owned"] else c["name"]}</div>
+              <div class="album-stages">{dots}</div>
             </div>"""
         album_html += f"""
         <div class="album-section">
           <div class="section-header">
             <div class="section-title">{sec['lineage_name'].upper()}</div>
-            <div class="section-count">{section_owned_forms}/{section_total_forms} formes</div>
+            <div class="section-count">{sec['owned_count']}/{len(sec['cms'])}</div>
           </div>
           <div class="album-grid">{cms_grid}</div>
         </div>"""
@@ -6998,16 +7057,7 @@ def _render_user_page(login: str, d: dict) -> str:
     rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
     week_str = _current_week_start().strftime("%d/%m/%Y")
     completed_count = sum(1 for q in quests if q["completed"])
-    # Recalcul des totaux sur les formes réelles
-    total_forms_real = sum(
-        sum(1 for f in c["forms"] if f["name"] or f["image_url"])
-        for sec in sections for c in sec["cms"]
-    )
-    owned_forms_real = sum(
-        sum(1 for f in c["forms"] if f["name"] or f["image_url"])
-        for sec in sections for c in sec["cms"] if c["owned"]
-    )
-    album_pct = int((owned_forms_real / max(1, total_forms_real)) * 100)
+    album_pct = int((d["owned_total"] / max(1, d["total_cms"])) * 100)
 
     return f"""<!doctype html>
 <html lang="fr"><head>
@@ -7091,10 +7141,10 @@ a{{color:var(--cyan);text-decoration:none}}
 .album-img-wrap{{width:60px;height:60px;margin:0 auto 6px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center}}
 .album-img-wrap img{{width:100%;height:100%;object-fit:contain}}
 .silhouette{{font-size:24px;color:var(--muted)}}
-.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.album-stage-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
-.album-card.locked .album-name{{color:var(--muted)}}
-.album-card.locked .album-stage-lbl{{color:rgba(74,106,136,.6)}}
+.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.album-stages{{display:flex;justify-content:center;gap:3px}}
+.stage-dot{{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15)}}
+.stage-dot.has{{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 4px rgba(0,229,255,.6)}}
 .album-progress-bar{{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;margin:6px 0 4px}}
 .album-progress-fill{{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:999px;transition:width .8s ease}}
 .album-stats-row{{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
@@ -7128,7 +7178,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
   <div class="card">
     <div class="card-title">// ALBUM CAPSMONS</div>
     <div class="album-progress-bar"><div class="album-progress-fill" style="width:{album_pct}%"></div></div>
-    <div class="album-stats-row"><span>{owned_forms_real} formes débloquées</span><span>{total_forms_real} formes au total</span></div>
+    <div class="album-stats-row"><span>{d['owned_total']} possédés</span><span>{d['total_cms']} total</span></div>
     {album_html}
   </div>
 </div>
