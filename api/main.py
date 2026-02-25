@@ -51,6 +51,8 @@ TWITCH_CLIENT_ID = os.environ["TWITCH_CLIENT_ID"]
 TWITCH_CLIENT_SECRET = os.environ["TWITCH_CLIENT_SECRET"]
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr")
 TWITCH_REDIRECT_URI = os.environ.get("TWITCH_REDIRECT_URI", f"{PUBLIC_BASE_URL}/admin/twitch/callback")
+MOD_REDIRECT_URI = os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/twitch/callback")
+MOD_SESSION_SECRET = os.environ.get("MOD_SESSION_SECRET", secrets.token_hex(32))
 
 # minimum pour recevoir les redemptions; ajoute manage si tu veux pouvoir "FULFILL" ensuite
 TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
@@ -74,13 +76,761 @@ templates = Jinja2Templates(directory="templates")
 
 _twitch_token_cache = {"token": None, "exp": 0.0}
 
+
 # =============================================================================
-# Root
+# MOD — Panel modérateurs (OAuth Twitch)
 # =============================================================================
-@app.get("/", include_in_schema=False)
-def root_redirect():
-    # Petit confort: redirige vers l'admin (auth Basic demandée sur /admin)
-    return RedirectResponse(url="/admin", status_code=302)
+
+MOD_COOKIE = "mod_session"
+
+def _mod_redirect_uri():
+    return os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/twitch/callback")
+
+def _twitch_check_mod(mod_login: str) -> bool:
+    """Vérifie via Helix que mod_login est bien modérateur de la chaîne."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                broadcaster_id = kv_get(cur, "broadcaster_user_id", "") or ""
+        if not broadcaster_id:
+            return False
+        token = twitch_app_token()
+        r = requests.get(
+            "https://api.twitch.tv/helix/moderation/moderators",
+            params={"broadcaster_id": broadcaster_id, "user_login": mod_login},
+            headers={"Authorization": f"Bearer {token}", "Client-Id": TWITCH_CLIENT_ID},
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return False
+        return len(r.json().get("data", [])) > 0
+    except Exception:
+        return False
+
+def _get_mod_session(request: Request) -> str | None:
+    """Retourne le twitch_login du modo connecté, ou None."""
+    token = request.cookies.get(MOD_COOKIE)
+    if not token:
+        return None
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT twitch_login FROM mod_sessions
+                    WHERE token=%s AND expires_at > now()
+                    LIMIT 1;
+                """, (token,))
+                row = cur.fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+def _mod_page_html(mod_login: str, flash: str = "", flash_kind: str = "ok") -> str:
+    """Génère la page HTML du panel modérateur."""
+    # Charger les données nécessaires
+    items_list = []
+    users_list = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, name FROM items ORDER BY name;")
+            items_list = [{"key": r[0], "name": r[1]} for r in cur.fetchall()]
+            cur.execute("""
+                SELECT u.twitch_login,
+                       COALESCE(MAX(cv.xp_total), 0),
+                       COALESCE(MAX(cv.stage), 0)
+                FROM users u
+                LEFT JOIN creatures_v2 cv ON cv.twitch_login = u.twitch_login AND cv.is_active = TRUE
+                GROUP BY u.twitch_login
+                ORDER BY u.twitch_login
+                LIMIT 200;
+            """)
+            users_list = [{"login": r[0], "xp": int(r[1]), "stage": int(r[2])} for r in cur.fetchall()]
+
+    items_options = "".join(f'<option value="{i["key"]}">{i["name"]} ({i["key"]})</option>' for i in items_list)
+    users_options = "".join(f'<option value="{u["login"]}">{u["login"]} (XP:{u["xp"]} Stage:{u["stage"]})</option>' for u in users_list)
+
+    flash_html = ""
+    if flash:
+        color = "#00ff9d" if flash_kind == "ok" else "#ff2d78"
+        flash_html = f'<div style="background:rgba(0,0,0,.4);border:1px solid {color};border-radius:8px;padding:12px 16px;font-family:var(--mono);font-size:13px;color:{color};margin-bottom:20px">{flash}</div>'
+
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CapsMöns — Panel Modérateur</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{
+  --bg:#060b12;--panel:#0a1220;--panel2:#0d1628;
+  --border:rgba(0,229,255,.12);--border2:rgba(0,229,255,.25);
+  --cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffd166;
+  --text:#d8eaf8;--muted:#4a6a88;
+  --head:'Orbitron',monospace;--ui:'Rajdhani',sans-serif;--mono:'Share Tech Mono',monospace;
+}}
+body{{background:var(--bg);color:var(--text);font-family:var(--ui);min-height:100vh;padding:0}}
+body::before{{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px)}}
+
+.topbar{{position:sticky;top:0;z-index:100;background:rgba(6,11,18,.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--border);padding:0 24px;height:54px;
+  display:flex;align-items:center;justify-content:space-between}}
+.topbar-logo{{font-family:var(--head);font-size:16px;color:var(--cyan);letter-spacing:.1em;
+  text-shadow:0 0 20px rgba(0,229,255,.4)}}
+.topbar-user{{font-family:var(--mono);font-size:12px;color:var(--muted)}}
+.topbar-user span{{color:var(--cyan)}}
+.topbar-logout{{font-family:var(--mono);font-size:11px;color:var(--magenta);
+  text-decoration:none;padding:4px 10px;border:1px solid rgba(255,45,120,.3);
+  border-radius:6px;transition:all .15s}}
+.topbar-logout:hover{{background:rgba(255,45,120,.1)}}
+
+.main{{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:28px 20px}}
+
+.page-title{{font-family:var(--head);font-size:13px;color:var(--muted);letter-spacing:.2em;
+  text-transform:uppercase;margin-bottom:24px;padding-bottom:12px;
+  border-bottom:1px solid var(--border)}}
+
+.grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+@media(max-width:640px){{.grid{{grid-template-columns:1fr}}}}
+
+.card{{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px}}
+.card-title{{font-family:var(--head);font-size:11px;color:var(--cyan);letter-spacing:.16em;
+  text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;gap:8px}}
+.card-title::before{{content:'';width:3px;height:14px;background:var(--cyan);
+  border-radius:2px;box-shadow:0 0 8px var(--cyan)}}
+
+.field{{margin-bottom:12px}}
+.label{{font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.12em;margin-bottom:5px}}
+select, input[type=text], input[type=number]{{
+  width:100%;background:rgba(0,0,0,.3);border:1px solid var(--border);
+  border-radius:8px;padding:9px 12px;color:var(--text);
+  font-family:var(--mono);font-size:13px;outline:none;transition:border-color .15s}}
+select:focus, input:focus{{border-color:var(--cyan)}}
+
+.row{{display:flex;gap:8px}}
+.row .field{{flex:1}}
+
+.btn{{border:none;border-radius:8px;padding:10px 18px;cursor:pointer;
+  font-family:var(--head);font-size:11px;font-weight:700;letter-spacing:.1em;
+  transition:opacity .15s;width:100%;margin-top:4px}}
+.btn:hover{{opacity:.8}}
+.btn-cyan{{background:linear-gradient(135deg,var(--cyan),#007acc);color:#060b12}}
+.btn-green{{background:linear-gradient(135deg,var(--green),#00aa6a);color:#060b12}}
+.btn-magenta{{background:linear-gradient(135deg,var(--magenta),#aa1050);color:#fff}}
+.btn-amber{{background:linear-gradient(135deg,var(--amber),#cc8800);color:#060b12}}
+
+.warn-box{{background:rgba(255,183,0,.06);border:1px solid rgba(255,183,0,.2);
+  border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:11px;
+  color:var(--amber);margin-bottom:16px;line-height:1.6}}
+
+.self-note{{font-family:var(--mono);font-size:10px;color:rgba(255,45,120,.6);
+  margin-top:6px;text-align:center}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-logo">CAPSMÖNS · MOD</div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="topbar-user">Connecté : <span>@{mod_login}</span></div>
+    <a href="/mod/logout" class="topbar-logout">Déconnexion</a>
+  </div>
+</div>
+
+<div class="main">
+  <div class="page-title">// Panel Modérateur</div>
+  {flash_html}
+
+  <div class="warn-box">
+    ⚠ Anti-triche : vous ne pouvez pas modifier votre propre compte (@{mod_login}).
+    Toute action sur votre compte sera refusée.
+  </div>
+
+  <div class="grid">
+
+    <!-- DROP -->
+    <div class="card">
+      <div class="card-title">Lancer un Drop</div>
+      <form method="post" action="/mod/action">
+        <input type="hidden" name="action" value="spawn_drop">
+        <div class="field">
+          <div class="label">Mode</div>
+          <select name="mode">
+            <option value="coop">🤝 COOP</option>
+            <option value="first">⚡ First</option>
+            <option value="random">🎲 Random</option>
+          </select>
+        </div>
+        <div class="field">
+          <div class="label">Titre</div>
+          <input type="text" name="title" placeholder="Capsule Mystère" required>
+        </div>
+        <div class="field">
+          <div class="label">Image URL</div>
+          <input type="text" name="media_url" placeholder="https://…" required>
+        </div>
+        <div class="row">
+          <div class="field">
+            <div class="label">Item (ticket)</div>
+            <select name="ticket_key">{items_options}</select>
+          </div>
+          <div class="field">
+            <div class="label">Durée (s)</div>
+            <input type="number" name="duration" value="20" min="5" max="60">
+          </div>
+        </div>
+        <button class="btn btn-cyan" type="submit">▷ Lancer le Drop</button>
+      </form>
+    </div>
+
+    <!-- XP -->
+    <div class="card">
+      <div class="card-title">Gérer l'XP</div>
+      <form method="post" action="/mod/action">
+        <input type="hidden" name="action" value="mod_xp">
+        <div class="field">
+          <div class="label">Joueur</div>
+          <select name="target_login">{users_options}</select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <div class="label">Opération</div>
+            <select name="xp_op">
+              <option value="add">+ Ajouter</option>
+              <option value="remove">− Retirer</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">Montant XP</div>
+            <input type="number" name="xp_amount" value="100" min="1" max="10000">
+          </div>
+        </div>
+        <button class="btn btn-green" type="submit">✓ Appliquer XP</button>
+        <div class="self-note">Refusé si joueur = vous-même</div>
+      </form>
+    </div>
+
+    <!-- INVENTAIRE -->
+    <div class="card">
+      <div class="card-title">Gérer l'Inventaire</div>
+      <form method="post" action="/mod/action">
+        <input type="hidden" name="action" value="mod_item">
+        <div class="field">
+          <div class="label">Joueur</div>
+          <select name="target_login">{users_options}</select>
+        </div>
+        <div class="field">
+          <div class="label">Item</div>
+          <select name="item_key">{items_options}</select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <div class="label">Opération</div>
+            <select name="item_op">
+              <option value="give">+ Donner</option>
+              <option value="take">− Retirer</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">Quantité</div>
+            <input type="number" name="item_qty" value="1" min="1" max="99">
+          </div>
+        </div>
+        <button class="btn btn-amber" type="submit">✓ Appliquer Item</button>
+        <div class="self-note">Refusé si joueur = vous-même</div>
+      </form>
+    </div>
+
+    <!-- CM ACTIF -->
+    <div class="card">
+      <div class="card-title">Changer le CM Actif</div>
+      <form method="post" action="/mod/action">
+        <input type="hidden" name="action" value="mod_set_cm">
+        <div class="field">
+          <div class="label">Joueur</div>
+          <input type="text" name="target_login" placeholder="login_joueur" required>
+        </div>
+        <div class="field">
+          <div class="label">Voir la collection du joueur</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px">
+            Entrez le login puis consultez
+            <a id="collectionLink" href="#" style="color:var(--cyan)" target="_blank">/admin/user/LOGIN/collection</a>
+            pour obtenir l'ID du CM.
+          </div>
+        </div>
+        <div class="field">
+          <div class="label">ID Creature (creatures_v2.id)</div>
+          <input type="number" name="creature_id" placeholder="42" required min="1">
+        </div>
+        <button class="btn btn-magenta" type="submit">✓ Changer CM Actif</button>
+        <div class="self-note">Refusé si joueur = vous-même</div>
+      </form>
+    </div>
+
+  </div>
+</div>
+<script>
+// Met à jour le lien collection quand on tape un login
+document.querySelector('[name=target_login]')?.addEventListener('input', function(){{
+  const link = document.getElementById('collectionLink');
+  if(link) link.href = '/admin/user/' + this.value + '/collection';
+}});
+</script>
+</body>
+</html>"""
+
+@app.get("/mod", response_class=HTMLResponse)
+def mod_home(request: Request, flash: str | None = None, flash_kind: str | None = None):
+    mod_login = _get_mod_session(request)
+    if not mod_login:
+        return RedirectResponse("/mod/login", status_code=302)
+    return HTMLResponse(_mod_page_html(mod_login, flash=flash or "", flash_kind=flash_kind or "ok"))
+
+@app.get("/mod/login", response_class=HTMLResponse)
+def mod_login_page():
+    return HTMLResponse("""<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CapsMöns — Connexion Modérateur</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#060b12;color:#d8eaf8;font-family:'Share Tech Mono',monospace;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px)}
+.card{position:relative;z-index:1;background:#0a1220;border:1px solid rgba(0,229,255,.2);
+  border-radius:16px;padding:40px 36px;max-width:400px;width:100%;text-align:center;
+  box-shadow:0 0 60px rgba(0,229,255,.08)}
+.logo{font-family:'Orbitron',monospace;font-size:28px;color:#00e5ff;letter-spacing:.1em;
+  text-shadow:0 0 30px rgba(0,229,255,.5);margin-bottom:8px}
+.sub{font-size:11px;color:#4a6a88;letter-spacing:.2em;margin-bottom:32px}
+.desc{font-size:12px;color:#4a6a88;margin-bottom:28px;line-height:1.7}
+.desc strong{color:#d8eaf8}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 28px;
+  background:linear-gradient(135deg,#6441a5,#4b2e83);border:none;border-radius:10px;
+  color:#fff;font-family:'Orbitron',monospace;font-size:12px;font-weight:700;
+  letter-spacing:.08em;cursor:pointer;text-decoration:none;
+  transition:opacity .15s;box-shadow:0 4px 20px rgba(100,65,165,.3)}
+.btn:hover{opacity:.85}
+.back{display:block;margin-top:20px;font-size:11px;color:#4a6a88;text-decoration:none}
+.back:hover{color:#00e5ff}
+</style></head><body>
+<div class="card">
+  <div class="logo">CAPSMÖNS</div>
+  <div class="sub">// PANEL MODÉRATEUR</div>
+  <div class="desc">
+    Connexion réservée aux <strong>modérateurs</strong> de la chaîne.<br>
+    Votre statut sera vérifié via Twitch.
+  </div>
+  <a href="/mod/twitch/connect" class="btn">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M2.149 0L.537 4.119v16.836h5.731V24l4.119-3.045h3.298L24 12.06V0H2.149zm19.164 11.298l-3.298 3.298h-3.298l-2.88 2.88v-2.88H7.463V2.567h13.85v8.731z"/>
+    </svg>
+    Se connecter avec Twitch
+  </a>
+  <a href="/" class="back">← Retour à l'accueil</a>
+</div>
+</body></html>""")
+
+@app.get("/mod/twitch/connect")
+def mod_twitch_connect(request: Request):
+    state = secrets.token_urlsafe(16)
+    # Stocker state en cookie temporaire (5 min)
+    resp = RedirectResponse(
+        "https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode({
+            "client_id": TWITCH_CLIENT_ID,
+            "redirect_uri": _mod_redirect_uri(),
+            "response_type": "code",
+            "scope": "user:read:email",
+            "state": state,
+            "force_verify": "false",
+        })
+    )
+    resp.set_cookie("mod_oauth_state", state, max_age=300, httponly=True, samesite="lax")
+    return resp
+
+@app.get("/mod/twitch/callback")
+async def mod_twitch_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    if error:
+        return RedirectResponse("/mod/login?error=oauth_error")
+
+    expected_state = request.cookies.get("mod_oauth_state")
+    if not code or not state or state != expected_state:
+        return RedirectResponse("/mod/login?error=bad_state")
+
+    # Échanger le code contre un token
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={
+                "client_id": TWITCH_CLIENT_ID,
+                "client_secret": TWITCH_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": _mod_redirect_uri(),
+            },
+        )
+    if r.status_code != 200:
+        return RedirectResponse("/mod/login?error=token_failed")
+
+    access_token = r.json().get("access_token", "")
+
+    # Récupérer le login Twitch
+    async with httpx.AsyncClient(timeout=10) as client:
+        vr = await client.get(
+            "https://id.twitch.tv/oauth2/validate",
+            headers={"Authorization": f"OAuth {access_token}"},
+        )
+    if vr.status_code != 200:
+        return RedirectResponse("/mod/login?error=validate_failed")
+
+    mod_login = vr.json().get("login", "").strip().lower()
+    if not mod_login:
+        return RedirectResponse("/mod/login?error=no_login")
+
+    # Vérifier que c'est bien un modo (ou le broadcaster)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            broadcaster_login = (kv_get(cur, "broadcaster_user_login", "") or "").strip().lower()
+
+    is_broadcaster = (mod_login == broadcaster_login)
+    is_mod = _twitch_check_mod(mod_login)
+
+    if not is_broadcaster and not is_mod:
+        return RedirectResponse("/mod/login?error=not_mod")
+
+    # Créer la session
+    session_token = secrets.token_urlsafe(32)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO mod_sessions (token, twitch_login, expires_at)
+                VALUES (%s, %s, now() + interval '12 hours')
+                ON CONFLICT (token) DO NOTHING;
+            """, (session_token, mod_login))
+        conn.commit()
+
+    resp = RedirectResponse("/mod", status_code=302)
+    resp.set_cookie(MOD_COOKIE, session_token, max_age=43200, httponly=True, samesite="lax")
+    resp.delete_cookie("mod_oauth_state")
+    return resp
+
+@app.get("/mod/logout")
+def mod_logout():
+    resp = RedirectResponse("/mod/login", status_code=302)
+    resp.delete_cookie(MOD_COOKIE)
+    return resp
+
+@app.post("/mod/action")
+async def mod_action(
+    request: Request,
+    action: str = Form(...),
+    target_login: str | None = Form(None),
+    mode: str | None = Form(None),
+    title: str | None = Form(None),
+    media_url: str | None = Form(None),
+    duration: int | None = Form(None),
+    ticket_key: str | None = Form(None),
+    xp_op: str | None = Form(None),
+    xp_amount: int | None = Form(None),
+    item_key: str | None = Form(None),
+    item_op: str | None = Form(None),
+    item_qty: int | None = Form(None),
+    creature_id: int | None = Form(None),
+):
+    mod_login = _get_mod_session(request)
+    if not mod_login:
+        return RedirectResponse("/mod/login", status_code=302)
+
+    def go(msg: str, kind: str = "ok"):
+        from urllib.parse import quote
+        return RedirectResponse(f"/mod?flash={quote(msg)}&flash_kind={kind}", status_code=303)
+
+    target = (target_login or "").strip().lower()
+
+    # ── Anti-triche : interdit de se modifier soi-même ──────────────────────
+    if action != "spawn_drop" and target == mod_login:
+        return go("⛔ Vous ne pouvez pas modifier votre propre compte.", "err")
+
+    # ── Spawn drop ───────────────────────────────────────────────────────────
+    if action == "spawn_drop":
+        m = (mode or "coop").strip().lower()
+        t = (title or "").strip()
+        mu = (media_url or "").strip()
+        dur = max(5, min(int(duration or 20), 60))
+        tk = (ticket_key or "").strip()
+        if not t or not mu or not tk:
+            return go("Titre, image et item requis.", "err")
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+                tgt = None if m != "coop" else 10
+                cur.execute("""
+                    INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+                    VALUES (%s,%s,%s,0,%s,1,%s,'active', now() + (%s || ' seconds')::interval)
+                    RETURNING id;
+                """, (m, t, mu, tk, tgt, dur))
+                drop_id = cur.fetchone()[0]
+            conn.commit()
+        return go(f"✓ Drop #{drop_id} lancé ({m}) — {dur}s")
+
+    # ── XP ───────────────────────────────────────────────────────────────────
+    if action == "mod_xp":
+        if not target:
+            return go("Login joueur requis.", "err")
+        amt = max(1, min(int(xp_amount or 0), 10000))
+        op = (xp_op or "add").strip()
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (target,))
+                if not cur.fetchone():
+                    return go(f"Joueur introuvable : {target}", "err")
+                if op == "add":
+                    cur.execute("""
+                        UPDATE creatures_v2 SET xp_total = xp_total + %s, updated_at=now()
+                        WHERE twitch_login=%s AND is_active=TRUE;
+                    """, (amt, target))
+                    cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (target, amt))
+                else:
+                    cur.execute("""
+                        UPDATE creatures_v2 SET xp_total = GREATEST(0, xp_total - %s), updated_at=now()
+                        WHERE twitch_login=%s AND is_active=TRUE;
+                    """, (amt, target))
+                    cur.execute("INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);", (target, -amt))
+            conn.commit()
+        sign = "+" if op == "add" else "-"
+        return go(f"✓ {sign}{amt} XP pour @{target}")
+
+    # ── Item ─────────────────────────────────────────────────────────────────
+    if action == "mod_item":
+        if not target:
+            return go("Login joueur requis.", "err")
+        ik = (item_key or "").strip()
+        qty = max(1, min(int(item_qty or 1), 99))
+        op = (item_op or "give").strip()
+        if not ik:
+            return go("Item requis.", "err")
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (target,))
+                if not cur.fetchone():
+                    return go(f"Joueur introuvable : {target}", "err")
+                if op == "give":
+                    _grant_item_db(cur, target, ik, qty)
+                else:
+                    _grant_item_db(cur, target, ik, -qty)
+            conn.commit()
+        sign = "+" if op == "give" else "-"
+        return go(f"✓ {sign}{qty}x {ik} pour @{target}")
+
+    # ── Changer CM actif ─────────────────────────────────────────────────────
+    if action == "mod_set_cm":
+        if not target or not creature_id:
+            return go("Login et ID creature requis.", "err")
+        cid = int(creature_id)
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (cid, target))
+                if not cur.fetchone():
+                    return go(f"CM #{cid} introuvable pour @{target}", "err")
+                cur.execute("UPDATE creatures_v2 SET is_active=FALSE WHERE twitch_login=%s;", (target,))
+                cur.execute("UPDATE creatures_v2 SET is_active=TRUE WHERE id=%s;", (cid,))
+            conn.commit()
+        return go(f"✓ CM #{cid} activé pour @{target}")
+
+    return go("Action inconnue.", "err")
+
+
+# =============================================================================
+# Root — Page d'accueil publique
+# =============================================================================
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def root_home(q: str | None = None):
+    search_results = []
+    error_msg = ""
+    query = (q or "").strip().lower()
+
+    if query:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT u.twitch_login,
+                           COALESCE(MAX(c.xp_total), 0),
+                           COALESCE(MAX(c.stage), 0)
+                    FROM users u
+                    LEFT JOIN creatures_v2 c ON c.twitch_login=u.twitch_login AND c.is_active=TRUE
+                    WHERE u.twitch_login ILIKE %s
+                    GROUP BY u.twitch_login
+                    ORDER BY u.twitch_login
+                    LIMIT 12;
+                """, (f"%{query}%",))
+                search_results = [{"login": r[0], "xp": int(r[1]), "stage": int(r[2])} for r in cur.fetchall()]
+        if not search_results:
+            error_msg = f"Aucun joueur trouvé pour « {query} »"
+
+    results_html = ""
+    if search_results:
+        for p in search_results:
+            stage_label = {0:"🥚 Œuf",1:"Stage I",2:"Stage II",3:"Stage III"}.get(p["stage"], f"Stage {p['stage']}")
+            results_html += f"""
+            <a href="/u/{p['login']}" class="player-card">
+              <div class="player-avatar">@</div>
+              <div class="player-info">
+                <div class="player-name">@{p['login']}</div>
+                <div class="player-meta">{stage_label} · {p['xp']} XP</div>
+              </div>
+              <div class="player-arrow">→</div>
+            </a>"""
+
+    error_html = f'<div class="search-error">{error_msg}</div>' if error_msg else ""
+    results_block = f'<div class="results-grid">{results_html}</div>' if results_html else ""
+    q_escaped = query.replace('"', '&quot;')
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CapsMöns</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{
+  --bg:#060b12;--panel:#0a1220;--border:rgba(0,229,255,.12);
+  --cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffd166;
+  --text:#d8eaf8;--muted:#4a6a88;
+  --font-head:'Orbitron',monospace;--font-ui:'Rajdhani',sans-serif;--font-mono:'Share Tech Mono',monospace;
+}}
+body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}}
+
+/* Fond animé */
+body::before{{
+  content:'';position:fixed;inset:0;z-index:0;
+  background:
+    radial-gradient(ellipse 800px 500px at 20% 30%, rgba(0,229,255,.05) 0%, transparent 70%),
+    radial-gradient(ellipse 600px 400px at 80% 70%, rgba(255,45,120,.04) 0%, transparent 70%);
+  pointer-events:none;
+}}
+body::after{{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px);
+}}
+
+.wrap{{position:relative;z-index:1;width:100%;max-width:560px;text-align:center}}
+
+/* Logo */
+.logo{{margin-bottom:48px}}
+.logo-title{{
+  font-family:var(--font-head);font-size:clamp(36px,8vw,64px);font-weight:900;
+  color:var(--cyan);letter-spacing:.08em;
+  text-shadow:0 0 40px rgba(0,229,255,.5),0 0 80px rgba(0,229,255,.2);
+  line-height:1;
+}}
+.logo-sub{{font-family:var(--font-mono);font-size:12px;color:var(--muted);letter-spacing:.2em;margin-top:8px}}
+.logo-bar{{
+  width:80px;height:2px;margin:16px auto 0;
+  background:linear-gradient(90deg,transparent,var(--cyan),var(--magenta),transparent);
+  border-radius:999px;
+}}
+
+/* Search */
+.search-wrap{{
+  display:flex;gap:10px;
+  background:rgba(10,18,32,.8);border:1px solid var(--border);border-radius:14px;
+  padding:8px;backdrop-filter:blur(10px);
+  box-shadow:0 0 40px rgba(0,229,255,.06);
+}}
+.search-wrap:focus-within{{border-color:rgba(0,229,255,.35);box-shadow:0 0 40px rgba(0,229,255,.12)}}
+.search-input{{
+  flex:1;background:transparent;border:none;outline:none;
+  font-family:var(--font-mono);font-size:14px;color:var(--text);padding:8px 12px;
+}}
+.search-input::placeholder{{color:var(--muted)}}
+.search-btn{{
+  background:linear-gradient(135deg,var(--cyan),#007acc);
+  border:none;border-radius:10px;padding:10px 20px;cursor:pointer;
+  font-family:var(--font-head);font-size:12px;font-weight:700;
+  color:#060b12;letter-spacing:.08em;transition:opacity .15s;
+  white-space:nowrap;
+}}
+.search-btn:hover{{opacity:.85}}
+
+/* Résultats */
+.results-grid{{margin-top:20px;display:flex;flex-direction:column;gap:8px;text-align:left}}
+.player-card{{
+  display:flex;align-items:center;gap:14px;
+  background:rgba(10,18,32,.7);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;text-decoration:none;
+  transition:border-color .15s,background .15s,transform .1s;
+}}
+.player-card:hover{{
+  border-color:rgba(0,229,255,.35);
+  background:rgba(0,229,255,.05);
+  transform:translateX(4px);
+}}
+.player-avatar{{
+  width:40px;height:40px;border-radius:50%;
+  background:linear-gradient(135deg,rgba(0,229,255,.15),rgba(255,45,120,.1));
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-head);font-size:16px;color:var(--muted);flex-shrink:0;
+}}
+.player-info{{flex:1}}
+.player-name{{font-family:var(--font-ui);font-size:15px;font-weight:700;color:var(--text)}}
+.player-meta{{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:2px}}
+.player-arrow{{color:var(--cyan);font-size:18px;opacity:.6}}
+
+.search-error{{
+  margin-top:20px;font-family:var(--font-mono);font-size:13px;
+  color:var(--muted);text-align:center;padding:20px;
+  border:1px dashed rgba(255,255,255,.08);border-radius:10px;
+}}
+
+/* Footer */
+.home-footer{{
+  margin-top:48px;font-family:var(--font-mono);font-size:11px;color:var(--muted);
+  letter-spacing:.1em;
+}}
+.home-footer a{{color:rgba(0,229,255,.4);text-decoration:none}}
+.home-footer a:hover{{color:var(--cyan)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <div class="logo-title">CAPSMÖNS</div>
+    <div class="logo-sub">// COMPANION SYSTEM</div>
+    <div class="logo-bar"></div>
+  </div>
+
+  <form method="get" action="/">
+    <div class="search-wrap">
+      <input class="search-input" type="text" name="q"
+             placeholder="Rechercher un joueur…"
+             value="{q_escaped}" autofocus autocomplete="off">
+      <button class="search-btn" type="submit">RECHERCHER</button>
+    </div>
+  </form>
+
+  {error_html}
+  {results_block}
+
+  <div class="home-footer">
+    <a href="/mod">Panel modérateur</a>
+  </div>
+</div>
+</body>
+</html>""")
 
 
 # =============================================================================
@@ -1617,6 +2367,13 @@ def init_db():
                   qty INT NOT NULL DEFAULT 0,
                   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                   PRIMARY KEY (twitch_login, item_key)
+                );
+
+                CREATE TABLE IF NOT EXISTS mod_sessions (
+                  token TEXT PRIMARY KEY,
+                  twitch_login TEXT NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '12 hours'
                 );
 
                 CREATE TABLE IF NOT EXISTS overlay_evolutions (
@@ -6945,6 +7702,700 @@ def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
                 })
 
     return result
+
+
+
+# =============================================================================
+# PANEL MODÉRATEUR — Auth Twitch + actions sécurisées
+# =============================================================================
+
+def _get_twitch_moderators(broadcaster_login: str) -> set:
+    """Retourne le set des logins modérateurs du channel via l'API Twitch."""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                token     = kv_get(cur, "twitch_user_access_token", "")
+                b_user_id = kv_get(cur, "broadcaster_user_id", "")
+        if not token or not b_user_id:
+            return set()
+        headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
+        r = requests.get(
+            "https://api.twitch.tv/helix/moderation/moderators",
+            params={"broadcaster_id": b_user_id, "first": "100"},
+            headers=headers, timeout=8,
+        )
+        if r.status_code != 200:
+            return set()
+        return {m["user_login"].lower() for m in r.json().get("data", [])}
+    except Exception:
+        return set()
+
+
+def _get_broadcaster_login() -> str:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            return (kv_get(cur, "twitch_broadcaster_login", "") or "").lower()
+
+
+def _mod_session_get(token: str) -> str | None:
+    """Retourne le twitch_login si session valide, sinon None."""
+    if not token:
+        return None
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT twitch_login FROM mod_sessions
+                    WHERE token=%s AND expires_at > now();
+                """, (token,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _mod_session_create(twitch_login: str) -> str:
+    token = secrets.token_urlsafe(32)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Nettoyer les vieilles sessions du même user
+            cur.execute("DELETE FROM mod_sessions WHERE twitch_login=%s;", (twitch_login,))
+            cur.execute("""
+                INSERT INTO mod_sessions (token, twitch_login, expires_at)
+                VALUES (%s, %s, now() + interval '12 hours');
+            """, (token, twitch_login))
+        conn.commit()
+    return token
+
+
+def _require_mod(request: Request):
+    """Dépendance FastAPI: retourne le login mod ou lève une redirection."""
+    token = request.cookies.get("mod_session", "")
+    login = _mod_session_get(token)
+    if not login:
+        raise HTTPException(status_code=401, detail="Non authentifié")
+    return login
+
+
+# ── OAuth Twitch pour le panel mod ──────────────────────────────────────────
+
+@app.get("/mod/twitch/connect")
+def mod_twitch_connect():
+    state = secrets.token_urlsafe(16)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "mod_oauth_state", state)
+        conn.commit()
+    params = {
+        "client_id":     TWITCH_CLIENT_ID,
+        "redirect_uri":  MOD_REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "user:read:email",
+        "state":         state,
+        "force_verify":  "true",
+    }
+    url = "https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+
+@app.get("/mod/twitch/callback")
+async def mod_twitch_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    if error:
+        return RedirectResponse(f"/mod?error={urllib.parse.quote(error)}")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            expected = kv_get(cur, "mod_oauth_state", "")
+
+    if not code or not state or state != expected:
+        return RedirectResponse("/mod?error=oauth_state")
+
+    # Échange code → token
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post("https://id.twitch.tv/oauth2/token", data={
+            "client_id":     TWITCH_CLIENT_ID,
+            "client_secret": TWITCH_CLIENT_SECRET,
+            "code":          code,
+            "grant_type":    "authorization_code",
+            "redirect_uri":  MOD_REDIRECT_URI,
+        })
+    if r.status_code != 200:
+        return RedirectResponse("/mod?error=token_exchange")
+
+    access_token = r.json().get("access_token", "")
+
+    # Récupérer l'identité
+    async with httpx.AsyncClient(timeout=10) as client:
+        vr = await client.get(
+            "https://id.twitch.tv/oauth2/validate",
+            headers={"Authorization": f"OAuth {access_token}"},
+        )
+    if vr.status_code != 200:
+        return RedirectResponse("/mod?error=validate")
+
+    vj      = vr.json()
+    login   = vj.get("login", "").lower()
+    if not login:
+        return RedirectResponse("/mod?error=no_login")
+
+    # Vérifier que c'est bien un modérateur (ou le broadcaster)
+    broadcaster = _get_broadcaster_login()
+    moderators  = _get_twitch_moderators(broadcaster)
+    if login != broadcaster and login not in moderators:
+        return RedirectResponse(f"/mod?error=not_moderator&who={urllib.parse.quote(login)}")
+
+    session_token = _mod_session_create(login)
+    response = RedirectResponse("/mod", status_code=303)
+    response.set_cookie(
+        "mod_session", session_token,
+        max_age=43200, httponly=True, samesite="lax",
+        secure=PUBLIC_BASE_URL.startswith("https"),
+    )
+    return response
+
+
+@app.get("/mod/logout")
+def mod_logout(request: Request):
+    token = request.cookies.get("mod_session", "")
+    if token:
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM mod_sessions WHERE token=%s;", (token,))
+                conn.commit()
+        except Exception:
+            pass
+    response = RedirectResponse("/mod", status_code=303)
+    response.delete_cookie("mod_session")
+    return response
+
+
+# ── Page du panel mod ────────────────────────────────────────────────────────
+
+@app.get("/mod", response_class=HTMLResponse)
+def mod_panel(request: Request, error: str | None = None, flash: str | None = None, flash_kind: str | None = None):
+    token      = request.cookies.get("mod_session", "")
+    mod_login  = _mod_session_get(token)
+
+    error_messages = {
+        "not_moderator": "Tu n'es pas modérateur de cette chaîne.",
+        "oauth_state":   "Erreur de sécurité OAuth. Réessaie.",
+        "token_exchange":"Échec de l'authentification Twitch.",
+        "validate":      "Impossible de vérifier ton identité Twitch.",
+        "no_login":      "Identité Twitch introuvable.",
+    }
+    error_html = ""
+    if error and not mod_login:
+        msg = error_messages.get(error, f"Erreur : {error}")
+        if error == "not_moderator":
+            who = request.query_params.get("who", "")
+            msg += f" (connecté en tant que @{who})" if who else ""
+        error_html = f'''<div class="mod-error">{msg}</div>'''
+
+    if not mod_login:
+        return HTMLResponse(_render_mod_login(error_html))
+
+    # Charger les données pour le panel
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, name FROM items ORDER BY name;")
+            items = [{"key": r[0], "name": r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT u.twitch_login, COALESCE(MAX(c.xp_total),0), COALESCE(MAX(c.stage),0)
+                FROM users u
+                LEFT JOIN creatures_v2 c ON c.twitch_login=u.twitch_login AND c.is_active=TRUE
+                GROUP BY u.twitch_login ORDER BY u.twitch_login LIMIT 200;
+            """)
+            players = [{"login": r[0], "xp": int(r[1]), "stage": int(r[2])} for r in cur.fetchall()]
+
+    flash_html = ""
+    if flash:
+        cls = "ok" if flash_kind == "ok" else "err"
+        flash_html = f'''<div class="mod-flash mod-flash-{cls}">{flash}</div>'''
+
+    return HTMLResponse(_render_mod_panel(mod_login, items, players, flash_html))
+
+
+def _render_mod_login(error_html: str = "") -> str:
+    return f"""<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel Modérateur — CapsMöns</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg:#060b12;--panel:#0a1220;--border:rgba(0,229,255,.12);--cyan:#00e5ff;--magenta:#ff2d78;--text:#d8eaf8;--muted:#4a6a88;--font-head:'Orbitron',monospace;--font-ui:'Rajdhani',sans-serif;--font-mono:'Share Tech Mono',monospace}}
+body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+body::before{{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 700px 400px at 50% 40%,rgba(0,229,255,.05),transparent 70%);pointer-events:none}}
+body::after{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px);pointer-events:none}}
+.card{{position:relative;z-index:1;background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:40px;text-align:center;max-width:420px;width:100%;box-shadow:0 0 60px rgba(0,229,255,.06)}}
+.logo{{font-family:var(--font-head);font-size:28px;color:var(--cyan);text-shadow:0 0 30px rgba(0,229,255,.4);margin-bottom:6px}}
+.logo-sub{{font-family:var(--font-mono);font-size:11px;color:var(--muted);letter-spacing:.18em;margin-bottom:32px}}
+.login-btn{{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg,#9147ff,#6441a5);border:none;border-radius:12px;padding:14px 28px;color:#fff;font-family:var(--font-head);font-size:14px;font-weight:700;letter-spacing:.06em;cursor:pointer;text-decoration:none;transition:opacity .15s}}
+.login-btn:hover{{opacity:.85}}
+.login-btn svg{{width:22px;height:22px;fill:#fff}}
+.mod-error{{margin-top:20px;padding:12px 16px;background:rgba(255,45,120,.1);border:1px solid rgba(255,45,120,.3);border-radius:10px;font-family:var(--font-mono);font-size:12px;color:#ff7aaa}}
+.back{{margin-top:24px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
+.back a{{color:rgba(0,229,255,.5);text-decoration:none}}
+.back a:hover{{color:var(--cyan)}}
+</style></head><body>
+<div class="card">
+  <div class="logo">CAPSMÖNS</div>
+  <div class="logo-sub">// PANEL MODÉRATEUR</div>
+  <a href="/mod/twitch/connect" class="login-btn">
+    <svg viewBox="0 0 24 24"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+    Se connecter avec Twitch
+  </a>
+  {error_html}
+  <div class="back"><a href="/">← Retour à l'accueil</a></div>
+</div>
+</body></html>"""
+
+
+def _render_mod_panel(mod_login: str, items: list, players: list, flash_html: str = "") -> str:
+    items_options = "".join(f'<option value="{i["key"]}">{i["name"]} ({i["key"]})</option>' for i in items)
+    players_options = "".join(f'<option value="{p["login"]}">@{p["login"]} — Stage {p["stage"]} · {p["xp"]} XP</option>' for p in players)
+
+    return f"""<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel Modérateur — CapsMöns</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg:#060b12;--panel:#0a1220;--panel2:#0d1528;--border:rgba(0,229,255,.12);--border2:#1a2540;
+  --cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffd166;--text:#d8eaf8;--muted:#4a6a88;
+  --font-head:'Orbitron',monospace;--font-ui:'Rajdhani',sans-serif;--font-mono:'Share Tech Mono',monospace}}
+body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;padding:0}}
+body::after{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px);pointer-events:none;z-index:0}}
+
+/* Header */
+.topbar{{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;background:rgba(6,11,18,.92);border-bottom:1px solid var(--border);
+  backdrop-filter:blur(10px)}}
+.topbar-logo{{font-family:var(--font-head);font-size:18px;color:var(--cyan);text-shadow:0 0 20px rgba(0,229,255,.3)}}
+.topbar-logo span{{font-size:11px;color:var(--muted);letter-spacing:.15em;margin-left:10px}}
+.topbar-user{{display:flex;align-items:center;gap:12px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}}
+.topbar-user strong{{color:var(--green)}}
+.logout-btn{{padding:6px 14px;background:rgba(255,45,120,.1);border:1px solid rgba(255,45,120,.3);
+  border-radius:8px;color:#ff7aaa;font-family:var(--font-mono);font-size:11px;
+  cursor:pointer;text-decoration:none;transition:background .15s}}
+.logout-btn:hover{{background:rgba(255,45,120,.2)}}
+
+.main{{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:28px 20px}}
+
+/* Flash */
+.mod-flash{{padding:12px 16px;border-radius:10px;font-family:var(--font-mono);font-size:13px;margin-bottom:20px}}
+.mod-flash-ok{{background:rgba(0,255,157,.08);border:1px solid rgba(0,255,157,.25);color:var(--green)}}
+.mod-flash-err{{background:rgba(255,45,120,.08);border:1px solid rgba(255,45,120,.25);color:#ff7aaa}}
+
+/* Cards */
+.section-title{{font-family:var(--font-head);font-size:11px;color:var(--cyan);letter-spacing:.16em;margin-bottom:16px}}
+.card{{background:var(--panel);border:1px solid var(--border2);border-radius:14px;padding:22px;margin-bottom:16px}}
+.card-head{{font-family:var(--font-head);font-size:13px;color:var(--text);margin-bottom:18px;
+  display:flex;align-items:center;gap:8px}}
+.card-head::before{{content:'';width:3px;height:14px;border-radius:999px}}
+.card-drop .card-head::before{{background:var(--amber)}}
+.card-xp   .card-head::before{{background:var(--cyan)}}
+.card-item .card-head::before{{background:var(--green)}}
+.card-cm   .card-head::before{{background:var(--magenta)}}
+
+.form-row{{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}}
+.form-group{{display:flex;flex-direction:column;gap:5px;flex:1;min-width:140px}}
+.form-label{{font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:.1em}}
+input,select{{background:var(--panel2);border:1px solid var(--border2);border-radius:8px;
+  padding:9px 12px;color:var(--text);font-family:var(--font-mono);font-size:13px;width:100%;
+  transition:border-color .15s;outline:none}}
+input:focus,select:focus{{border-color:rgba(0,229,255,.4)}}
+input::placeholder{{color:var(--muted)}}
+
+.btn{{padding:10px 20px;border:none;border-radius:9px;cursor:pointer;font-family:var(--font-head);
+  font-size:11px;font-weight:700;letter-spacing:.08em;transition:opacity .15s;white-space:nowrap}}
+.btn:hover{{opacity:.8}}
+.btn-cyan{{background:linear-gradient(135deg,var(--cyan),#007acc);color:#060b12}}
+.btn-green{{background:linear-gradient(135deg,var(--green),#00aa6e);color:#060b12}}
+.btn-amber{{background:linear-gradient(135deg,var(--amber),#cc8800);color:#060b12}}
+.btn-magenta{{background:linear-gradient(135deg,var(--magenta),#aa1a50);color:#fff}}
+.btn-red{{background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff}}
+
+.self-warn{{margin-top:8px;font-family:var(--font-mono);font-size:11px;color:rgba(255,180,50,.7);display:none}}
+
+/* Recherche joueur */
+.player-search{{display:flex;gap:8px;margin-bottom:18px}}
+.player-search input{{flex:1}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-logo">CAPSMÖNS <span>// MOD PANEL</span></div>
+  <div class="topbar-user">
+    Connecté : <strong>@{mod_login}</strong>
+    <a href="/mod/logout" class="logout-btn">Déconnexion</a>
+  </div>
+</div>
+
+<div class="main">
+  {flash_html}
+
+  <!-- ── DROP ─────────────────────────────────────────── -->
+  <div class="section-title">// DROPS</div>
+  <div class="card card-drop">
+    <div class="card-head">⬡ Lancer un Drop</div>
+    <div class="form-row" style="margin-bottom:12px">
+      <div class="form-group">
+        <div class="form-label">MODE</div>
+        <select id="drop_mode">
+          <option value="first">⚡ First (premier)</option>
+          <option value="random">🎲 Random (tirage)</option>
+          <option value="coop">🤝 Coop</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <div class="form-label">TITRE</div>
+        <input type="text" id="drop_title" placeholder="Capsule Mystère">
+      </div>
+      <div class="form-group">
+        <div class="form-label">IMAGE URL</div>
+        <input type="text" id="drop_media" placeholder="https://…">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <div class="form-label">DURÉE (s)</div>
+        <input type="number" id="drop_duration" value="20" min="5" max="120" style="max-width:100px">
+      </div>
+      <div class="form-group" style="flex:0">
+        <div class="form-label">&nbsp;</div>
+        <button class="btn btn-amber" onclick="spawnDrop()">▷ Lancer</button>
+      </div>
+      <div class="form-group" style="flex:1">
+        <div class="form-label">&nbsp;</div>
+        <div id="drop_status" style="font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:10px 0"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── XP ────────────────────────────────────────────── -->
+  <div class="section-title">// XP</div>
+  <div class="card card-xp">
+    <div class="card-head">◈ Modifier l'XP d'un joueur</div>
+    <div class="form-row">
+      <div class="form-group" style="min-width:200px">
+        <div class="form-label">JOUEUR</div>
+        <input type="text" id="xp_player" placeholder="login twitch" oninput="checkSelf(this, 'xp_self_warn')">
+      </div>
+      <div class="form-group" style="max-width:140px">
+        <div class="form-label">MONTANT (+ ou -)</div>
+        <input type="number" id="xp_amount" placeholder="ex: 100 ou -50">
+      </div>
+      <div class="form-group" style="flex:0">
+        <div class="form-label">&nbsp;</div>
+        <button class="btn btn-cyan" onclick="modAction('add_xp')">Appliquer</button>
+      </div>
+    </div>
+    <div class="self-warn" id="xp_self_warn">⚠ Tu ne peux pas modifier ton propre compte.</div>
+  </div>
+
+  <!-- ── ITEMS ─────────────────────────────────────────── -->
+  <div class="section-title">// INVENTAIRE</div>
+  <div class="card card-item">
+    <div class="card-head">◇ Donner / Retirer un item</div>
+    <div class="form-row">
+      <div class="form-group" style="min-width:180px">
+        <div class="form-label">JOUEUR</div>
+        <input type="text" id="item_player" placeholder="login twitch" oninput="checkSelf(this, 'item_self_warn')">
+      </div>
+      <div class="form-group">
+        <div class="form-label">ITEM</div>
+        <select id="item_key">{items_options}</select>
+      </div>
+      <div class="form-group" style="max-width:90px">
+        <div class="form-label">QTÉ</div>
+        <input type="number" id="item_qty" value="1" min="1">
+      </div>
+      <div class="form-group" style="flex:0">
+        <div class="form-label">&nbsp;</div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-green" onclick="modAction('give_item')">+ Donner</button>
+          <button class="btn btn-red" onclick="modAction('take_item')">- Retirer</button>
+        </div>
+      </div>
+    </div>
+    <div class="self-warn" id="item_self_warn">⚠ Tu ne peux pas modifier ton propre inventaire.</div>
+  </div>
+
+  <!-- ── CM ACTIF ──────────────────────────────────────── -->
+  <div class="section-title">// CM ACTIF</div>
+  <div class="card card-cm">
+    <div class="card-head">◉ Voir / Changer le CM actif</div>
+    <div class="form-row" style="margin-bottom:14px">
+      <div class="form-group" style="min-width:220px">
+        <div class="form-label">JOUEUR</div>
+        <input type="text" id="cm_player" placeholder="login twitch">
+      </div>
+      <div class="form-group" style="flex:0">
+        <div class="form-label">&nbsp;</div>
+        <button class="btn btn-cyan" onclick="loadPlayerCMs()">Charger les CMs</button>
+      </div>
+    </div>
+    <div id="cm_list" style="display:none">
+      <div class="form-label" style="margin-bottom:8px">CMs du joueur :</div>
+      <div id="cm_cards" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+    <div id="cm_status" style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-top:8px"></div>
+  </div>
+
+</div>
+
+<script>
+const MOD_LOGIN = "{mod_login}";
+
+function checkSelf(input, warnId) {{
+  const w = document.getElementById(warnId);
+  if (!w) return;
+  w.style.display = input.value.trim().toLowerCase() === MOD_LOGIN ? 'block' : 'none';
+}}
+
+function isSelf(login) {{
+  return login.trim().toLowerCase() === MOD_LOGIN;
+}}
+
+async function spawnDrop() {{
+  const mode     = document.getElementById('drop_mode').value;
+  const title    = document.getElementById('drop_title').value.trim();
+  const media    = document.getElementById('drop_media').value.trim();
+  const duration = parseInt(document.getElementById('drop_duration').value) || 20;
+  const status   = document.getElementById('drop_status');
+  if (!title || !media) {{ status.textContent = '⚠ Titre et image requis'; return; }}
+  status.textContent = '⟳ Lancement…';
+  try {{
+    const r = await fetch('/mod/action', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{action:'spawn_drop', mode, title, media_url:media, duration_seconds:duration}}),
+    }});
+    const d = await r.json();
+    if (d.ok) status.textContent = '✓ Drop lancé !';
+    else status.textContent = '✕ ' + (d.detail || 'Erreur');
+  }} catch(e) {{ status.textContent = '✕ Erreur réseau'; }}
+}}
+
+async function modAction(action) {{
+  let login, amount, item_key, qty;
+  if (action === 'add_xp') {{
+    login  = document.getElementById('xp_player').value.trim().toLowerCase();
+    amount = parseInt(document.getElementById('xp_amount').value) || 0;
+    if (!login) {{ alert('Login requis'); return; }}
+    if (isSelf(login)) {{ alert('Tu ne peux pas modifier ton propre XP.'); return; }}
+    if (!amount) {{ alert('Montant requis'); return; }}
+  }} else {{
+    login    = document.getElementById('item_player').value.trim().toLowerCase();
+    item_key = document.getElementById('item_key').value;
+    qty      = parseInt(document.getElementById('item_qty').value) || 1;
+    if (!login) {{ alert('Login requis'); return; }}
+    if (isSelf(login)) {{ alert('Tu ne peux pas modifier ton propre inventaire.'); return; }}
+  }}
+  try {{
+    const r = await fetch('/mod/action', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{action, login, amount, item_key, qty}}),
+    }});
+    const d = await r.json();
+    const msg = d.ok ? '✓ ' + (d.message || 'OK') : '✕ ' + (d.detail || 'Erreur');
+    location.href = '/mod?flash_kind=' + (d.ok?'ok':'err') + '&flash=' + encodeURIComponent(msg);
+  }} catch(e) {{ alert('Erreur réseau'); }}
+}}
+
+async function loadPlayerCMs() {{
+  const login = document.getElementById('cm_player').value.trim().toLowerCase();
+  const status = document.getElementById('cm_status');
+  if (!login) {{ status.textContent = '⚠ Login requis'; return; }}
+  status.textContent = '⟳ Chargement…';
+  document.getElementById('cm_list').style.display = 'none';
+  try {{
+    const r = await fetch('/mod/player_cms?login=' + encodeURIComponent(login));
+    const d = await r.json();
+    if (!d.cms || !d.cms.length) {{ status.textContent = 'Aucun CM trouvé pour @' + login; return; }}
+    status.textContent = '';
+    const container = document.getElementById('cm_cards');
+    container.innerHTML = d.cms.map(c => `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--panel2);border:1px solid ${{c.is_active?'rgba(0,255,157,.3)':'var(--border2)'}};border-radius:10px">
+        ${{c.image_url ? `<img src="${{c.image_url}}" style="width:40px;height:40px;object-fit:contain;image-rendering:pixelated">` : '<div style="width:40px;height:40px;background:rgba(255,255,255,.05);border-radius:8px"></div>'}}
+        <div style="flex:1">
+          <div style="font-family:var(--font-ui);font-weight:700;color:var(--text)">${{c.name || c.cm_key}}</div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Stage ${{c.stage}} · ${{c.xp_total}} XP ${{c.is_active?'· <span style=\'color:var(--green)\'>Actif</span>':''}}</div>
+        </div>
+        ${{!c.is_active ? `<button class="btn btn-magenta" style="font-size:10px;padding:7px 14px" onclick="setCMActive('${{login}}',${{c.id}})">Activer</button>` : '<span style="font-family:var(--font-mono);font-size:11px;color:var(--green)">● Actif</span>'}}
+      </div>
+    `).join('');
+    document.getElementById('cm_list').style.display = 'block';
+  }} catch(e) {{ status.textContent = '✕ Erreur'; }}
+}}
+
+async function setCMActive(login, creature_id) {{
+  try {{
+    const r = await fetch('/mod/action', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{action:'set_active_cm', login, creature_id}}),
+    }});
+    const d = await r.json();
+    if (d.ok) loadPlayerCMs();
+    else alert('Erreur : ' + (d.detail || 'inconnu'));
+  }} catch(e) {{ alert('Erreur réseau'); }}
+}}
+</script>
+</body></html>"""
+
+
+# ── Endpoints JSON du panel mod ──────────────────────────────────────────────
+
+@app.post("/mod/action")
+async def mod_action(request: Request):
+    token     = request.cookies.get("mod_session", "")
+    mod_login = _mod_session_get(token)
+    if not mod_login:
+        raise HTTPException(status_code=401, detail="Non authentifié")
+
+    payload = await request.json()
+    action  = str(payload.get("action", "")).strip().lower()
+
+    # ── Spawn drop ──────────────────────────────────────────────────────
+    if action == "spawn_drop":
+        mode       = str(payload.get("mode", "")).strip().lower()
+        title      = str(payload.get("title", "")).strip()
+        media_url  = str(payload.get("media_url", "")).strip()
+        duration   = max(5, min(120, int(payload.get("duration_seconds", 20))))
+        ticket_key = str(payload.get("ticket_key", "ticket_basic")).strip() or "ticket_basic"
+        ticket_qty = max(1, int(payload.get("ticket_qty", 1)))
+
+        if mode not in ("first", "random", "coop"):
+            raise HTTPException(400, "Mode invalide")
+        if not title or not media_url:
+            raise HTTPException(400, "Titre et image requis")
+
+        target_hits = int(payload.get("target_hits", 10)) if mode == "coop" else None
+
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE drops SET status='expired', resolved_at=now() WHERE status='active';")
+                cur.execute("""
+                    INSERT INTO drops (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at)
+                    VALUES (%s,%s,%s,0,%s,%s,%s,'active', now() + (%s || ' seconds')::interval)
+                    RETURNING id;
+                """, (mode, title, media_url, ticket_key, ticket_qty, target_hits, duration))
+                drop_id = int(cur.fetchone()[0])
+            conn.commit()
+        return {"ok": True, "drop_id": drop_id, "message": f"Drop #{drop_id} lancé"}
+
+    # ── Toutes les actions joueur nécessitent un login cible ────────────
+    target_login = str(payload.get("login", "")).strip().lower()
+    if not target_login:
+        raise HTTPException(400, "Login joueur requis")
+
+    # Protection anti-triche : un mod ne peut pas modifier son propre compte
+    if target_login == mod_login:
+        raise HTTPException(403, "Un modérateur ne peut pas modifier son propre compte.")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (target_login,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"Joueur introuvable : @{target_login}")
+
+            # ── Modifier XP ────────────────────────────────────────────
+            if action == "add_xp":
+                amount = int(payload.get("amount", 0))
+                if amount == 0:
+                    raise HTTPException(400, "Montant nul")
+                cur.execute("""
+                    SELECT id, xp_total FROM creatures_v2
+                    WHERE twitch_login=%s AND is_active=TRUE LIMIT 1;
+                """, (target_login,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(404, "Aucun CM actif")
+                cid, old_xp = row
+                new_xp    = max(0, int(old_xp) + amount)
+                new_stage = stage_from_xp(new_xp)
+                cur.execute("""
+                    UPDATE creatures_v2 SET xp_total=%s, stage=%s, updated_at=now()
+                    WHERE id=%s;
+                """, (new_xp, new_stage, cid))
+                conn.commit()
+                sign = "+" if amount > 0 else ""
+                return {"ok": True, "message": f"{sign}{amount} XP pour @{target_login} (total: {new_xp})"}
+
+            # ── Donner item ────────────────────────────────────────────
+            if action == "give_item":
+                item_key = str(payload.get("item_key", "")).strip()
+                qty      = max(1, int(payload.get("qty", 1)))
+                cur.execute("SELECT 1 FROM items WHERE key=%s;", (item_key,))
+                if not cur.fetchone():
+                    raise HTTPException(400, f"Item inconnu : {item_key}")
+                cur.execute("""
+                    INSERT INTO inventory (twitch_login, item_key, qty) VALUES (%s,%s,%s)
+                    ON CONFLICT (twitch_login, item_key) DO UPDATE SET qty = inventory.qty + EXCLUDED.qty;
+                """, (target_login, item_key, qty))
+                conn.commit()
+                return {"ok": True, "message": f"+{qty} {item_key} pour @{target_login}"}
+
+            # ── Retirer item ───────────────────────────────────────────
+            if action == "take_item":
+                item_key = str(payload.get("item_key", "")).strip()
+                qty      = max(1, int(payload.get("qty", 1)))
+                cur.execute("SELECT 1 FROM items WHERE key=%s;", (item_key,))
+                if not cur.fetchone():
+                    raise HTTPException(400, f"Item inconnu : {item_key}")
+                cur.execute("""
+                    UPDATE inventory SET qty = GREATEST(qty - %s, 0)
+                    WHERE twitch_login=%s AND item_key=%s;
+                """, (qty, target_login, item_key))
+                conn.commit()
+                return {"ok": True, "message": f"-{qty} {item_key} pour @{target_login}"}
+
+            # ── Changer CM actif ───────────────────────────────────────
+            if action == "set_active_cm":
+                creature_id = int(payload.get("creature_id", 0))
+                cur.execute("SELECT 1 FROM creatures_v2 WHERE id=%s AND twitch_login=%s;", (creature_id, target_login))
+                if not cur.fetchone():
+                    raise HTTPException(404, "CM introuvable pour ce joueur")
+                cur.execute("UPDATE creatures_v2 SET is_active=FALSE WHERE twitch_login=%s;", (target_login,))
+                cur.execute("UPDATE creatures_v2 SET is_active=TRUE, updated_at=now() WHERE id=%s;", (creature_id,))
+                conn.commit()
+                return {"ok": True, "message": f"CM actif mis à jour pour @{target_login}"}
+
+    raise HTTPException(400, "Action inconnue")
+
+
+@app.get("/mod/player_cms")
+def mod_player_cms(request: Request, login: str):
+    token     = request.cookies.get("mod_session", "")
+    mod_login = _mod_session_get(token)
+    if not mod_login:
+        raise HTTPException(status_code=401, detail="Non authentifié")
+
+    login = login.strip().lower()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.id, c.cm_key, c.stage, c.xp_total, c.is_active,
+                       COALESCE(f.name, c.cm_key),
+                       COALESCE(f.image_url, '')
+                FROM creatures_v2 c
+                LEFT JOIN cm_forms f ON f.cm_key=c.cm_key AND f.stage=c.stage
+                WHERE c.twitch_login=%s
+                ORDER BY c.is_active DESC, c.xp_total DESC;
+            """, (login,))
+            cms = [{"id": r[0], "cm_key": r[1], "stage": int(r[2] or 0), "xp_total": int(r[3] or 0),
+                    "is_active": bool(r[4]), "name": r[5], "image_url": r[6]} for r in cur.fetchall()]
+    return {"cms": cms}
 
 
 # =============================================================================
