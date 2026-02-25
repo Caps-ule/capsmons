@@ -4869,491 +4869,658 @@ def preview_page(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 def _render_preview_page() -> str:
-    return """<!doctype html>
+    return r"""<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CapsMöns — Preview Studio</title>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#060810;--panel:#0a0d18;--panel2:#0d1121;
-  --border:#1a2540;--border2:#243060;
-  --cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffb700;
-  --text:#c8d4f0;--muted:#5a6a90;
-  --font-head:'Orbitron',monospace;
-  --font-ui:'Rajdhani',sans-serif;
-  --font-mono:'Share Tech Mono',monospace;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #060810; --panel: #0a0d18; --panel2: #0d1121;
+  --border: #1a2540; --border2: #243060;
+  --cyan: #00e5ff; --mag: #ff2d78; --green: #00ff9d;
+  --text: #c8d4f0; --muted: #5a6a90;
+  --fh: 'Orbitron', monospace;
+  --fu: 'Rajdhani', sans-serif;
+  --fm: 'Share Tech Mono', monospace;
 }
-body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;display:flex;flex-direction:column}
-body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.04) 2px,rgba(0,0,0,.04) 3px);pointer-events:none;z-index:9999}
+body { background: var(--bg); color: var(--text); font-family: var(--fu); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 
-/* ── Topbar ── */
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0}
-.topbar-logo{font-family:var(--font-head);font-size:16px;font-weight:900;color:var(--cyan);text-shadow:0 0 20px rgba(0,229,255,.4);letter-spacing:.1em}
-.topbar-badge{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:10px}
-.back-link{font-family:var(--font-mono);font-size:11px;color:var(--muted);text-decoration:none}
-.back-link:hover{color:var(--cyan)}
+/* Topbar */
+.topbar { display:flex; align-items:center; justify-content:space-between; padding:0 20px; height:52px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; }
+.logo { font-family:var(--fh); font-size:15px; font-weight:900; color:var(--cyan); letter-spacing:.1em; }
+.logo-sub { font-family:var(--fm); font-size:11px; color:var(--muted); margin-left:8px; }
+.back { font-family:var(--fm); font-size:11px; color:var(--muted); text-decoration:none; }
+.back:hover { color:var(--cyan); }
 
-/* ── Layout ── */
-.layout{flex:1;display:grid;grid-template-columns:340px 1fr;gap:0;overflow:hidden}
+/* Layout 2 colonnes */
+.layout { flex:1; display:grid; grid-template-columns:310px 1fr; overflow:hidden; }
 
-/* ── Panneau gauche (contrôles) ── */
-.controls{background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:20px}
-.ctrl-section{margin-bottom:24px}
-.ctrl-title{font-family:var(--font-head);font-size:11px;letter-spacing:.14em;color:var(--cyan);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.form-group{margin-bottom:12px}
-.form-label{font-family:var(--font-mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
-input[type=text],input[type=number],select{
-  width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);
-  border-radius:8px;padding:9px 12px;color:var(--text);
-  font-family:var(--font-mono);font-size:13px;outline:none;
-  transition:border-color .2s;
+/* Panneau gauche */
+.ctrl { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:16px; }
+.tabs { display:flex; gap:2px; margin-bottom:16px; background:var(--panel2); border-radius:10px; padding:3px; }
+.tab { flex:1; padding:9px; text-align:center; font-family:var(--fh); font-size:10px; font-weight:700; letter-spacing:.1em; cursor:pointer; border-radius:8px; color:var(--muted); transition:all .15s; }
+.tab.on { background:var(--cyan); color:#060810; }
+.sect { margin-bottom:18px; }
+.sect-title { font-family:var(--fh); font-size:10px; letter-spacing:.14em; color:var(--cyan); margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+.fg { margin-bottom:10px; }
+.fl { font-family:var(--fm); font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
+input[type=text], input[type=number], select { width:100%; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:7px; padding:8px 11px; color:var(--text); font-family:var(--fm); font-size:13px; outline:none; transition:border-color .2s; }
+input:focus, select:focus { border-color:rgba(0,229,255,.5); }
+input::placeholder { color:var(--muted); }
+select option { background:#0a0d18; }
+.rw { display:flex; align-items:center; gap:8px; }
+input[type=range] { flex:1; accent-color:var(--cyan); }
+.rv { font-family:var(--fm); font-size:12px; color:var(--cyan); min-width:32px; text-align:right; }
+.btn { width:100%; border:none; border-radius:8px; padding:11px; font-family:var(--fh); font-size:11px; font-weight:700; letter-spacing:.08em; cursor:pointer; transition:opacity .15s, transform .1s; margin-bottom:6px; }
+.btn:hover { opacity:.85; transform:translateY(-1px); }
+.btn-cyan { background:var(--cyan); color:#060810; }
+.btn-mag  { background:var(--mag); color:#fff; }
+.st { font-family:var(--fm); font-size:11px; min-height:16px; }
+.ok { color:var(--green); } .er { color:var(--mag); }
+
+/* Mini aperçu CM dans le panneau */
+.cm-mini { display:flex; align-items:center; gap:10px; padding:9px; background:var(--panel2); border:1px solid var(--border); border-radius:9px; margin-bottom:12px; min-height:62px; }
+.cm-mini img { width:44px; height:44px; object-fit:contain; border-radius:7px; image-rendering:pixelated; flex-shrink:0; }
+.cm-mini-ph { width:44px; height:44px; border-radius:7px; background:var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+.cm-mini-name { font-family:var(--fh); font-size:11px; color:var(--text); }
+.cm-mini-sub  { font-family:var(--fm); font-size:10px; color:var(--muted); margin-top:2px; }
+
+/* Panneau droit */
+.parea { display:flex; flex-direction:column; overflow:hidden; }
+.ptoolbar { display:flex; align-items:center; gap:8px; padding:10px 16px; background:var(--panel2); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+.ptlbl { font-family:var(--fm); font-size:11px; color:var(--muted); }
+.bgbtns { display:flex; gap:4px; }
+.bb { padding:5px 12px; border-radius:6px; font-family:var(--fm); font-size:11px; cursor:pointer; border:1px solid var(--border); color:var(--muted); background:var(--panel); transition:all .15s; }
+.bb.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,.07); }
+.btn-cap { margin-left:auto; background:var(--mag); color:#fff; border:none; border-radius:8px; padding:8px 16px; font-family:var(--fh); font-size:11px; font-weight:700; cursor:pointer; letter-spacing:.08em; transition:opacity .15s, transform .1s; white-space:nowrap; }
+.btn-cap:hover { opacity:.85; transform:translateY(-1px); }
+.btn-cap:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+
+/* Stage de preview : fond variable */
+.pstage { flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; padding:40px; transition:background .3s; }
+.pstage.dark  { background:#060810; }
+.pstage.cyber { background:linear-gradient(135deg,#060810 0%,#0a1628 45%,#060c1a 100%); }
+.pstage.grid  { background:repeating-conic-gradient(#1a2540 0% 25%,#0d1525 0% 50%) 0 0/20px 20px; }
+
+/* ─── CARTE TCG — CSS identique à l'overlay /overlay/show ─── */
+.tcg-card {
+  position: relative;
+  width: 429px;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(160deg, #04090f 0%, #070e1d 40%, #050b18 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(0,229,255,0.3);
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.34,1.56,0.64,1);
+  box-shadow:
+    0 0 0 1px rgba(0,229,255,0.08),
+    0 0 30px rgba(0,229,255,0.15),
+    0 0 80px rgba(0,229,255,0.06),
+    inset 0 0 60px rgba(0,0,0,0.5);
+  flex-shrink: 0;
 }
-input:focus,select:focus{border-color:rgba(0,229,255,.5)}
-input::placeholder{color:var(--muted)}
-select option{background:#0a0d18}
-
-/* Range custom */
-.range-wrap{display:flex;align-items:center;gap:10px}
-input[type=range]{flex:1;accent-color:var(--cyan);height:4px}
-.range-val{font-family:var(--font-mono);font-size:12px;color:var(--cyan);min-width:36px;text-align:right}
-
-/* Tabs show/evo */
-.tabs{display:flex;gap:2px;margin-bottom:20px;background:var(--panel2);border-radius:10px;padding:3px}
-.tab{flex:1;padding:10px;text-align:center;font-family:var(--font-head);font-size:10px;font-weight:700;letter-spacing:.1em;cursor:pointer;border-radius:8px;color:var(--muted);transition:all .15s}
-.tab.active{background:var(--cyan);color:#060810}
-
-/* Boutons */
-.btn{border:none;border-radius:8px;padding:11px 20px;font-family:var(--font-head);font-size:11px;font-weight:700;letter-spacing:.08em;cursor:pointer;transition:opacity .15s,transform .1s;width:100%;margin-bottom:8px}
-.btn:hover{opacity:.85;transform:translateY(-1px)}
-.btn:active{transform:translateY(0)}
-.btn-cyan{background:var(--cyan);color:#060810}
-.btn-magenta{background:var(--magenta);color:#fff}
-.btn-green{background:var(--green);color:#060810}
-.btn-dim{background:var(--border2);color:var(--text)}
-
-/* Status */
-.status{font-family:var(--font-mono);font-size:11px;min-height:16px;margin-top:4px}
-.ok{color:var(--green)}.err{color:var(--magenta)}
-
-/* ── Zone preview (droite) ── */
-.preview-area{display:flex;flex-direction:column;overflow:hidden}
-.preview-toolbar{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--panel2);border-bottom:1px solid var(--border);flex-shrink:0}
-.preview-toolbar-label{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
-.bg-btns{display:flex;gap:6px}
-.bg-btn{padding:6px 14px;border-radius:6px;font-family:var(--font-mono);font-size:11px;cursor:pointer;border:1px solid var(--border);color:var(--muted);background:var(--panel);transition:all .15s}
-.bg-btn.active{border-color:var(--cyan);color:var(--cyan);background:rgba(0,229,255,.08)}
-.btn-capture{margin-left:auto;background:var(--magenta);color:#fff;border:none;border-radius:8px;padding:8px 20px;font-family:var(--font-head);font-size:11px;font-weight:700;cursor:pointer;transition:opacity .15s,transform .1s;letter-spacing:.08em}
-.btn-capture:hover{opacity:.85;transform:translateY(-1px)}
-
-/* Stage / canvas preview */
-.preview-stage{flex:1;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;transition:background .3s}
-.preview-stage.bg-dark{background:#060810}
-.preview-stage.bg-cyber{background:linear-gradient(135deg,#060810 0%,#0a1628 40%,#060c1a 100%)}
-.preview-stage.bg-transparent{background:repeating-conic-gradient(#1a2540 0% 25%,#0d1525 0% 50%) 0 0/20px 20px}
-
-/* Iframe overlay */
-.overlay-frame{
-  border:none;background:transparent;
-  pointer-events:none;
-  transform-origin:center center;
+.tcg-card.visible {
+  opacity: 1;
+  transform: scale(1);
 }
+.tcg-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(0,229,255,.06) 40%, rgba(255,45,120,.06) 50%, rgba(0,255,157,.05) 60%, transparent 70%);
+  background-size: 200% 200%;
+  animation: holoShift 3s ease-in-out infinite;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 20;
+}
+@keyframes holoShift {
+  0%   { background-position: 0% 0%; opacity: .6; }
+  50%  { background-position: 100% 100%; opacity: 1; }
+  100% { background-position: 0% 0%; opacity: .6; }
+}
+.tcg-card::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 3px);
+  pointer-events: none;
+  z-index: 21;
+  border-radius: 18px;
+}
+.card-header {
+  position: relative;
+  padding: 12px 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
+  border-bottom: 1px solid rgba(0,229,255,0.1);
+  background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
+  flex-shrink: 0;
+}
+.card-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 13px;
+  font-weight: 900;
+  color: #e8f4ff;
+  letter-spacing: .06em;
+  text-shadow: 0 0 15px rgba(0,229,255,.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.card-type {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  color: #00e5ff;
+  letter-spacing: .12em;
+  padding: 2px 8px;
+  border: 1px solid rgba(0,229,255,.3);
+  border-radius: 999px;
+  background: rgba(0,229,255,.06);
+  white-space: nowrap;
+}
+.card-img-wrap {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+.card-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: saturate(1.1) contrast(1.05);
+}
+.card-img-wrap::after {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(0deg, rgba(4,9,15,1) 0%, transparent 30%),
+    linear-gradient(180deg, rgba(4,9,15,.4) 0%, transparent 20%);
+  pointer-events: none;
+}
+.card-hud {
+  position: absolute; inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: .4;
+}
+.hud-h {
+  position: absolute; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,229,255,.4) 20%, rgba(0,229,255,.4) 80%, transparent 100%);
+}
+.hud-v {
+  position: absolute; top: 0; bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent 0%, rgba(0,229,255,.3) 20%, rgba(0,229,255,.3) 80%, transparent 100%);
+}
+.corner-tl, .corner-tr, .corner-bl, .corner-br {
+  position: absolute; width: 14px; height: 14px; z-index: 4;
+}
+.corner-tl { top:6px; left:6px;   border-top:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
+.corner-tr { top:6px; right:6px;  border-top:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
+.corner-bl { bottom:6px; left:6px;  border-bottom:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
+.corner-br { bottom:6px; right:6px; border-bottom:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
+.viewer-badge {
+  position: absolute;
+  bottom: 10px; left: 10px; right: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(4,9,15,.85);
+  border: 1px solid rgba(0,229,255,.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.viewer-badge img { width:28px; height:28px; border-radius:6px; object-fit:cover; border:1px solid rgba(0,229,255,.3); flex-shrink:0; }
+.viewer-info { flex:1; min-width:0; }
+.vname { font-family:'Orbitron',monospace; font-size:10px; font-weight:700; color:#e8f4ff; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.vsub  { font-family:'Share Tech Mono',monospace; font-size:9px; color:#00e5ff; margin-top:1px; }
+.card-stats {
+  padding: 10px 14px 14px;
+  z-index: 5;
+  position: relative;
+  background: linear-gradient(0deg, rgba(0,229,255,.03) 0%, transparent 100%);
+  flex-shrink: 0;
+}
+.stat-row { display:flex; align-items:center; gap:6px; margin-bottom:7px; }
+.stat-row:last-child { margin-bottom:0; }
+.stat-label { font-family:'Share Tech Mono',monospace; font-size:9px; color:#3a6080; letter-spacing:.1em; width:58px; flex-shrink:0; }
+.stat-track { flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:999px; overflow:hidden; border:1px solid rgba(255,255,255,.05); }
+.stat-fill  { height:100%; border-radius:999px; transition:width .6s ease; }
+.stat-fill.xp { background:linear-gradient(90deg,#7aa2ff,#00e5ff); box-shadow:0 0 6px rgba(0,229,255,.4); }
+.stat-fill.hp { background:linear-gradient(90deg,#ff4fb3,#ff2d78); box-shadow:0 0 6px rgba(255,45,120,.4); }
+.stat-val { font-family:'Orbitron',monospace; font-size:9px; color:#c8d8f0; width:54px; text-align:right; flex-shrink:0; }
+.card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+.tcg-badge { display:inline-block; font-family:'Share Tech Mono',monospace; font-size:8px; color:#5a8aaa; letter-spacing:.1em; padding:2px 7px; border:1px solid rgba(255,255,255,.08); border-radius:999px; background:rgba(255,255,255,.03); }
+.tcg-badge.stage { color:#00ff9d; border-color:rgba(0,255,157,.3); background:rgba(0,255,157,.06); text-shadow:0 0 8px rgba(0,255,157,.5); }
 
-/* CM preview card (à gauche dans le contrôleur) */
-.cm-mini{display:flex;align-items:center;gap:10px;padding:10px;background:var(--panel2);border:1px solid var(--border);border-radius:10px;margin-bottom:14px}
-.cm-mini img{width:48px;height:48px;object-fit:contain;border-radius:8px;image-rendering:pixelated}
-.cm-mini-info{flex:1;min-width:0}
-.cm-mini-name{font-family:var(--font-head);font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cm-mini-stage{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:2px}
+/* ─── CARTE ÉVOLUTION ─── */
+.evo-card {
+  position: relative;
+  width: 360px;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(10,15,20,.88);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 0 60px rgba(122,162,255,.15);
+  opacity: 0;
+  transform: scale(.88);
+  transition: opacity .4s, transform .5s cubic-bezier(.34,1.56,.64,1);
+  padding: 32px 24px;
+  flex-shrink: 0;
+}
+.evo-card.visible { opacity:1; transform:scale(1); }
+.evo-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,rgba(122,162,255,.08) 0%,transparent 70%); pointer-events:none; }
+.evo-title { font-family:'Orbitron',monospace; font-size:13px; font-weight:900; letter-spacing:.16em; color:#7aa2ff; text-shadow:0 0 20px rgba(122,162,255,.5); z-index:1; }
+.evo-img   { width:180px; height:180px; object-fit:contain; image-rendering:pixelated; filter:drop-shadow(0 0 20px rgba(122,162,255,.5)); z-index:1; }
+.evo-name  { font-family:'Orbitron',monospace; font-size:20px; font-weight:900; color:#e8f4ff; letter-spacing:.06em; z-index:1; text-align:center; }
+.evo-vwr   { font-family:'Share Tech Mono',monospace; font-size:11px; color:#6a8aaa; letter-spacing:.1em; z-index:1; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <div>
-    <span class="topbar-logo">CAPSMÖNS</span>
-    <span class="topbar-badge">// Preview Studio</span>
+    <span class="logo">CAPSMÖNS</span>
+    <span class="logo-sub">// Preview Studio</span>
   </div>
-  <a href="/admin" class="back-link">← Retour admin</a>
+  <a href="/admin" class="back">← Admin</a>
 </div>
 
 <div class="layout">
 
-  <!-- ── Panneau contrôles ── -->
-  <div class="controls">
-
-    <!-- Tabs -->
+  <!-- ══ PANNEAU CONTRÔLES ══ -->
+  <div class="ctrl">
     <div class="tabs">
-      <div class="tab active" id="tab-show" onclick="switchTab('show')">◈ SHOW</div>
-      <div class="tab" id="tab-evo" onclick="switchTab('evo')">◇ ÉVOLUTION</div>
+      <div class="tab on" id="tab-show" onclick="switchTab('show')">◈ SHOW</div>
+      <div class="tab"    id="tab-evo"  onclick="switchTab('evo')">◇ ÉVOLUTION</div>
     </div>
 
-    <!-- ══ SHOW ══ -->
+    <!-- Panel SHOW -->
     <div id="panel-show">
-      <div class="ctrl-section">
-        <div class="ctrl-title">◎ VIEWER FICTIF</div>
-        <div class="form-group">
-          <div class="form-label">Pseudo Twitch</div>
-          <input type="text" id="show-viewer" value="capsule_fan" placeholder="pseudo_twitch">
+      <div class="sect">
+        <div class="sect-title">◎ VIEWER FICTIF</div>
+        <div class="fg">
+          <div class="fl">Pseudo Twitch</div>
+          <input type="text" id="show-viewer" value="capsule_fan" placeholder="pseudo">
         </div>
       </div>
 
-      <div class="ctrl-section">
-        <div class="ctrl-title">◈ CAPSMÖNS</div>
-        <div class="cm-mini" id="show-cm-preview">
-          <div style="width:48px;height:48px;border-radius:8px;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:20px">?</div>
-          <div class="cm-mini-info">
-            <div class="cm-mini-name" id="show-cm-name-preview">Sélectionner un CM</div>
-            <div class="cm-mini-stage" id="show-cm-stage-preview">—</div>
-          </div>
+      <div class="sect">
+        <div class="sect-title">◈ CAPSMÖNS</div>
+        <div class="cm-mini" id="show-mini">
+          <div class="cm-mini-ph">?</div>
+          <div><div class="cm-mini-name">Sélectionner un CM</div><div class="cm-mini-sub">—</div></div>
         </div>
-        <div class="form-group">
-          <div class="form-label">CapsMöns</div>
-          <select id="show-cm-select" onchange="onCMChange()"></select>
+        <div class="fg">
+          <div class="fl">CM</div>
+          <select id="show-cm" onchange="onShowCM()"></select>
         </div>
-        <div class="form-group">
-          <div class="form-label">Forme (Stage)</div>
-          <select id="show-form-select" onchange="onFormChange()"></select>
+        <div class="fg">
+          <div class="fl">Forme / Stage</div>
+          <select id="show-form" onchange="refreshCard()"></select>
         </div>
       </div>
 
-      <div class="ctrl-section">
-        <div class="ctrl-title">◉ STATS</div>
-        <div class="form-group">
-          <div class="form-label">XP Total</div>
-          <input type="number" id="show-xp" value="150" min="0" max="9999" oninput="updateXPSlider()">
+      <div class="sect">
+        <div class="sect-title">◉ STATS</div>
+        <div class="fg">
+          <div class="fl">XP Total</div>
+          <input type="number" id="show-xp" value="150" min="0" max="9999" oninput="refreshCard()">
         </div>
-        <div class="form-group">
-          <div class="form-label">Bonheur : <span id="show-hap-val">80</span>%</div>
-          <div class="range-wrap">
+        <div class="fg">
+          <div class="fl">Bonheur — <span id="hap-lbl">80</span>%</div>
+          <div class="rw">
             <input type="range" id="show-hap" min="0" max="100" value="80"
-                   oninput="document.getElementById('show-hap-val').textContent=this.value">
+                   oninput="document.getElementById('hap-lbl').textContent=this.value; refreshCard()">
           </div>
         </div>
       </div>
 
-      <button class="btn btn-cyan" onclick="pushShow()">▶ Simuler le Show</button>
-      <div class="status" id="show-status"></div>
+      <button class="btn btn-cyan" onclick="doShow()">▶ Simuler le Show</button>
+      <div class="st" id="show-st"></div>
     </div>
 
-    <!-- ══ ÉVOLUTION ══ -->
+    <!-- Panel EVO -->
     <div id="panel-evo" style="display:none">
-      <div class="ctrl-section">
-        <div class="ctrl-title">◎ VIEWER FICTIF</div>
-        <div class="form-group">
-          <div class="form-label">Pseudo Twitch</div>
-          <input type="text" id="evo-viewer" value="capsule_fan" placeholder="pseudo_twitch">
+      <div class="sect">
+        <div class="sect-title">◎ VIEWER FICTIF</div>
+        <div class="fg">
+          <div class="fl">Pseudo Twitch</div>
+          <input type="text" id="evo-viewer" value="capsule_fan" placeholder="pseudo">
         </div>
       </div>
 
-      <div class="ctrl-section">
-        <div class="ctrl-title">◇ NOUVELLE FORME</div>
-        <div class="cm-mini" id="evo-cm-preview">
-          <div style="width:48px;height:48px;border-radius:8px;background:var(--border);display:flex;align-items:center;justify-content:center;font-size:20px">?</div>
-          <div class="cm-mini-info">
-            <div class="cm-mini-name" id="evo-cm-name-preview">Sélectionner un CM</div>
-            <div class="cm-mini-stage" id="evo-cm-stage-preview">—</div>
+      <div class="sect">
+        <div class="sect-title">◇ NOUVELLE FORME</div>
+        <div class="cm-mini" id="evo-mini">
+          <div class="cm-mini-ph">?</div>
+          <div><div class="cm-mini-name">Sélectionner un CM</div><div class="cm-mini-sub">—</div></div>
+        </div>
+        <div class="fg">
+          <div class="fl">CM</div>
+          <select id="evo-cm" onchange="onEvoCM()"></select>
+        </div>
+        <div class="fg">
+          <div class="fl">Forme d'arrivée</div>
+          <select id="evo-form" onchange="refreshEvoMini()"></select>
+        </div>
+      </div>
+
+      <button class="btn btn-mag" onclick="doEvo()">⚡ Simuler l'Évolution</button>
+      <div class="st" id="evo-st"></div>
+    </div>
+  </div>
+
+  <!-- ══ ZONE PREVIEW ══ -->
+  <div class="parea">
+    <div class="ptoolbar">
+      <span class="ptlbl">Fond :</span>
+      <div class="bgbtns">
+        <button class="bb on" onclick="setBg(this,'dark')">◼ Sombre</button>
+        <button class="bb"    onclick="setBg(this,'cyber')">◈ Cyberpunk</button>
+        <button class="bb"    onclick="setBg(this,'grid')">⬡ Grille</button>
+      </div>
+      <button class="btn-cap" id="capbtn" onclick="doCapture()">📷 Capturer PNG</button>
+    </div>
+
+    <div class="pstage dark" id="pstage">
+
+      <!-- Carte show (reproduit /overlay/show pixel-perfect) -->
+      <div class="tcg-card" id="show-card">
+        <div class="card-header">
+          <div class="card-name" id="p-name">CAPSMÖNS</div>
+          <div class="card-type" id="p-type">LINEAGE · STAGE I</div>
+        </div>
+        <div class="card-img-wrap">
+          <img id="p-img" src="" alt="">
+          <div class="card-hud">
+            <div class="hud-h" style="top:33%"></div>
+            <div class="hud-h" style="top:66%"></div>
+            <div class="hud-v" style="left:25%"></div>
+            <div class="hud-v" style="left:75%"></div>
+            <div class="corner-tl"></div><div class="corner-tr"></div>
+            <div class="corner-bl"></div><div class="corner-br"></div>
+          </div>
+          <div class="viewer-badge">
+            <img id="p-avatar" src="" alt="">
+            <div class="viewer-info">
+              <div class="vname" id="p-viewer">@viewer</div>
+              <div class="vsub">// !show</div>
+            </div>
           </div>
         </div>
-        <div class="form-group">
-          <div class="form-label">CapsMöns</div>
-          <select id="evo-cm-select" onchange="onEvoCMChange()"></select>
-        </div>
-        <div class="form-group">
-          <div class="form-label">Forme d'arrivée</div>
-          <select id="evo-form-select" onchange="onEvoFormChange()"></select>
+        <div class="card-stats">
+          <div class="stat-row">
+            <div class="stat-label">XP</div>
+            <div class="stat-track"><div class="stat-fill xp" id="p-xp-fill" style="width:60%"></div></div>
+            <div class="stat-val" id="p-xp-val">150 XP</div>
+          </div>
+          <div class="stat-row">
+            <div class="stat-label">BONHEUR</div>
+            <div class="stat-track"><div class="stat-fill hp" id="p-hp-fill" style="width:80%"></div></div>
+            <div class="stat-val" id="p-hp-val">80%</div>
+          </div>
+          <div class="card-footer">
+            <span class="tcg-badge" id="p-lineage">—</span>
+            <span class="tcg-badge stage" id="p-stage">STAGE I</span>
+          </div>
         </div>
       </div>
 
-      <button class="btn btn-magenta" onclick="pushEvo()">⚡ Simuler l'Évolution</button>
-      <div class="status" id="evo-status"></div>
-    </div>
-
-  </div>
-
-  <!-- ── Zone preview ── -->
-  <div class="preview-area">
-    <div class="preview-toolbar">
-      <span class="preview-toolbar-label">Fond :</span>
-      <div class="bg-btns">
-        <button class="bg-btn active" onclick="setBg(this,'bg-dark')">◼ Sombre</button>
-        <button class="bg-btn" onclick="setBg(this,'bg-cyber')">◈ Cyberpunk</button>
-        <button class="bg-btn" onclick="setBg(this,'bg-transparent')">⬡ Grille</button>
+      <!-- Carte évolution -->
+      <div class="evo-card" id="evo-card" style="display:none">
+        <div class="evo-bg"></div>
+        <div class="evo-title" id="e-title">◇ ÉVOLUTION</div>
+        <img class="evo-img" id="e-img" src="" alt="">
+        <div class="evo-name" id="e-name">—</div>
+        <div class="evo-vwr"  id="e-viewer">@viewer</div>
       </div>
-      <button class="btn-capture" onclick="captureOverlay()">📷 Capturer PNG</button>
-    </div>
-    <div class="preview-stage bg-dark" id="preview-stage">
-      <iframe id="overlay-frame" class="overlay-frame"
-              src="/overlay/show"
-              scrolling="no"
-              allowtransparency="true">
-      </iframe>
+
     </div>
   </div>
-
 </div>
 
 <script>
-// ── État global ──────────────────────────────────────────────────────────────
-let cmsData  = [];
-let activeTab = 'show';
+const STAGE_LABELS = {0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III'};
+let cmsData = [];
+let curTab  = 'show';
 
-// ── Chargement des CMs ───────────────────────────────────────────────────────
+// ── Chargement CMs ───────────────────────────────────────────────────────────
 async function loadCMs() {
   try {
-    const r = await fetch('/preview/data');
-    const d = await r.json();
+    const d = await fetch('/preview/data').then(r => r.json());
     cmsData = d.cms || [];
-    buildCMSelects();
-    onCMChange();
-    onEvoCMChange();
-  } catch(e) {
-    console.error('loadCMs:', e);
-  }
+    const opts = cmsData.map(c => `<option value="${c.key}">${c.name}</option>`).join('');
+    document.getElementById('show-cm').innerHTML = opts;
+    document.getElementById('evo-cm').innerHTML  = opts;
+    onShowCM();
+    onEvoCM();
+  } catch(e) { console.error('loadCMs:', e); }
 }
 
-function buildCMSelects() {
-  const html = cmsData.map(c =>
-    `<option value="${c.key}">${c.name}</option>`
-  ).join('');
-  document.getElementById('show-cm-select').innerHTML = html;
-  document.getElementById('evo-cm-select').innerHTML  = html;
+function formsFor(key, minStage = 0) {
+  const cm = cmsData.find(c => c.key === key);
+  return cm ? cm.forms.filter(f => f.stage >= minStage) : [];
 }
 
-function getFormsFor(cmKey) {
-  const cm = cmsData.find(c => c.key === cmKey);
-  return cm ? cm.forms : [];
+function buildFormSel(selId, key, minStage = 0) {
+  document.getElementById(selId).innerHTML = formsFor(key, minStage)
+    .map(f => `<option value="${f.stage}" data-n="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url||''}">`
+              + `Stage ${f.stage} — ${f.name}</option>`)
+    .join('');
 }
 
-function buildFormSelect(selectId, cmKey, minStage = 1) {
-  const forms = getFormsFor(cmKey).filter(f => f.stage >= minStage);
-  const sel = document.getElementById(selectId);
-  sel.innerHTML = forms.map(f =>
-    `<option value="${f.stage}" data-name="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url}">
-      Stage ${f.stage} — ${f.name}
-    </option>`
-  ).join('');
+function selOpt(id) {
+  const s = document.getElementById(id);
+  return s.options[s.selectedIndex] || null;
 }
 
-// ── Show ─────────────────────────────────────────────────────────────────────
-function onCMChange() {
-  const cmKey = document.getElementById('show-cm-select').value;
-  buildFormSelect('show-form-select', cmKey, 0);
-  onFormChange();
+// ── SHOW ─────────────────────────────────────────────────────────────────────
+function onShowCM() {
+  const key = document.getElementById('show-cm').value;
+  buildFormSel('show-form', key, 0);
+  refreshCard();
 }
 
-function onFormChange() {
-  const cmKey = document.getElementById('show-cm-select').value;
-  const sel   = document.getElementById('show-form-select');
-  const opt   = sel.options[sel.selectedIndex];
+function refreshCard() {
+  const key    = document.getElementById('show-cm').value;
+  const opt    = selOpt('show-form');
   if (!opt) return;
-  const name = opt.dataset.name;
-  const img  = opt.dataset.img;
-  const stage = parseInt(opt.value);
-  const cm    = cmsData.find(c => c.key === cmKey);
+  const cm     = cmsData.find(c => c.key === key);
+  const stage  = parseInt(opt.value);
+  const name   = opt.dataset.n;
+  const img    = opt.dataset.img;
+  const viewer = (document.getElementById('show-viewer').value || 'preview').trim();
+  const xp     = parseInt(document.getElementById('show-xp').value) || 0;
+  const hap    = parseInt(document.getElementById('show-hap').value) || 0;
 
-  // Mise à jour mini-preview
-  document.getElementById('show-cm-name-preview').textContent  = name || cm?.name || '—';
-  document.getElementById('show-cm-stage-preview').textContent = `Stage ${stage} · ${cmKey}`;
-  const previewEl = document.getElementById('show-cm-preview');
-  if (img) {
-    previewEl.innerHTML = `
-      <img src="${img}" onerror="this.style.display='none'">
-      <div class="cm-mini-info">
-        <div class="cm-mini-name">${name}</div>
-        <div class="cm-mini-stage">Stage ${stage} · ${cmKey}</div>
-      </div>`;
-  }
+  // Mini panneau
+  document.getElementById('show-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${name}</div>
+       <div class="cm-mini-sub">Stage ${stage} · ${key}</div>
+     </div>`;
+
+  // Carte TCG
+  document.getElementById('p-name').textContent   = name.toUpperCase();
+  document.getElementById('p-type').textContent   = `${(cm?.name||key).toUpperCase()} · ${STAGE_LABELS[stage]||'STAGE '+stage}`;
+  document.getElementById('p-img').src            = img;
+  document.getElementById('p-viewer').textContent = '@' + viewer;
+  document.getElementById('p-avatar').src         = '';
+  document.getElementById('p-xp-val').textContent = xp + ' XP';
+  document.getElementById('p-hp-val').textContent = hap + '%';
+  document.getElementById('p-lineage').textContent= (cm?.name||key).toUpperCase();
+  document.getElementById('p-stage').textContent  = STAGE_LABELS[stage]||'STAGE '+stage;
+
+  // Barres (approximation visuelle)
+  const xpPct = Math.min(100, (xp % 500) / 5);
+  document.getElementById('p-xp-fill').style.width = xpPct + '%';
+  document.getElementById('p-hp-fill').style.width = hap + '%';
 }
 
-async function pushShow() {
-  const cmKey  = document.getElementById('show-cm-select').value;
-  const sel    = document.getElementById('show-form-select');
-  const opt    = sel.options[sel.selectedIndex];
-  if (!opt) { setStatus('show', 'Aucune forme disponible', true); return; }
+function doShow() {
+  const key = document.getElementById('show-cm').value;
+  const opt = selOpt('show-form');
+  if (!opt) { setSt('show','⚠ Sélectionne un CM et une forme',true); return; }
 
+  // Afficher immédiatement
+  refreshCard();
+  const evo  = document.getElementById('evo-card');
+  const show = document.getElementById('show-card');
+  evo.style.display  = 'none'; evo.classList.remove('visible');
+  show.style.display = 'flex';
+  void show.offsetWidth;
+  show.classList.add('visible');
+
+  // Injecter en DB (overlay live aussi)
   const body = {
     viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
-    cm_key:    cmKey,
+    cm_key:    key,
     stage:     parseInt(opt.value),
-    cm_name:   opt.dataset.name,
+    cm_name:   opt.dataset.n,
     image_url: opt.dataset.img,
     xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
     happiness: parseInt(document.getElementById('show-hap').value) || 0,
   };
-
-  await apiPost('/preview/push_show', body, 'show', '✓ Show injecté ! (30s)');
-
-  // Switcher l'iframe sur show si besoin
-  switchFrame('show');
+  fetch('/preview/push_show', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('show', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('show', '✓ Affiché localement', false));
 }
 
-// ── Évolution ────────────────────────────────────────────────────────────────
-function onEvoCMChange() {
-  const cmKey = document.getElementById('evo-cm-select').value;
-  buildFormSelect('evo-form-select', cmKey, 1); // stage >= 1
-  onEvoFormChange();
+// ── ÉVOLUTION ────────────────────────────────────────────────────────────────
+function onEvoCM() {
+  const key = document.getElementById('evo-cm').value;
+  buildFormSel('evo-form', key, 1);
+  refreshEvoMini();
 }
 
-function onEvoFormChange() {
-  const cmKey = document.getElementById('evo-cm-select').value;
-  const sel   = document.getElementById('evo-form-select');
-  const opt   = sel.options[sel.selectedIndex];
+function refreshEvoMini() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
   if (!opt) return;
-  const name  = opt.dataset.name;
-  const img   = opt.dataset.img;
-  const stage = parseInt(opt.value);
-
-  document.getElementById('evo-cm-name-preview').textContent  = name || '—';
-  document.getElementById('evo-cm-stage-preview').textContent = `Stage ${stage} · ${cmKey}`;
-  const previewEl = document.getElementById('evo-cm-preview');
-  if (img) {
-    previewEl.innerHTML = `
-      <img src="${img}" onerror="this.style.display='none'">
-      <div class="cm-mini-info">
-        <div class="cm-mini-name">${name}</div>
-        <div class="cm-mini-stage">Stage ${stage} · ${cmKey}</div>
-      </div>`;
-  }
+  const img = opt.dataset.img;
+  document.getElementById('evo-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${opt.dataset.n}</div>
+       <div class="cm-mini-sub">Stage ${opt.value} · ${key}</div>
+     </div>`;
 }
 
-async function pushEvo() {
-  const cmKey = document.getElementById('evo-cm-select').value;
-  const sel   = document.getElementById('evo-form-select');
-  const opt   = sel.options[sel.selectedIndex];
-  if (!opt) { setStatus('evo', 'Aucune forme disponible', true); return; }
+function doEvo() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
+  if (!opt) { setSt('evo','⚠ Sélectionne un CM et une forme',true); return; }
+  const viewer = document.getElementById('evo-viewer').value.trim() || 'preview';
 
+  // Afficher immédiatement
+  document.getElementById('e-img').src            = opt.dataset.img;
+  document.getElementById('e-name').textContent   = opt.dataset.n.toUpperCase();
+  document.getElementById('e-viewer').textContent = '@' + viewer;
+
+  const show = document.getElementById('show-card');
+  const evo  = document.getElementById('evo-card');
+  show.style.display = 'none'; show.classList.remove('visible');
+  evo.style.display  = 'flex';
+  void evo.offsetWidth;
+  evo.classList.add('visible');
+
+  // Injecter en DB
   const body = {
-    viewer:    document.getElementById('evo-viewer').value.trim() || 'preview',
-    cm_key:    cmKey,
+    viewer, cm_key: key,
     stage:     parseInt(opt.value),
-    name:      opt.dataset.name,
+    name:      opt.dataset.n,
     image_url: opt.dataset.img,
     sound_url: opt.dataset.snd || '',
   };
-
-  await apiPost('/preview/push_evolution', body, 'evo', '✓ Évolution injectée ! (30s)');
-  switchFrame('evo');
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-async function apiPost(url, body, tab, successMsg) {
-  setStatus(tab, '⟳ En cours…', false);
-  try {
-    const r = await fetch(url, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (r.ok && d.ok) {
-      setStatus(tab, successMsg, false);
-    } else {
-      setStatus(tab, '✕ ' + (d.detail || r.status), true);
-    }
-  } catch(e) {
-    setStatus(tab, '✕ Erreur réseau', true);
-  }
-}
-
-function setStatus(tab, msg, isErr) {
-  const el = document.getElementById(tab + '-status');
-  if (!el) return;
-  el.textContent = msg;
-  el.className   = 'status ' + (isErr ? 'err' : 'ok');
+  fetch('/preview/push_evolution', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('evo', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('evo', '✓ Affiché localement', false));
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 function switchTab(tab) {
-  activeTab = tab;
-  document.getElementById('tab-show').classList.toggle('active', tab === 'show');
-  document.getElementById('tab-evo').classList.toggle('active',  tab === 'evo');
-  document.getElementById('panel-show').style.display = tab === 'show' ? '' : 'none';
-  document.getElementById('panel-evo').style.display  = tab === 'evo'  ? '' : 'none';
+  curTab = tab;
+  document.getElementById('tab-show').classList.toggle('on', tab==='show');
+  document.getElementById('tab-evo').classList.toggle('on', tab==='evo');
+  document.getElementById('panel-show').style.display = tab==='show' ? '' : 'none';
+  document.getElementById('panel-evo').style.display  = tab==='evo'  ? '' : 'none';
 }
-
-// ── Iframe switch ─────────────────────────────────────────────────────────────
-let currentFrame = 'show';
-function switchFrame(type) {
-  if (currentFrame === type) {
-    // Recharger pour forcer le refresh de l'overlay
-    const f = document.getElementById('overlay-frame');
-    const src = type === 'show' ? '/overlay/show' : '/overlay/evolution';
-    if (f.src !== location.origin + src) {
-      f.src = src;
-    }
-    return;
-  }
-  currentFrame = type;
-  const f = document.getElementById('overlay-frame');
-  f.src = type === 'show' ? '/overlay/show' : '/overlay/evolution';
-  resizeFrame();
-}
-
-// ── Redimensionnement iframe selon le type ────────────────────────────────────
-function resizeFrame() {
-  const stage = document.getElementById('preview-stage');
-  const frame = document.getElementById('overlay-frame');
-  const W = stage.clientWidth;
-  const H = stage.clientHeight;
-
-  if (currentFrame === 'evolution') {
-    // Overlay évolution : carré centré
-    const size = Math.min(W, H) * 0.75;
-    frame.style.width  = size + 'px';
-    frame.style.height = size + 'px';
-    frame.style.transform = '';
-  } else {
-    // Overlay show : 800×400 scaled
-    const OW = 800, OH = 400;
-    const scale = Math.min((W * 0.85) / OW, (H * 0.85) / OH);
-    frame.style.width  = OW + 'px';
-    frame.style.height = OH + 'px';
-    frame.style.transform = `scale(${scale})`;
-  }
-}
-
-window.addEventListener('resize', resizeFrame);
-resizeFrame();
 
 // ── Fond ─────────────────────────────────────────────────────────────────────
 function setBg(btn, cls) {
-  document.querySelectorAll('.bg-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  const stage = document.getElementById('preview-stage');
-  stage.className = 'preview-stage ' + cls;
+  document.querySelectorAll('.bb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('pstage').className = 'pstage ' + cls;
 }
 
-// ── Capture PNG ──────────────────────────────────────────────────────────────
-async function captureOverlay() {
-  const btn = document.querySelector('.btn-capture');
-  btn.textContent = '⟳ Capture…';
-  btn.disabled = true;
+// ── Capture PNG (directement sur l'élément DOM, pas sur l'iframe) ─────────
+async function doCapture() {
+  const target = curTab === 'show'
+    ? document.getElementById('show-card')
+    : document.getElementById('evo-card');
+
+  if (!target.classList.contains('visible')) {
+    setSt(curTab, '⚠ Simule d\'abord une carte', true);
+    return;
+  }
+
+  const btn = document.getElementById('capbtn');
+  btn.textContent = '⟳…'; btn.disabled = true;
+
   try {
-    const stage = document.getElementById('preview-stage');
-    const canvas = await html2canvas(stage, {
+    const canvas = await html2canvas(target, {
       useCORS: true,
       allowTaint: true,
       scale: 2,
       backgroundColor: null,
       logging: false,
     });
-    const link = document.createElement('a');
-    const ts   = new Date().toISOString().slice(0,19).replace(/[T:]/g, '-');
-    link.download = `capsmons-${currentFrame}-${ts}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-    btn.textContent = '✓ Téléchargé !';
+    const nm  = (curTab === 'show'
+      ? document.getElementById('p-name').textContent
+      : document.getElementById('e-name').textContent
+    ).toLowerCase().replace(/[^a-z0-9]+/g,'-');
+    const ts  = new Date().toISOString().slice(0,10);
+    const lnk = document.createElement('a');
+    lnk.download = `capsmons-${nm}-${ts}.png`;
+    lnk.href = canvas.toDataURL('image/png');
+    lnk.click();
+    btn.textContent = '✓ OK !';
     setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
   } catch(e) {
-    btn.textContent = '✕ Erreur';
-    btn.disabled = false;
     console.error(e);
+    btn.textContent = '✕ Erreur'; btn.disabled = false;
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function setSt(tab, msg, err) {
+  const el = document.getElementById(tab + '-st');
+  if (el) { el.textContent = msg; el.className = 'st ' + (err ? 'er' : 'ok'); }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -5361,6 +5528,7 @@ loadCMs();
 </script>
 </body>
 </html>"""
+
 
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
