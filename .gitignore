@@ -8,3 +8,5 @@ db_data/
 caddy_data/
 caddy_config/
 /main.py.bak
+data/
+static/uploads/

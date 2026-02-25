@@ -17,7 +17,11 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
-
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      TWITCH_REDIRECT_URI: ${TWITCH_REDIRECT_URI}
+    volumes:
+      - ./data/uploads:/app/static/uploads
   bot:
     build: ./bot
     env_file: .env
