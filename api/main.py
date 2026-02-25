@@ -1616,21 +1616,15 @@ def init_db():
                   twitch_login TEXT NOT NULL,
                   viewer_display TEXT,
                   viewer_avatar TEXT,
+                
                   cm_key TEXT,
                   stage INT,
                   name TEXT,
                   image_url TEXT,
                   sound_url TEXT,
-                  old_name TEXT,
-                  old_image_url TEXT,
-                  old_stage INT,
-                  consumed_at TIMESTAMP,
+                
                   expires_at TIMESTAMP NOT NULL
                 );
-                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_name TEXT;
-                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_image_url TEXT;
-                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS old_stage INT;
-                ALTER TABLE overlay_evolutions ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMP;
 
 
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
@@ -2373,63 +2367,42 @@ def admin_action(
 def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
 
-    login     = str(payload.get("twitch_login", "")).strip().lower()
-    new_stage = int(payload.get("stage", 1))
-    old_stage = new_stage - 1
-
-    new_name      = payload.get("new_name", "")
-    new_image_url = payload.get("new_image_url", "")
-    new_sound_url = payload.get("new_sound_url", "")
-    old_name      = payload.get("old_name", "")
-    old_image_url = payload.get("old_image_url", "")
+    login = payload.get("twitch_login")
+    stage = int(payload.get("stage"))
 
     with get_db() as conn:
         with conn.cursor() as cur:
+            # infos viewer
             display, avatar = twitch_user_profile(login)
 
-            # Récupérer cm_key du CM actif
+            # récupérer la forme
             cur.execute("""
-                SELECT cm_key FROM creatures_v2
-                WHERE twitch_login = %s AND is_active = TRUE LIMIT 1;
-            """, (login,))
-            r = cur.fetchone()
-            cm_key = r[0] if r else ""
+                SELECT f.name, f.image_url, f.sound_url, c.key
+                FROM creatures_v2 cr
+                JOIN cm_forms f ON f.cm_key = cr.cm_key AND f.stage = %s
+                JOIN cms c ON c.key = cr.cm_key
+                WHERE cr.twitch_login = %s AND cr.is_active=true
+                LIMIT 1;
+            """, (stage, login))
 
-            # Si noms pas fournis, chercher en DB
-            if not new_name:
-                cur.execute("""
-                    SELECT name, image_url, COALESCE(sound_url,'')
-                    FROM cm_forms WHERE cm_key = %s AND stage = %s;
-                """, (cm_key, new_stage))
-                nf = cur.fetchone()
-                if nf:
-                    new_name, new_image_url, new_sound_url = nf
 
-            if not old_name and old_stage >= 1:
-                cur.execute("""
-                    SELECT name, image_url FROM cm_forms
-                    WHERE cm_key = %s AND stage = %s;
-                """, (cm_key, old_stage))
-                of = cur.fetchone()
-                if of:
-                    old_name, old_image_url = of
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(400, "No evolution form")
 
-            # expires_at = 30s, consumed_at = NULL (sera mis à jour par le state endpoint)
+            name, image_url, sound_url, cm_key = row
+
             cur.execute("""
                 INSERT INTO overlay_evolutions
-                  (twitch_login, viewer_display, viewer_avatar,
-                   cm_key, stage, name, image_url, sound_url,
-                   old_name, old_image_url, old_stage,
-                   expires_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                        now() + interval '30 seconds');
-            """, (login, display, avatar,
-                  cm_key, new_stage, new_name or "", new_image_url or "", new_sound_url or "",
-                  old_name or "", old_image_url or "", old_stage))
+                (twitch_login, viewer_display, viewer_avatar,
+                 cm_key, stage, name, image_url, sound_url, expires_at)
+                VALUES
+                (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '15 seconds');
+            """, (login, display, avatar, cm_key, stage, name, image_url, sound_url))
 
         conn.commit()
 
-    return {"ok": True, "new_name": new_name, "old_name": old_name}
+    return {"ok": True}
 
 
 @app.get("/admin/user/{login}/collection", response_class=HTMLResponse)
@@ -4601,418 +4574,660 @@ tick();
 
 @app.get("/overlay/evolution", response_class=HTMLResponse)
 def overlay_evolution_page():
-    return HTMLResponse(r"""<!doctype html>
+    return HTMLResponse(r"""
+<!doctype html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: transparent;
-  overflow: hidden;
-  width: 100vw; height: 100vh;
-  font-family: 'Rajdhani', sans-serif;
+  :root{
+    --bg: rgba(10,15,20,.72);
+    --border: rgba(255,255,255,.12);
+    --text: #e6edf3;
+    --muted: #9aa4b2;
+    --accent: rgba(122,162,255,.95);
+    --accent2: rgba(255, 214, 102, .95);
+  }
+
+  body{
+    margin:0;
+    background:transparent;
+    overflow:hidden;
+    font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;
+  }
+
+  .wrap{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+
+  /* --- Backdrop cinematic --- */
+  .backdrop{
+    position:fixed; inset:0;
+    display:none;
+    background:
+      radial-gradient(1200px 700px at 50% 50%, rgba(122,162,255,.16), rgba(0,0,0,0) 60%),
+      radial-gradient(900px 520px at 52% 48%, rgba(255,214,102,.10), rgba(0,0,0,0) 55%);
+    opacity:0;
+    transition: opacity 450ms ease;
+  }
+  .backdrop.show{ opacity:1; }
+
+  /* subtle scanlines */
+  .scanlines{
+    position:absolute; inset:-40px;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,.03) 0px,
+      rgba(255,255,255,.03) 1px,
+      rgba(0,0,0,0) 3px,
+      rgba(0,0,0,0) 7px
+    );
+    opacity:.25;
+    mix-blend-mode: overlay;
+    filter: blur(.2px);
+  }
+
+  /* --- Card --- */
+  .card{
+    display:none;
+    width:min(920px, 92vw);
+    padding:18px 20px 20px;
+    border-radius:26px;
+    background: var(--bg);
+    border:1px solid var(--border);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 20px 70px rgba(0,0,0,.45);
+    position:relative;
+
+    opacity:0;
+    transform: translateY(14px) scale(.92);
+    transition: opacity 520ms ease, transform 520ms ease;
+  }
+  .card.show{
+    opacity:1;
+    transform: translateY(0) scale(1);
+  }
+
+  /* Glitch edges on entrance */
+  .card::before{
+    content:"";
+    position:absolute; inset:-2px;
+    border-radius:28px;
+    background: linear-gradient(90deg, rgba(122,162,255,.0), rgba(122,162,255,.35), rgba(255,214,102,.2), rgba(122,162,255,.0));
+    filter: blur(14px);
+    opacity:0;
+    transition: opacity 520ms ease;
+  }
+  .card.show::before{ opacity:1; }
+
+  /* --- Viewer bar --- */
+  .viewerBar{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 12px;
+    border-radius:16px;
+    background: rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.10);
+  }
+  .avatar{
+    width:40px;height:40px;border-radius:12px;
+    object-fit:cover;border:1px solid rgba(255,255,255,.15);
+  }
+  .viewerName{
+  color: var(--text);
+  font-weight: 900;
+  font-size: 16px;        /* avant: 14px */
+  line-height: 1.1;
+  text-shadow: 0 1px 6px rgba(0,0,0,.5);
 }
 
-/* ─── Ancré à gauche, glisse depuis le bord ─── */
-.scene {
-  position: fixed;
-  left: 0; top: 50%;
-  transform: translateY(-50%) translateX(-440px);
-  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
-  pointer-events: none;
-  z-index: 10;
-  will-change: transform;
-}
-.scene.visible {
-  transform: translateY(-50%) translateX(0px);
+  .viewerSub{ color:var(--muted); font-size:12px; margin-top:2px; }
+
+  /* --- Main layout --- */
+  .grid{
+    display:grid;
+    grid-template-columns: 1fr 520px;
+    gap:18px;
+    align-items:center;
+    margin-top:14px;
+  }
+
+  /* --- Image chamber --- */
+  .chamber{
+    position:relative;
+    width:520px; height:520px;
+    border-radius:28px;
+    background: rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.10);
+    overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* rings */
+  .ring{
+    position:absolute;
+    width:640px;height:640px;
+    border-radius:999px;
+    border:1px solid rgba(122,162,255,.25);
+    filter: blur(.2px);
+    opacity:.0;
+    transform: scale(.7);
+  }
+  .ring.r1{ border-color: rgba(122,162,255,.25); }
+  .ring.r2{ border-color: rgba(255,214,102,.22); width:720px;height:720px; }
+  .ring.r3{ border-color: rgba(255,255,255,.12); width:820px;height:820px; }
+
+  /* shockwave */
+  .shockwave{
+    position:absolute;
+    width:24px;height:24px;
+    border-radius:999px;
+    border:2px solid rgba(255,255,255,.35);
+    opacity:0;
+    transform: scale(1);
+  }
+
+  /* the image */
+  .img{
+    width:92%;
+    height:92%;
+    object-fit:contain;
+    filter: drop-shadow(0 18px 26px rgba(0,0,0,.55));
+    opacity:0;
+    transform: translateY(6px) scale(.96);
+    transition: opacity 520ms ease, transform 520ms ease;
+  }
+  .card.show .img{
+    opacity:1;
+    transform: translateY(0) scale(1);
+  }
+
+  /* text block */
+.title{
+  font-size: 42px;        /* avant: 34px */
+  font-weight: 1000;
+  color: var(--text);
+  letter-spacing: .4px;
+  line-height: 1.08;
+  text-shadow:
+    0 2px 10px rgba(0,0,0,.55),
+    0 0 18px rgba(122,162,255,.35);
 }
 
-/* ─── Carte ─── */
-.evo-card {
-  position: relative;
-  width: 400px;
-  background: linear-gradient(160deg, #04090f 0%, #070e1d 40%, #050b18 100%);
-  border-radius: 0 20px 20px 0;
-  border-right: 1px solid rgba(0,229,255,0.3);
-  border-top:   1px solid rgba(0,229,255,0.2);
-  border-bottom:1px solid rgba(0,229,255,0.1);
-  overflow: hidden;
-  box-shadow:
-    0 0 0 1px rgba(0,229,255,0.05),
-    0 0 50px rgba(0,229,255,0.14),
-    0 0 120px rgba(0,229,255,0.06);
+/* Typewriter cursor */
+.titleTyping::after{
+  content:"";
+  display:inline-block;
+  width:10px;
+  height:1.15em;
+  margin-left:8px;
+  background: rgba(255,255,255,.65);
+  border-radius:2px;
+  animation: caretBlink 900ms steps(2, end) infinite;
+  vertical-align: -0.15em;
 }
 
-/* Trait néon gauche */
-.evo-card::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 8%; bottom: 8%;
-  width: 3px;
-  background: linear-gradient(180deg, transparent, #00e5ff, #ff2d78, transparent);
-  border-radius: 999px;
-  animation: neonPulse 2s ease-in-out infinite;
-  z-index: 20;
-}
-@keyframes neonPulse {
-  0%,100% { opacity:.7; }
-  50% { opacity:1; box-shadow: 0 0 14px #00e5ff; }
+@keyframes caretBlink{
+  0%, 49% { opacity:1; }
+  50%, 100% { opacity:0; }
 }
 
-/* Scanlines */
-.evo-card::after {
-  content: '';
-  position: absolute; inset: 0;
-  background: repeating-linear-gradient(
-    to bottom, transparent 0px, transparent 2px,
-    rgba(0,0,0,0.07) 2px, rgba(0,0,0,0.07) 3px
-  );
-  pointer-events: none;
-  z-index: 21;
+/* Pulse (appliqué en JS via transform + text-shadow) */
+.titlePulse{
+  will-change: transform, text-shadow, filter;
 }
 
-/* Reflet holographique */
-.holo {
-  position: absolute; inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 30%, rgba(0,229,255,.05) 40%,
-    rgba(255,45,120,.05) 50%, rgba(0,255,157,.04) 60%, transparent 70%
-  );
-  background-size: 200% 200%;
-  animation: holoShift 3s ease-in-out infinite;
-  pointer-events: none;
-  z-index: 19;
-  border-radius: 0 18px 18px 0;
-}
-@keyframes holoShift {
-  0%   { background-position: 0% 0%; opacity:.6; }
-  50%  { background-position: 100% 100%; opacity:1; }
-  100% { background-position: 0% 0%; opacity:.6; }
+
+.subtitle{
+  margin-top: 12px;
+  color: #cfd6e3;         /* plus clair */
+  font-size: 17px;        /* avant: 14px */
+  line-height: 1.5;
+  text-shadow: 0 1px 6px rgba(0,0,0,.45);
 }
 
-/* ─── Header viewer ─── */
-.evo-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 18px 10px 18px;
-  border-bottom: 1px solid rgba(0,229,255,0.1);
-  background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
-  position: relative; z-index: 5;
+  .pillRow{ margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
+.pill{
+  padding: 7px 12px;      /* un peu plus haut */
+  font-size: 13px;        /* avant: 12px */
+  color: #e1e7f0;
+  background: rgba(0,0,0,.22);
 }
-.evo-avatar {
-  width: 36px; height: 36px; border-radius: 50%;
-  border: 2px solid rgba(0,229,255,0.4);
-  object-fit: cover; flex-shrink: 0;
-}
-.evo-viewer-name {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 11px; color: #00e5ff; letter-spacing: .1em;
-}
-.evo-badge {
-  margin-left: auto;
-  font-family: 'Orbitron', monospace;
-  font-size: 8px; font-weight: 900;
-  color: #ff2d78; letter-spacing: .18em; text-transform: uppercase;
-  text-shadow: 0 0 14px rgba(255,45,120,.8);
-  animation: badgePulse 1.2s ease-in-out infinite;
-}
-@keyframes badgePulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
 
-/* ─── Zone image ─── */
-.img-stage {
-  position: relative; height: 320px;
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
-.img-bg {
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.08) 0%, transparent 70%);
-  z-index: 1; transition: background 0.5s ease;
-}
-.img-bg.glitch-mode {
-  animation: bgGlitch 0.1s steps(1) infinite;
-}
-@keyframes bgGlitch {
-  0%  { background: radial-gradient(ellipse at 50% 60%, rgba(255,45,120,.1)  0%, transparent 70%); }
-  33% { background: radial-gradient(ellipse at 50% 60%, rgba(0,229,255,.12)  0%, transparent 70%); }
-  66% { background: radial-gradient(ellipse at 50% 60%, rgba(0,255,157,.08)  0%, transparent 70%); }
-}
-.cm-img {
-  position: absolute;
-  width: 240px; height: 240px;
-  object-fit: contain; z-index: 3;
-  image-rendering: pixelated;
-  transition: opacity 0.35s ease, filter 0.35s ease;
-  filter: drop-shadow(0 0 22px rgba(0,229,255,.45));
-}
-.cm-img.hidden { opacity: 0; pointer-events: none; }
-.cm-img.glitching {
-  filter: drop-shadow(0 0 30px rgba(255,45,120,.9));
-  animation: imgGlitch 0.12s steps(1) infinite;
-}
-@keyframes imgGlitch {
-  0%  { clip-path:inset(8%  0 78% 0); transform:translate(-5px, 1px) scaleX(1.02); }
-  15% { clip-path:inset(62% 0 18% 0); transform:translate( 5px,-2px); }
-  30% { clip-path:inset(35% 0 45% 0); transform:translate(-3px, 3px) scaleX(.98); }
-  45% { clip-path:inset(4%  0 72% 0); transform:translate( 6px, 0); }
-  60% { clip-path:inset(78% 0  4% 0); transform:translate(-2px,-3px); }
-  75% { clip-path:inset(20% 0 60% 0); transform:translate( 4px, 1px); }
-  90% { clip-path:inset(50% 0 28% 0); transform:translate(-4px, 2px); }
-  100%{ clip-path:inset(0);           transform:translate(0,0); }
-}
-#sparkCanvas {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  z-index: 5; pointer-events: none;
-}
-.scan-sweep {
-  position: absolute; left: 0; right: 0; height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(0,229,255,.7), rgba(255,45,120,.5), transparent);
-  z-index: 6; opacity: 0; pointer-events: none;
-}
-.scan-sweep.running {
-  opacity: 1;
-  animation: scanSweep 0.5s linear infinite;
-}
-@keyframes scanSweep { from{top:0;} to{top:100%;} }
+  .dot{
+    width:8px;height:8px;border-radius:999px;
+    background: var(--accent);
+    box-shadow: 0 0 18px rgba(122,162,255,.55);
+  }
 
-/* ─── Footer noms ─── */
-.evo-footer {
-  padding: 12px 18px 16px;
-  border-top: 1px solid rgba(0,229,255,0.1);
-  background: rgba(0,0,0,.25);
-  position: relative; z-index: 5;
-}
-.name-row {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 5px;
-}
-.name-old {
-  font-family: 'Orbitron', monospace; font-size: 11px;
-  color: #4a6a88; text-decoration: line-through;
-  opacity: 0; transition: opacity .4s ease;
-}
-.name-old.show { opacity: .7; }
-.name-arr {
-  color: #ff2d78; font-size: 14px;
-  opacity: 0; transition: opacity .4s ease;
-  text-shadow: 0 0 10px rgba(255,45,120,.6);
-}
-.name-arr.show { opacity: 1; }
-.name-new {
-  font-family: 'Orbitron', monospace; font-size: 16px; font-weight: 900;
-  color: #e8f4ff; text-shadow: 0 0 18px rgba(0,229,255,.55);
-  opacity: 0; transition: opacity .5s ease;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.name-new.show { opacity: 1; }
-.evo-sub {
-  font-family: 'Share Tech Mono', monospace; font-size: 9px;
-  color: #00e5ff; letter-spacing: .14em; text-transform: uppercase;
-  opacity: 0; transition: opacity .5s ease;
-}
-.evo-sub.show { opacity: 1; }
+  /* cinematic flash overlay */
+  .flash{
+    position:fixed; inset:0;
+    background: radial-gradient(800px 500px at 50% 50%, rgba(255,255,255,.55), rgba(255,255,255,0) 55%);
+    opacity:0;
+    pointer-events:none;
+  }
+
+  /* subtle shake */
+  @keyframes shake {
+    0%{ transform: translateY(0) }
+    20%{ transform: translateY(-2px) }
+    40%{ transform: translateY(2px) }
+    60%{ transform: translateY(-1px) }
+    80%{ transform: translateY(1px) }
+    100%{ transform: translateY(0) }
+  }
+
+  /* ring burst */
+  @keyframes ringBurst {
+    0%{ opacity:0; transform: scale(.65) rotate(0deg); }
+    25%{ opacity:.85; }
+    100%{ opacity:0; transform: scale(1.12) rotate(12deg); }
+  }
+
+  @keyframes shock {
+    0%{ opacity:.9; transform: scale(1); }
+    100%{ opacity:0; transform: scale(42); }
+  }
+
+  /* particles canvas */
+  canvas{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+  }
+
+  /* show/hide timing */
+  .hideFade{
+    opacity:0 !important;
+    transform: translateY(14px) scale(.92) !important;
+    transition: opacity 420ms ease, transform 420ms ease !important;
+  }
+
+  /* reduce motion fallback */
+  @media (prefers-reduced-motion: reduce){
+    .card, .img, .backdrop{ transition:none !important; }
+  }
 </style>
 </head>
+
 <body>
-<div class="scene" id="scene">
-  <div class="evo-card">
-    <div class="holo"></div>
-    <div class="evo-header">
-      <img class="evo-avatar" id="avatar" src="" alt="">
-      <div class="evo-viewer-name" id="viewerName"></div>
-      <div class="evo-badge">&#x2726; ÉVOLUTION &#x2726;</div>
-    </div>
-    <div class="img-stage">
-      <div class="img-bg" id="imgBg"></div>
-      <canvas id="sparkCanvas"></canvas>
-      <img class="cm-img hidden" id="imgOld" src="" alt="">
-      <img class="cm-img hidden" id="imgNew" src="" alt="">
-      <div class="scan-sweep" id="scanSweep"></div>
-    </div>
-    <div class="evo-footer">
-      <div class="name-row">
-        <div class="name-old" id="nameOld"></div>
-        <div class="name-arr" id="nameArr">&#x2192;</div>
-        <div class="name-new" id="nameNew"></div>
+<div class="backdrop" id="backdrop">
+  <div class="scanlines"></div>
+</div>
+<div class="flash" id="flash"></div>
+
+<div class="wrap">
+  <div id="card" class="card">
+    <div class="viewerBar">
+      <img id="avatar" class="avatar" src="" alt="">
+      <div>
+        <div id="viewerName" class="viewerName"></div>
+        <div class="viewerSub">Évolution détectée — ManaCorp</div>
       </div>
-      <div class="evo-sub" id="evoSub">FORME DÉBLOQUÉE</div>
     </div>
+
+    <div class="grid">
+      <div>
+        <div class="title" id="formName">Évolution</div>
+        <div class="subtitle" id="subText">
+          Stabilisation de la signature génétique… synchronisation des flux…
+        </div>
+
+        <div class="pillRow">
+          <div class="pill"><span class="dot"></span> Procédure : ÉVOLUTION</div>
+          <div class="pill">🔊 Son synchronisé</div>
+          <div class="pill">🧬 Forme validée</div>
+        </div>
+      </div>
+
+      <div class="chamber" id="chamber">
+        <canvas id="fx"></canvas>
+        <div class="ring r1" id="r1"></div>
+        <div class="ring r2" id="r2"></div>
+        <div class="ring r3" id="r3"></div>
+        <div class="shockwave" id="shockwave"></div>
+        <img id="img" class="img" src="" alt="">
+      </div>
+    </div>
+
+    <audio id="snd"></audio>
   </div>
 </div>
 
-<audio id="evoAudio" preload="auto">
-  <source src="/static/evo.mp3" type="audio/mpeg">
-</audio>
-
 <script>
-const T_OLD  = 8000;
-const T_GLIT = 4000;
-const T_NEW  = 8000;
-const POLL   = 1500;
+let showing = false;
+let lastSig = "";
+let hideTimer = null;
+const SHOW_MS = 6500;
 
-let busy = false;
+const card = document.getElementById('card');
+const backdrop = document.getElementById('backdrop');
+const flash = document.getElementById('flash');
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function $(id)     { return document.getElementById(id); }
+const avatar = document.getElementById('avatar');
+const viewerName = document.getElementById('viewerName');
+const img = document.getElementById('img');
+const formName = document.getElementById('formName');
+const snd = document.getElementById('snd');
 
-/* ─── Étincelles ─────────────────────────────────────────────────────────── */
-const canvas = $('sparkCanvas');
-const ctx    = canvas.getContext('2d');
-let sparks   = [], sparkRaf = null, sparkTimer = null;
-const COLORS = ['#00e5ff','#ff2d78','#00ff9d','#ffd166','#ffffff','#7aa2ff'];
+const r1 = document.getElementById('r1');
+const r2 = document.getElementById('r2');
+const r3 = document.getElementById('r3');
+const shockwave = document.getElementById('shockwave');
 
-function resizeCanvas() {
-  const s = canvas.parentElement;
-  canvas.width = s.offsetWidth; canvas.height = s.offsetHeight;
+const canvas = document.getElementById('fx');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas(){
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.floor(rect.width * devicePixelRatio);
+  canvas.height = Math.floor(rect.height * devicePixelRatio);
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
 }
+window.addEventListener('resize', resizeCanvas);
 
-function burst(n=80) {
-  const cx = canvas.width*.5, cy = canvas.height*.55;
-  for (let i=0;i<n;i++) {
-    const a=Math.random()*Math.PI*2, spd=2+Math.random()*6;
-    sparks.push({
-      x:cx+(Math.random()-.5)*30, y:cy+(Math.random()-.5)*30,
-      vx:Math.cos(a)*spd, vy:Math.sin(a)*spd-2, ay:0.13,
-      color:COLORS[0|Math.random()*COLORS.length],
-      alpha:1, decay:.013+Math.random()*.016,
-      size:2.5+Math.random()*5,
-      shape:Math.random()<.45?'rect':'circle',
-      rot:Math.random()*Math.PI*2, rotV:(Math.random()-.5)*.25,
+let particles = [];
+function spawnParticles(){
+  particles = [];
+  const w = canvas.getBoundingClientRect().width;
+  const h = canvas.getBoundingClientRect().height;
+  const cx = w/2, cy = h/2;
+
+  const n = 80;
+  for(let i=0;i<n;i++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 0.8 + Math.random()*2.2;
+    particles.push({
+      x: cx + (Math.random()*10-5),
+      y: cy + (Math.random()*10-5),
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0,
+      max: 40 + Math.floor(Math.random()*35),
+      size: 1 + Math.random()*2.2,
+      kind: Math.random() < 0.75 ? 0 : 1
     });
   }
 }
 
-function drawSparks() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  sparks = sparks.filter(s=>s.alpha>.02);
-  for (const s of sparks) {
-    ctx.save();
-    ctx.globalAlpha=s.alpha; ctx.fillStyle=s.color;
-    ctx.shadowColor=s.color; ctx.shadowBlur=8;
-    ctx.translate(s.x,s.y); ctx.rotate(s.rot);
-    if (s.shape==='rect') ctx.fillRect(-s.size*.5,-s.size*.25,s.size,s.size*.45);
-    else { ctx.beginPath(); ctx.arc(0,0,s.size*.5,0,Math.PI*2); ctx.fill(); }
-    ctx.restore();
-    s.x+=s.vx; s.y+=s.vy; s.vx*=.97; s.vy+=s.ay;
-    s.rot+=s.rotV; s.alpha-=s.decay;
+function stepParticles(){
+  const w = canvas.getBoundingClientRect().width;
+  const h = canvas.getBoundingClientRect().height;
+  ctx.clearRect(0,0,w,h);
+
+  // subtle vignette
+  const g = ctx.createRadialGradient(w/2,h/2,10,w/2,h/2,Math.min(w,h)/1.5);
+  g.addColorStop(0,'rgba(122,162,255,.06)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,w,h);
+
+  // particles
+  for(const p of particles){
+    p.life++;
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.985;
+    p.vy *= 0.985;
+
+    const t = p.life / p.max;
+    const alpha = Math.max(0, 1 - t);
+
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+
+    if(p.kind === 0){
+      ctx.fillStyle = 'rgba(122,162,255,1)';
+      ctx.shadowColor = 'rgba(122,162,255,.75)';
+      ctx.shadowBlur = 12;
+    }else{
+      ctx.fillStyle = 'rgba(255,214,102,1)';
+      ctx.shadowColor = 'rgba(255,214,102,.55)';
+      ctx.shadowBlur = 10;
+    }
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // end
+    if(p.life >= p.max){
+      p.life = 999999;
+    }
   }
-  sparkRaf = requestAnimationFrame(drawSparks);
+  ctx.globalAlpha = 1;
+
+  particles = particles.filter(p => p.life < p.max);
+
+  if(showing){
+    requestAnimationFrame(stepParticles);
+  }
 }
 
-function startSparks() {
-  resizeCanvas(); sparks=[];
-  burst(90);
-  if (!sparkRaf) drawSparks();
-  sparkTimer = setInterval(()=>burst(6), 200);
+function playFlash(){
+  flash.style.opacity = '0';
+  // force
+  void flash.offsetWidth;
+  flash.style.transition = 'opacity 140ms ease';
+  flash.style.opacity = '0.9';
+  setTimeout(()=>{ flash.style.opacity = '0'; }, 160);
 }
 
-function stopSparks() {
-  clearInterval(sparkTimer); sparkTimer=null;
-  if (sparkRaf) { cancelAnimationFrame(sparkRaf); sparkRaf=null; }
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  sparks=[];
+function burstRings(){
+  // reset + animate
+  for (const el of [r1,r2,r3]){
+    el.style.animation = 'none';
+    el.style.opacity = '0';
+    el.style.transform = 'scale(.7)';
+    void el.offsetWidth;
+    el.style.animation = 'ringBurst 820ms ease-out';
+  }
 }
 
-/* ─── Animation ──────────────────────────────────────────────────────────── */
-async function playEvo(data) {
-  busy = true;
-  const {viewer, old_form, new_form} = data;
-  const hasOld = !!(old_form && old_form.image);
+function burstShockwave(){
+  shockwave.style.animation = 'none';
+  shockwave.style.opacity = '0';
+  void shockwave.offsetWidth;
+  shockwave.style.animation = 'shock 720ms ease-out';
+}
 
-  // Remplir
-  $('avatar').src                = viewer.avatar || '';
-  $('viewerName').textContent    = '\u0040' + (viewer.name || '');
-  $('imgOld').src                = hasOld ? old_form.image : '';
-  $('imgNew').src                = new_form.image || '';
-  $('nameOld').textContent       = hasOld ? (old_form.name || '') : '';
-  $('nameNew').textContent       = new_form.name  || '';
+function showCard(){
+  if (!showing){
+    backdrop.style.display='block';
+    card.style.display='block';
+    // reflow
+    void card.offsetWidth;
+    backdrop.classList.add('show');
+    card.classList.add('show');
 
-  // Reset
-  ['nameOld','nameArr','nameNew','evoSub'].forEach(id=>$(id).classList.remove('show'));
-  $('imgOld').classList.remove('glitching'); $('imgOld').classList.add('hidden');
-  $('imgNew').classList.remove('glitching'); $('imgNew').classList.add('hidden');
-  $('imgBg').classList.remove('glitch-mode');
-  $('scanSweep').classList.remove('running');
-  stopSparks();
+    // cinematic impact
+    playFlash();
+    burstRings();
+    burstShockwave();
+    spawnParticles();
+    resizeCanvas();
+    showing = true;
+    requestAnimationFrame(stepParticles);
 
-  // Musique
-  try { const a=$('evoAudio'); a.currentTime=0; a.volume=.88; await a.play(); } catch(e) {}
-
-  // Entrée
-  $('scene').classList.add('visible');
-  await sleep(300);
-
-  if (!hasOld) {
-    // Éclosion directe
-    $('imgNew').classList.remove('hidden');
-    $('nameNew').classList.add('show');
-    $('evoSub').classList.add('show');
-    await sleep(200);
-    startSparks();
-    await sleep(T_NEW);
-  } else {
-    // Phase 1 : ancien CM
-    $('imgOld').classList.remove('hidden');
-    $('nameOld').classList.add('show');
-    await sleep(T_OLD);
-
-    // Phase 2 : glitch
-    $('imgOld').classList.add('glitching');
-    $('imgBg').classList.add('glitch-mode');
-    $('scanSweep').classList.add('running');
-    await sleep(T_GLIT / 2);
-
-    // Swap au milieu du glitch
-    $('imgOld').classList.add('hidden');
-    $('imgOld').classList.remove('glitching');
-    $('imgNew').classList.remove('hidden');
-    $('imgNew').classList.add('glitching');
-    await sleep(T_GLIT / 2);
-
-    // Phase 3 : nouveau CM + étincelles
-    $('imgNew').classList.remove('glitching');
-    $('imgBg').classList.remove('glitch-mode');
-    $('scanSweep').classList.remove('running');
-    $('nameArr').classList.add('show');
-    $('nameNew').classList.add('show');
-    $('evoSub').classList.add('show');
-    startSparks();
-    await sleep(T_NEW);
+    // tiny shake
+    card.style.animation = 'shake 360ms ease';
+    setTimeout(()=>{ card.style.animation = 'none'; }, 380);
   }
 
-  // Sortie
-  stopSparks();
-  $('scene').style.transition = 'transform 0.6s cubic-bezier(0.55, 0, 1, 0.45)';
-  $('scene').classList.remove('visible');
-  await sleep(700);
-
-  // Reset complet
-  $('scene').style.transition = '';
-  $('imgOld').classList.add('hidden');
-  $('imgNew').classList.add('hidden');
-  ['nameOld','nameArr','nameNew','evoSub'].forEach(id=>$(id).classList.remove('show'));
-
-  busy = false;
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = setTimeout(hideCard, SHOW_MS);
 }
 
-/* ─── Polling ────────────────────────────────────────────────────────────── */
-async function poll() {
-  if (busy) return;
-  try {
+function hideCard(){
+  if (!showing) return;
+
+  card.classList.remove('show');
+  backdrop.classList.remove('show');
+
+  // stop FX after fade
+  setTimeout(()=>{
+    card.style.display='none';
+    backdrop.style.display='none';
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    particles = [];
+  }, 520);
+
+  showing = false;
+  hideTimer = null;
+  stopPulse();
+formName.style.transform = '';
+formName.style.textShadow = '';
+
+}
+
+// ---------------------
+// Typewriter
+// ---------------------
+let typingTimer = null;
+
+function typewriter(el, fullText, speedMs=28){
+  // reset
+  if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+  el.textContent = "";
+  el.classList.add("titleTyping");
+
+  let i = 0;
+  typingTimer = setInterval(() => {
+    el.textContent += fullText[i] || "";
+    i++;
+    if (i >= fullText.length){
+      clearInterval(typingTimer);
+      typingTimer = null;
+
+      // retire le curseur après une petite pause
+      setTimeout(()=>{ el.classList.remove("titleTyping"); }, 700);
+    }
+  }, speedMs);
+}
+
+// ---------------------
+// Audio pulse (WebAudio)
+// ---------------------
+let audioCtx = null;
+let analyser = null;
+let dataArray = null;
+let rafPulse = null;
+
+function stopPulse(){
+  if (rafPulse) cancelAnimationFrame(rafPulse);
+  rafPulse = null;
+  if (analyser) analyser.disconnect();
+  analyser = null;
+  dataArray = null;
+}
+
+function startPulse(audioEl, targetEl){
+  stopPulse();
+
+  // WebAudio context (créé à la demande)
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+
+  const src = audioCtx.createMediaElementSource(audioEl);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+
+  src.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  targetEl.classList.add("titlePulse");
+
+  const baseScale = 1.0;
+
+  const loop = () => {
+    if (!analyser) return;
+
+    analyser.getByteFrequencyData(dataArray);
+
+    // énergie moyenne (0..255)
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+    const avg = sum / dataArray.length;
+
+    // normalise (0..1 environ)
+    const n = Math.min(1, avg / 140);
+
+    // pulse
+    const scale = baseScale + n * 0.06;
+    targetEl.style.transform = `scale(${scale})`;
+
+    // glow lié au son
+    const glow = 10 + n * 26;
+    targetEl.style.textShadow = `
+      0 2px 10px rgba(0,0,0,.55),
+      0 0 ${glow}px rgba(122,162,255,.55),
+      0 0 ${glow * 0.6}px rgba(255,214,102,.25)
+    `;
+
+    rafPulse = requestAnimationFrame(loop);
+  };
+
+  rafPulse = requestAnimationFrame(loop);
+}
+
+
+async function tick(){
+  try{
     const r = await fetch('/overlay/evolution_state', {cache:'no-store'});
-    const j = await r.json();
-    if (j.active) await playEvo(j);
+    const d = await r.json();
+    if(!d.active) return;
+
+    const sig = `${d.viewer.name}|${d.form.name}|${d.form.image}|${d.form.sound||''}`;
+    if (sig !== lastSig){
+      lastSig = sig;
+
+// texte lettre par lettre
+typewriter(formName, d.form.name || "Évolution", 28);
+
+// image
+img.src = d.form.image || '';
+
+// son + pulse sync
+if (d.form.sound){
+  snd.src = d.form.sound;
+  try {
+    snd.currentTime = 0;
+
+    // IMPORTANT: certains navigateurs nécessitent resume()
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(()=>{});
+    }
+
+    snd.play().catch(()=>{});
+    startPulse(snd, formName);
   } catch(e) {}
+} else {
+  stopPulse();
 }
 
-setInterval(poll, POLL);
-poll();
+showCard();
+
+    }
+  }catch(e){}
+}
+
+
+
+setInterval(tick, 500);
+tick();
 </script>
 </body>
-</html>""")
+</html>
+
+""")
+
+
+
+# =============================================================================
+# ADMIN: CMS ACTION 
+# =============================================================================
 
 
 @app.post("/admin/cms/action")
@@ -5208,38 +5423,23 @@ def overlay_state():
 def overlay_evolution_state():
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Sélectionner UNIQUEMENT les entrées pas encore consommées
             cur.execute("""
-                SELECT id, twitch_login, viewer_display, viewer_avatar,
-                       name, image_url, COALESCE(sound_url,''),
-                       COALESCE(old_name,''), COALESCE(old_image_url,'')
+                SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,'')
                 FROM overlay_evolutions
                 WHERE expires_at > now()
-                  AND consumed_at IS NULL
                 ORDER BY id DESC
                 LIMIT 1;
             """)
             row = cur.fetchone()
 
-            if not row:
-                return {"active": False}
+    if not row:
+        return {"active": False}
 
-            evo_id, login, display, avatar, new_name, new_img, sound, old_name, old_img = row
-
-            # Marquer immédiatement comme consommé pour éviter le double déclenchement
-            cur.execute("""
-                UPDATE overlay_evolutions
-                SET consumed_at = now()
-                WHERE id = %s;
-            """, (evo_id,))
-
-        conn.commit()
-
+    viewer_display, viewer_avatar, name, image_url, sound_url = row
     return {
         "active": True,
-        "viewer": {"name": display or login or "", "avatar": avatar or ""},
-        "old_form": {"name": old_name, "image": old_img},
-        "new_form": {"name": new_name, "image": new_img, "sound": sound},
+        "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
+        "form": {"name": name, "image": image_url, "sound": sound_url or ""},
     }
 
 @app.post("/internal/xp")
@@ -5328,33 +5528,23 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                             WHERE id=%s;
                         """, (cm_key, creature_id))
 
-            # overlay evolution : récupérer old + new forme
+            # overlay evolution si forme existe (inchangé)
             if stage_changed and new_stage >= 1:
                 cur.execute("""
-                    SELECT name, image_url, COALESCE(sound_url,'')
-                    FROM cm_forms WHERE cm_key=%s AND stage=%s;
+                    SELECT name, image_url, sound_url
+                    FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
                 """, (cm_key, new_stage))
-                nf = cur.fetchone()
-                old_form_name  = ""
-                old_form_image = ""
-                if prev_stage >= 1:
-                    cur.execute("""
-                        SELECT name, image_url FROM cm_forms
-                        WHERE cm_key=%s AND stage=%s;
-                    """, (cm_key, prev_stage))
-                    of = cur.fetchone()
-                    if of:
-                        old_form_name, old_form_image = of
-                if nf:
-                    new_form_name, new_image_url, new_sound_url = nf
+                f = cur.fetchone()
+                if f:
+                    form_name, image_url, sound_url = f
                     evo_payload = {
                         "twitch_login": login,
+                        "cm_key": cm_key,
                         "stage": new_stage,
-                        "new_name": new_form_name,
-                        "new_image_url": new_image_url,
-                        "new_sound_url": new_sound_url,
-                        "old_name": old_form_name,
-                        "old_image_url": old_form_image,
+                        "name": form_name,
+                        "image_url": image_url,
+                        "sound_url": sound_url,
                     }
 
         conn.commit()
@@ -5369,9 +5559,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
         "stage_before": prev_stage,
         "stage_after": new_stage,
         "evolved": (new_stage > prev_stage),
-        "cm_assigned": cm_assigned,
-        "new_form_name": evo_payload.get("new_name", "") if evo_payload else "",
-        "old_form_name": evo_payload.get("old_name", "") if evo_payload else "",
+        "cm_assigned": cm_assigned,  # optionnel (tu l'utilises déjà côté bot)
     }
 
 # =============================================================================
@@ -6766,23 +6954,43 @@ def _render_user_page(login: str, d: dict) -> str:
     album_html = ""
     for sec in sections:
         cms_grid = ""
+        section_total_forms  = 0
+        section_owned_forms  = 0
         for c in sec["cms"]:
-            owned_cls  = "owned" if c["owned"] else "locked"
-            active_cls = "active" if c["is_active"] else ""
-            best = next((f for f in reversed(c["forms"]) if f["image_url"] and c["owned"]), None)
-            img_tag = f'<img src="{best["image_url"]}" alt="{c["name"]}">' if best else '<div class="silhouette">?</div>'
-            dots = "".join(f'<div class="stage-dot {"has" if c["max_stage"] >= st and c["owned"] else ""}"></div>' for st in [1,2,3])
-            cms_grid += f"""
-            <div class="album-card {owned_cls} {active_cls}" title="{c['name']}">
+            if c["owned"]:
+                # CM possédé : une carte par forme qui existe
+                for form in c["forms"]:
+                    if not form["name"] and not form["image_url"]:
+                        continue  # forme inexistante dans cm_forms
+                    section_total_forms += 1
+                    section_owned_forms += 1
+                    active_cls = "active" if c["is_active"] and form["stage"] == c["max_stage"] else ""
+                    stage_lbl  = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                    img_tag    = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
+                    cms_grid += f"""
+            <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
               <div class="album-img-wrap">{img_tag}</div>
-              <div class="album-name">{"???" if not c["owned"] else c["name"]}</div>
-              <div class="album-stages">{dots}</div>
+              <div class="album-name">{form['name']}</div>
+              <div class="album-stage-lbl">Stage {stage_lbl}</div>
+            </div>"""
+            else:
+                # CM non possédé : une silhouette par forme qui existe dans cm_forms
+                for form in c["forms"]:
+                    if not form["name"] and not form["image_url"]:
+                        continue  # forme inexistante, on ne l'affiche pas
+                    section_total_forms += 1
+                    stage_lbl = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                    cms_grid += f"""
+            <div class="album-card locked" title="??? — Stage {stage_lbl}">
+              <div class="album-img-wrap"><div class="silhouette">?</div></div>
+              <div class="album-name">???</div>
+              <div class="album-stage-lbl">Stage {stage_lbl}</div>
             </div>"""
         album_html += f"""
         <div class="album-section">
           <div class="section-header">
             <div class="section-title">{sec['lineage_name'].upper()}</div>
-            <div class="section-count">{sec['owned_count']}/{len(sec['cms'])}</div>
+            <div class="section-count">{section_owned_forms}/{section_total_forms} formes</div>
           </div>
           <div class="album-grid">{cms_grid}</div>
         </div>"""
@@ -6790,7 +6998,16 @@ def _render_user_page(login: str, d: dict) -> str:
     rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
     week_str = _current_week_start().strftime("%d/%m/%Y")
     completed_count = sum(1 for q in quests if q["completed"])
-    album_pct = int((d["owned_total"] / max(1, d["total_cms"])) * 100)
+    # Recalcul des totaux sur les formes réelles
+    total_forms_real = sum(
+        sum(1 for f in c["forms"] if f["name"] or f["image_url"])
+        for sec in sections for c in sec["cms"]
+    )
+    owned_forms_real = sum(
+        sum(1 for f in c["forms"] if f["name"] or f["image_url"])
+        for sec in sections for c in sec["cms"] if c["owned"]
+    )
+    album_pct = int((owned_forms_real / max(1, total_forms_real)) * 100)
 
     return f"""<!doctype html>
 <html lang="fr"><head>
@@ -6874,10 +7091,10 @@ a{{color:var(--cyan);text-decoration:none}}
 .album-img-wrap{{width:60px;height:60px;margin:0 auto 6px;border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04);display:flex;align-items:center;justify-content:center}}
 .album-img-wrap img{{width:100%;height:100%;object-fit:contain}}
 .silhouette{{font-size:24px;color:var(--muted)}}
-.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.album-stages{{display:flex;justify-content:center;gap:3px}}
-.stage-dot{{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15)}}
-.stage-dot.has{{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 4px rgba(0,229,255,.6)}}
+.album-name{{font-family:var(--font-ui);font-size:10px;color:var(--text);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.album-stage-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
+.album-card.locked .album-name{{color:var(--muted)}}
+.album-card.locked .album-stage-lbl{{color:rgba(74,106,136,.6)}}
 .album-progress-bar{{height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;margin:6px 0 4px}}
 .album-progress-fill{{height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:999px;transition:width .8s ease}}
 .album-stats-row{{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
@@ -6911,7 +7128,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
   <div class="card">
     <div class="card-title">// ALBUM CAPSMONS</div>
     <div class="album-progress-bar"><div class="album-progress-fill" style="width:{album_pct}%"></div></div>
-    <div class="album-stats-row"><span>{d['owned_total']} possédés</span><span>{d['total_cms']} total</span></div>
+    <div class="album-stats-row"><span>{owned_forms_real} formes débloquées</span><span>{total_forms_real} formes au total</span></div>
     {album_html}
   </div>
 </div>
