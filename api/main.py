@@ -296,7 +296,7 @@ input.focus();
 # PANEL MODÉRATEUR — OAuth Twitch
 # =============================================================================
 
-MOD_REDIRECT_URI = os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/callback")
+MOD_REDIRECT_URI = os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/twitch/callback")
 _mod_oauth_states: dict = {}   # state → timestamp (nettoyé après usage)
 
 def _get_broadcaster_token(cur) -> str | None:
@@ -493,7 +493,7 @@ def mod_auth():
     return RedirectResponse("https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params))
 
 
-@app.get("/mod/callback")
+@app.get("/mod/twitch/callback")
 async def mod_callback(
     code: str | None = None,
     state: str | None = None,
