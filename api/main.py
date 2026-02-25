@@ -7036,27 +7036,24 @@ def _render_user_page(login: str, d: dict) -> str:
         section_total_forms = 0
         section_owned_forms = 0
         for c in sec["cms"]:
-            if c["owned"]:
-                for form in c["forms"]:
-                    if not form["name"] and not form["image_url"]:
-                        continue  # forme non définie dans cm_forms
-                    section_total_forms += 1
+            for form in c["forms"]:
+                if not form["name"] and not form["image_url"]:
+                    continue  # forme non définie dans cm_forms
+                section_total_forms += 1
+                stage_lbl = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                if c["owned"] and form["stage"] <= c["max_stage"]:
+                    # Forme débloquée (stage atteint ou dépassé)
                     section_owned_forms += 1
                     active_cls = "active" if c["is_active"] and form["stage"] == c["max_stage"] else ""
-                    stage_lbl  = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
-                    img_tag    = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
+                    img_tag = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
                     cms_grid += f"""
             <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
               <div class="album-img-wrap">{img_tag}</div>
               <div class="album-name">{form['name']}</div>
               <div class="album-stage-lbl">Stage {stage_lbl}</div>
             </div>"""
-            else:
-                for form in c["forms"]:
-                    if not form["name"] and not form["image_url"]:
-                        continue  # forme non définie, pas de silhouette
-                    section_total_forms += 1
-                    stage_lbl = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                else:
+                    # Forme non encore atteinte ou CM non possédé
                     cms_grid += f"""
             <div class="album-card locked" title="??? — Stage {stage_lbl}">
               <div class="album-img-wrap"><div class="silhouette">?</div></div>
@@ -7080,7 +7077,7 @@ def _render_user_page(login: str, d: dict) -> str:
         for sec in sections for c in sec["cms"]
     )
     owned_forms_real = sum(
-        sum(1 for f in c["forms"] if f["name"] or f["image_url"])
+        sum(1 for f in c["forms"] if (f["name"] or f["image_url"]) and f["stage"] <= c["max_stage"])
         for sec in sections for c in sec["cms"] if c["owned"]
     )
     album_pct = int((owned_forms_real / max(1, total_forms_real)) * 100)
