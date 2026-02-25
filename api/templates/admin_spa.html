@@ -655,6 +655,11 @@
     <span class="icon">◫</span> Médias
   </div>
 
+  <div class="nav-section">// OVERLAY</div>
+  <div class="nav-item" data-page="announcements" onclick="nav(this)">
+    <span class="icon">📢</span> Annonces
+  </div>
+
   <div class="nav-section">// GAMEPLAY</div>
   <div class="nav-item" data-page="drops" onclick="nav(this)">
     <span class="icon">▽</span> Drops
@@ -1136,6 +1141,140 @@
       </div>
     </div>
 
+    <!-- ══════════ PAGE: ANNONCES ══════════ -->
+    <div class="page" id="page-announcements">
+      {% if flash and request.path == '/admin/announcements' %}
+        <div class="flash flash-{{ flash_kind or 'ok' }}">{{ flash }}</div>
+      {% endif %}
+
+      <!-- URL overlay -->
+      <div class="card" style="padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="muted mono" style="white-space:nowrap">// URL OBS :</span>
+        <code style="flex:1;min-width:0;overflow:auto">{{ request.base_url }}overlay/announcement</code>
+        <span class="muted" style="font-size:11px;white-space:nowrap">Taille recommandée : 1920 × 80 px · fond transparent</span>
+      </div>
+
+      <!-- Formulaire -->
+      <div class="card accent-c" id="ann-form-card">
+        <div class="card-title" id="ann-form-title">+ NOUVELLE ANNONCE</div>
+        <form method="post" action="/admin/announcement/save" class="col" id="ann-form">
+          <input type="hidden" name="ann_id" id="ann-id-field" value="">
+
+          <div class="form-row">
+            <div class="form-group" style="flex:2;min-width:200px">
+              <div class="form-label">TITRE *</div>
+              <input type="text" name="title" id="ann-title" placeholder="ex: Nouveau CapsMons disponible !" required>
+            </div>
+            <div class="form-group" style="flex:1;min-width:160px">
+              <div class="form-label">IMAGE URL</div>
+              <div class="url-field-wrap">
+                <input type="text" name="image_url" id="ann-image-url" placeholder="https://… (optionnel)" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, document.getElementById('ann-image-url'))">
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div class="form-label">TEXTE (optionnel)</div>
+            <input type="text" name="body" id="ann-body" placeholder="ex: Tape !link pour découvrir ton profil.">
+          </div>
+
+          <div class="form-row">
+            <div class="form-group" style="min-width:160px">
+              <div class="form-label">DURÉE D'AFFICHAGE (sec)</div>
+              <input type="number" name="display_seconds" id="ann-display-s" min="3" max="120" value="10">
+              <div class="muted" style="font-size:11px;margin-top:4px">Temps du bandeau à l'écran</div>
+            </div>
+            <div class="form-group" style="min-width:160px">
+              <div class="form-label">PAUSE APRÈS (sec)</div>
+              <input type="number" name="pause_seconds" id="ann-pause-s" min="0" max="300" value="5">
+              <div class="muted" style="font-size:11px;margin-top:4px">0 = enchaîner immédiatement</div>
+            </div>
+            <div class="form-group" style="min-width:120px">
+              <div class="form-label">ORDRE</div>
+              <input type="number" name="sort_order" id="ann-sort" min="0" value="0">
+              <div class="muted" style="font-size:11px;margin-top:4px">0 = premier affiché</div>
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <div class="form-label">ACTIF</div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding-top:10px">
+                <input type="checkbox" name="active" id="ann-active" value="on" checked>
+                <span class="muted mono" style="font-size:12px">Visible</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="row" style="gap:10px;margin-top:8px">
+            <button type="submit" class="btn btn-cyan">✓ Enregistrer</button>
+            <button type="button" class="btn btn-dim" onclick="resetAnnForm()">✕ Annuler</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Liste -->
+      <div class="card">
+        <div class="card-title">CAROUSEL — {{ announcements|length }} annonce(s)</div>
+        {% if announcements %}
+        <div class="muted mono" style="font-size:11px;margin-bottom:14px">
+          // Les annonces actives s'enchaînent dans l'ordre ↓ en boucle infinie
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:left">
+              <th style="padding:6px 10px">#</th>
+              <th style="padding:6px 10px">TITRE / IMAGE</th>
+              <th style="padding:6px 10px">TEXTE</th>
+              <th style="padding:6px 10px">AFFICH.</th>
+              <th style="padding:6px 10px">PAUSE</th>
+              <th style="padding:6px 10px">STATUT</th>
+              <th style="padding:6px 10px">ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for a in announcements %}
+            <tr style="border-top:1px solid var(--border)">
+              <td style="padding:8px 10px;font-family:var(--font-mono);font-size:13px;color:var(--muted)">{{ loop.index }}</td>
+              <td style="padding:8px 10px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  {% if a.image_url %}<img src="{{ a.image_url }}" style="width:32px;height:32px;object-fit:contain;border-radius:6px;flex-shrink:0">{% endif %}
+                  <strong style="font-size:13px">{{ a.title }}</strong>
+                </div>
+              </td>
+              <td style="padding:8px 10px;color:var(--muted);font-size:12px;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.body or '—' }}</td>
+              <td style="padding:8px 10px;font-family:var(--font-mono);font-size:12px">{{ a.display_seconds }}s</td>
+              <td style="padding:8px 10px;font-family:var(--font-mono);font-size:12px">
+                {% if a.pause_seconds == 0 %}<span style="color:var(--cyan)">direct</span>
+                {% else %}{{ a.pause_seconds }}s{% endif %}
+              </td>
+              <td style="padding:8px 10px">
+                <form method="post" action="/admin/announcement/toggle" style="display:inline">
+                  <input type="hidden" name="ann_id" value="{{ a.id }}">
+                  <button type="submit" class="btn btn-sm {% if a.active %}btn-cyan{% else %}btn-dim{% endif %}">
+                    {% if a.active %}● Actif{% else %}○ Inactif{% endif %}
+                  </button>
+                </form>
+              </td>
+              <td style="padding:8px 10px">
+                <div class="row" style="gap:6px">
+                  <button class="btn btn-dim btn-sm" onclick="editAnn({{ a.id }}, {{ a.title|tojson }}, {{ a.body|tojson }}, {{ a.image_url|tojson }}, {{ a.display_seconds }}, {{ a.pause_seconds }}, {{ a.sort_order }}, {{ 'true' if a.active else 'false' }})">✎</button>
+                  <form method="post" action="/admin/announcement/delete" style="display:inline" onsubmit="return confirm('Supprimer cette annonce ?')">
+                    <input type="hidden" name="ann_id" value="{{ a.id }}">
+                    <button type="submit" class="btn btn-magenta btn-sm">✕</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+          <div class="muted mono" style="padding:16px 0">Aucune annonce. Crée-en une ci-dessus.</div>
+        {% endif %}
+      </div>
+    </div>
+
     <!-- ══════════ PAGE: RP ══════════ -->
     <div class="page" id="page-rp">
       {% if flash and request.path == '/admin/rp' %}
@@ -1399,6 +1538,7 @@ function nav(el) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   el.classList.add('active');
   if (page === 'medias') { initMainUploadZone(); loadMediaLibrary(); }
+    if (page === 'announcements') { resetAnnForm(); }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.getElementById('pageTitle').textContent = pageTitles[page] || page.toUpperCase();

@@ -53,7 +53,7 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping
 TWITCH_REDIRECT_URI = os.environ.get("TWITCH_REDIRECT_URI", f"{PUBLIC_BASE_URL}/admin/twitch/callback")
 
 # minimum pour recevoir les redemptions; ajoute manage si tu veux pouvoir "FULFILL" ensuite
-TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions moderation:read"
+TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
 
 # =============================================================================
 # App / Static / Templates
@@ -549,50 +549,6 @@ async def mod_callback(
     _mod_session_cookie(resp, login, user_id)
     return resp
 
-
-
-@app.get("/mod/debug/modcheck/{login}")
-async def mod_debug_check(login: str, credentials: HTTPBasicCredentials = Depends(security)):
-    """Debug: vérifie si un login est mod (admin only)."""
-    require_admin(credentials)
-    cid = os.environ.get("TWITCH_CLIENT_ID", "")
-
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            broadcaster_id = (kv_get(cur, "broadcaster_user_id", "") or "").strip()
-            token          = (kv_get(cur, "twitch_user_access_token", "") or "").strip()
-            scopes         = (kv_get(cur, "twitch_user_scopes", "") or "").strip()
-
-    # Résoudre le login en user_id
-    app_token = twitch_app_token()
-    r = requests.get(
-        f"https://api.twitch.tv/helix/users?login={login}",
-        headers={"Authorization": f"Bearer {app_token}", "Client-Id": cid},
-        timeout=5,
-    )
-    users = r.json().get("data", [])
-    user_id = users[0]["id"] if users else "NOT_FOUND"
-
-    result = {
-        "target_login": login,
-        "target_user_id": user_id,
-        "broadcaster_id_in_db": broadcaster_id,
-        "token_present": bool(token),
-        "token_preview": token[:12] + "..." if token else "",
-        "scopes_in_db": scopes,
-    }
-
-    if token and broadcaster_id and user_id != "NOT_FOUND":
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://api.twitch.tv/helix/moderation/moderators",
-                params={"broadcaster_id": broadcaster_id, "user_id": user_id},
-                headers={"Authorization": f"Bearer {token}", "Client-Id": cid},
-            )
-        result["helix_status"] = resp.status_code
-        result["helix_response"] = resp.json()
-
-    return result
 
 @app.get("/mod/logout")
 def mod_logout():
@@ -2624,6 +2580,18 @@ def init_db():
 
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
                 CREATE INDEX IF NOT EXISTS idx_drop_participants_drop ON drop_participants(drop_id);
+
+                CREATE TABLE IF NOT EXISTS overlay_announcements (
+                  id               SERIAL PRIMARY KEY,
+                  title            TEXT NOT NULL,
+                  body             TEXT NOT NULL DEFAULT '',
+                  image_url        TEXT NOT NULL DEFAULT '',
+                  active           BOOLEAN NOT NULL DEFAULT TRUE,
+                  display_seconds  INT NOT NULL DEFAULT 10,
+                  pause_seconds    INT NOT NULL DEFAULT 5,
+                  sort_order       INT NOT NULL DEFAULT 0,
+                  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
                 """
             )
 
@@ -4441,6 +4409,345 @@ def drop_poll_result(x_api_key: str | None = Header(default=None)):
 #   @app.get("/overlay/drop")  def overlay_drop_page()
 #   @app.get("/overlay/show")  def overlay_show_page()
 # =============================================================================
+
+
+# =============================================================================
+# OVERLAY ANNOUNCEMENTS — CRUD + carousel
+# =============================================================================
+
+@app.get("/overlay/announcements_all")
+def overlay_announcements_all():
+    """Retourne toutes les annonces actives triées pour le carousel côté client."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, body, image_url, display_seconds, pause_seconds
+                FROM overlay_announcements
+                WHERE active = TRUE
+                ORDER BY sort_order ASC, id ASC;
+            """)
+            rows = cur.fetchall()
+    return {
+        "announcements": [
+            {"id": r[0], "title": r[1], "body": r[2] or "",
+             "image_url": r[3] or "", "display_seconds": r[4], "pause_seconds": r[5]}
+            for r in rows
+        ]
+    }
+
+
+@app.post("/admin/announcement/save")
+def announcement_save(
+    ann_id:          int | None = Form(None),
+    title:           str        = Form(...),
+    body:            str        = Form(""),
+    image_url:       str        = Form(""),
+    display_seconds: int        = Form(10),
+    pause_seconds:   int        = Form(5),
+    sort_order:      int        = Form(0),
+    active:          str        = Form("off"),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    is_active       = (active == "on")
+    title           = title.strip()
+    body            = body.strip()
+    image_url       = image_url.strip()
+    display_seconds = max(3, min(120, display_seconds))
+    pause_seconds   = max(0, min(300, pause_seconds))
+    if not title:
+        return RedirectResponse("/admin/announcements?flash_kind=err&flash=Titre+manquant", status_code=303)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if ann_id:
+                cur.execute("""
+                    UPDATE overlay_announcements
+                    SET title=%s, body=%s, image_url=%s, active=%s,
+                        display_seconds=%s, pause_seconds=%s, sort_order=%s
+                    WHERE id=%s;
+                """, (title, body, image_url, is_active,
+                      display_seconds, pause_seconds, sort_order, ann_id))
+            else:
+                cur.execute("""
+                    INSERT INTO overlay_announcements
+                      (title, body, image_url, active, display_seconds, pause_seconds, sort_order)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s);
+                """, (title, body, image_url, is_active,
+                      display_seconds, pause_seconds, sort_order))
+        conn.commit()
+    return RedirectResponse("/admin/announcements?flash_kind=ok&flash=Annonce+enregistree", status_code=303)
+
+
+@app.post("/admin/announcement/delete")
+def announcement_delete(
+    ann_id: int = Form(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM overlay_announcements WHERE id=%s;", (ann_id,))
+        conn.commit()
+    return RedirectResponse("/admin/announcements?flash_kind=ok&flash=Annonce+supprimee", status_code=303)
+
+
+@app.post("/admin/announcement/toggle")
+def announcement_toggle(
+    ann_id: int = Form(...),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE overlay_announcements SET active = NOT active WHERE id=%s;", (ann_id,))
+        conn.commit()
+    return RedirectResponse("/admin/announcements?flash_kind=ok&flash=Statut+modifie", status_code=303)
+
+
+@app.get("/overlay/announcement", response_class=HTMLResponse)
+def overlay_announcement_page():
+    return HTMLResponse(r"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:transparent;overflow:hidden;width:100vw;height:100vh}
+
+.scene{
+  position:fixed;bottom:0;left:0;right:0;
+  transform:translateY(110%);
+  transition:transform 0.55s cubic-bezier(0.22,1,0.36,1);
+  pointer-events:none;z-index:10;
+}
+.scene.visible{transform:translateY(0)}
+.scene.hiding{transform:translateY(110%)}
+
+.banner{
+  display:flex;align-items:center;gap:14px;
+  padding:0 22px;height:76px;
+  background:linear-gradient(90deg,#03070f 0%,#06101e 70%,rgba(3,7,15,0.96) 100%);
+  border-top:2px solid rgba(0,229,255,0.4);
+  box-shadow:0 -6px 40px rgba(0,229,255,0.07);
+  position:relative;overflow:hidden;
+}
+.banner::before{
+  content:'';position:absolute;top:0;left:-60%;
+  width:60%;height:2px;
+  background:linear-gradient(90deg,transparent,#00e5ff,#7b61ff,transparent);
+  animation:scan 2.8s linear infinite;
+}
+@keyframes scan{from{left:-60%}to{left:110%}}
+
+.badge-wrap{
+  flex-shrink:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  width:58px;height:52px;
+  border:1px solid rgba(0,229,255,0.25);border-radius:8px;
+  background:rgba(0,229,255,0.05);
+}
+.badge-icon{font-size:20px;line-height:1}
+.badge-lbl{
+  font-family:'Orbitron',monospace;font-size:7px;font-weight:900;
+  letter-spacing:.14em;color:#00e5ff;
+  text-shadow:0 0 8px rgba(0,229,255,.7);margin-top:3px;
+}
+
+.ann-img{
+  width:54px;height:54px;object-fit:contain;
+  border-radius:8px;flex-shrink:0;
+  image-rendering:pixelated;
+  filter:drop-shadow(0 0 8px rgba(0,229,255,.35));
+  display:none;
+}
+.ann-img.show{display:block}
+
+.divider{width:1px;height:44px;flex-shrink:0;
+  background:linear-gradient(180deg,transparent,rgba(0,229,255,.3),transparent)}
+
+.content{flex:1;min-width:0}
+.ann-title{
+  font-family:'Orbitron',monospace;font-size:15px;font-weight:900;
+  color:#e8f4ff;text-shadow:0 0 18px rgba(0,229,255,.2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;
+}
+.ann-body{
+  font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;
+  color:#6a8aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+/* Compteur d'annonces */
+.ann-counter{
+  flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+}
+.counter-dots{display:flex;gap:5px}
+.dot{
+  width:6px;height:6px;border-radius:50%;
+  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.1);
+  transition:background .3s,box-shadow .3s;
+}
+.dot.active{background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,.8);border-color:#00e5ff}
+.counter-txt{
+  font-family:'Share Tech Mono',monospace;font-size:9px;
+  color:var(--muted,#5a6a90);letter-spacing:.1em;
+}
+
+/* Barre de progression */
+.progress{
+  position:absolute;bottom:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#00e5ff,#7b61ff,#ff2d78);
+  transform-origin:left;box-shadow:0 0 10px rgba(0,229,255,.4);
+  transition:none;
+}
+</style>
+</head>
+<body>
+<div class="scene" id="scene">
+  <div class="banner">
+    <div class="badge-wrap">
+      <div class="badge-icon">📢</div>
+      <div class="badge-lbl">NEWS</div>
+    </div>
+    <img class="ann-img" id="annImg" src="" alt="">
+    <div class="divider"></div>
+    <div class="content">
+      <div class="ann-title" id="annTitle"></div>
+      <div class="ann-body"  id="annBody"></div>
+    </div>
+    <div class="ann-counter" id="annCounter" style="display:none">
+      <div class="counter-dots" id="counterDots"></div>
+    </div>
+    <div class="progress" id="annProgress"></div>
+  </div>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const REFRESH_MS   = 60_000;  // re-fetch la liste depuis le serveur toutes les 60s
+let announcements  = [];
+let currentIndex   = 0;
+let running        = false;
+let lastFetch      = 0;
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const scene    = document.getElementById('scene');
+const img      = document.getElementById('annImg');
+const titleEl  = document.getElementById('annTitle');
+const bodyEl   = document.getElementById('annBody');
+const bar      = document.getElementById('annProgress');
+const counter  = document.getElementById('annCounter');
+const dots     = document.getElementById('counterDots');
+
+// ── Fetch liste ─────────────────────────────────────────────────────────────
+async function fetchList() {
+  try {
+    const d = await fetch('/overlay/announcements_all', {cache:'no-store'}).then(r=>r.json());
+    announcements = d.announcements || [];
+    buildDots();
+    lastFetch = Date.now();
+  } catch(e) {}
+}
+
+function buildDots() {
+  const n = announcements.length;
+  if (n <= 1) { counter.style.display = 'none'; dots.innerHTML = ''; return; }
+  counter.style.display = 'flex';
+  dots.innerHTML = announcements.map((_, i) =>
+    `<div class="dot${i === currentIndex ? ' active' : ''}" id="dot_${i}"></div>`
+  ).join('');
+}
+
+function updateDots(idx) {
+  document.querySelectorAll('.dot').forEach((d,i) => {
+    d.classList.toggle('active', i === idx);
+  });
+}
+
+// ── Animation d'une annonce ──────────────────────────────────────────────────
+async function showOne(ann, idx) {
+  // Remplir contenu
+  titleEl.textContent = ann.title || '';
+  bodyEl.textContent  = ann.body  || '';
+  if (ann.image_url) { img.src = ann.image_url; img.classList.add('show'); }
+  else               { img.src = '';             img.classList.remove('show'); }
+
+  // Mise à jour des points
+  currentIndex = idx;
+  updateDots(idx);
+
+  // Reset barre
+  bar.style.transition = 'none';
+  bar.style.transform  = 'scaleX(1)';
+
+  // Slide in
+  scene.classList.remove('hiding');
+  scene.classList.add('visible');
+  await sleep(120);
+
+  // Progression
+  const displayMs = (ann.display_seconds || 10) * 1000;
+  bar.style.transition = `transform ${displayMs}ms linear`;
+  bar.style.transform  = 'scaleX(0)';
+  await sleep(displayMs);
+
+  // Slide out seulement s'il y a plusieurs annonces OU une pause > 0
+  const pauseMs = (ann.pause_seconds ?? 5) * 1000;
+  if (announcements.length > 1 || pauseMs > 0) {
+    scene.classList.add('hiding');
+    scene.classList.remove('visible');
+    await sleep(600 + pauseMs);
+  }
+}
+
+// ── Boucle carousel ──────────────────────────────────────────────────────────
+async function loop() {
+  if (running) return;
+  running = true;
+
+  while (true) {
+    // Rafraîchir la liste si besoin
+    if (Date.now() - lastFetch > REFRESH_MS || announcements.length === 0) {
+      await fetchList();
+    }
+
+    if (announcements.length === 0) {
+      // Rien à afficher, attendre
+      scene.classList.remove('visible');
+      await sleep(5000);
+      continue;
+    }
+
+    // Jouer toutes les annonces dans l'ordre
+    for (let i = 0; i < announcements.length; i++) {
+      // Re-fetch entre chaque annonce pour détecter les changements
+      if (i > 0 && Date.now() - lastFetch > REFRESH_MS) {
+        await fetchList();
+      }
+      await showOne(announcements[i], i);
+    }
+
+    // Si une seule annonce et pas de pause → rester affiché, juste re-fetch périodique
+    if (announcements.length === 1 && (announcements[0].pause_seconds ?? 5) === 0) {
+      await sleep(REFRESH_MS);
+      await fetchList();
+      // Mettre à jour le contenu sans cacher
+      if (announcements.length >= 1) {
+        const a = announcements[0];
+        titleEl.textContent = a.title || '';
+        bodyEl.textContent  = a.body  || '';
+        if (a.image_url) { img.src = a.image_url; img.classList.add('show'); }
+        else             { img.src = '';           img.classList.remove('show'); }
+      }
+    }
+  }
+}
+
+// ── Démarrage ────────────────────────────────────────────────────────────────
+fetchList().then(loop);
+</script>
+</body>
+</html>""")
 
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
@@ -7773,6 +8080,21 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
             ]
             ctx["autodrop"] = kv_get_many(cur, ad_keys)
 
+            # ── ANNOUNCEMENTS ─────────────────────────────────────────────
+            cur.execute("""
+                SELECT id, title, body, image_url, active,
+                       display_seconds, pause_seconds, sort_order,
+                       to_char(created_at, 'DD/MM/YYYY HH24:MI')
+                FROM overlay_announcements
+                ORDER BY sort_order ASC, id ASC;
+            """)
+            ctx["announcements"] = [
+                {"id": r[0], "title": r[1], "body": r[2], "image_url": r[3],
+                 "active": bool(r[4]), "display_seconds": r[5],
+                 "pause_seconds": r[6], "sort_order": r[7], "created_at": r[8]}
+                for r in cur.fetchall()
+            ]
+
     return ctx
 
 
@@ -7787,6 +8109,7 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
 @app.get("/admin/forms", response_class=HTMLResponse)
 @app.get("/admin/drops", response_class=HTMLResponse)
 @app.get("/admin/autodrop", response_class=HTMLResponse)
+@app.get("/admin/announcements", response_class=HTMLResponse)
 def admin_spa(
     request: Request,
     q: str | None = None,
