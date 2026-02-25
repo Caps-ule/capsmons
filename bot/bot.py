@@ -35,6 +35,7 @@ API_ANNOUNCEMENTS_URL = "http://api:8000/internal/announcements/poll"
 _autodrop_cache = {"ts": 0.0, "cfg": {}}
 
 API_KEY = os.environ["INTERNAL_API_KEY"]
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr")
 
 # ============================================================================
 # STATE (mémoire RAM du bot)
@@ -1435,39 +1436,13 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     # Commande: !commands
     # ------------------------------------------------------------------------
-    @commands.command(name="link")
-    async def link_cmd(self, ctx: commands.Context):
-        """!link — Affiche le lien du site CapsMöns"""
-        base = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr")
-        await ctx.send(f"🌐 Le site CapsMöns : {base}")
-
-    @commands.command(name="mylink")
-    async def mylink_cmd(self, ctx: commands.Context):
-        """!mylink — Affiche le lien du profil de l'utilisateur"""
-        base  = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr")
-        login = ctx.author.name.lower()
-        await ctx.send(f"@{ctx.author.name} 🔗 Ton profil CapsMöns : {base}/u/{login}")
-
-    @commands.command(name="link")
-    async def link_cmd(self, ctx: commands.Context):
-        """Affiche le lien du site CapsMöns dans le chat."""
-        base = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr").rstrip("/")
-        await ctx.send(f"🌐 Site CapsMöns : {base}  — Recherche ton profil et découvre ton album !")
-
-    @commands.command(name="mylink")
-    async def mylink_cmd(self, ctx: commands.Context):
-        """Affiche le lien direct vers le profil du joueur."""
-        base = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping.fr").rstrip("/")
-        login = ctx.author.name.lower()
-        await ctx.send(f"🔗 @{ctx.author.name} → {base}/u/{login}")
-
     @commands.command(name="commands")
     async def commands_cmd(self, ctx: commands.Context):
         msg = (
             f"@{ctx.author.name} 📜 Commandes viewers: "
             "!creature | !inv | !use <item_key> | "
             "!companion (liste) / !companion <numéro> | "
-            "!show | !grab | !link | !mylink"
+            "!show | !grab"
         )
         await ctx.send(msg)
 
@@ -1475,5 +1450,17 @@ class Bot(commands.Bot):
 # ============================================================================
 # RUN
 # ============================================================================
+    @commands.command(name="link")
+    async def link_cmd(self, ctx: commands.Context):
+        """Affiche le lien du site CapsMöns dans le chat."""
+        await ctx.send(f"🌐 CapsMöns → {PUBLIC_BASE_URL}")
+
+    @commands.command(name="mylink")
+    async def mylink_cmd(self, ctx: commands.Context):
+        """Affiche le lien de profil de l'utilisateur dans le chat."""
+        login = ctx.author.name.lower()
+        await ctx.send(f"👤 Ton profil CapsMöns → {PUBLIC_BASE_URL}/u/{login}")
+
+
 bot = Bot()
 bot.run()
