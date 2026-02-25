@@ -264,9 +264,9 @@ def _render_homepage() -> str:
   </div>
 
   <div class="footer">
-    <a href="https://twitch.tv" target="_blank">TWITCH</a>
+    <a href="https://twitch.tv/capsloque" target="_blank">RETROUVE MOI SUR TWITCH</a>
     &nbsp;·&nbsp;
-    Un projet devlooping
+    Un projet de CapsLoque
   </div>
 </div>
 
