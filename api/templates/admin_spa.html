@@ -1529,8 +1529,10 @@ const pageTitles = {
   forms:     '◇ FORMS',
   rp:        '◉ PHRASES RP',
   drops:     '▽ DROPS',
-  autodrop:  '⟳ AUTODROP',
-  points:    '◈ CHANNEL POINTS',
+  autodrop:      '⟳ AUTODROP',
+  points:        '◈ CHANNEL POINTS',
+  announcements: '📢 ANNONCES',
+  medias:        '◫ MÉDIAS',
 };
 
 function nav(el) {
@@ -1538,7 +1540,7 @@ function nav(el) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   el.classList.add('active');
   if (page === 'medias') { initMainUploadZone(); loadMediaLibrary(); }
-    if (page === 'announcements') { resetAnnForm(); }
+  if (page === 'announcements' && typeof resetAnnForm === 'function') { resetAnnForm(); }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   document.getElementById('pageTitle').textContent = pageTitles[page] || page.toUpperCase();
@@ -1999,6 +2001,31 @@ function showToast(msg, isError = false) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
 }
+
+
+  function editAnn(id, title, body, image_url, disp_s, pause_s, sort_order, active) {
+    document.getElementById('ann-form-title').textContent = '✎ MODIFIER ANNONCE';
+    document.getElementById('ann-id-field').value  = id;
+    document.getElementById('ann-title').value     = title;
+    document.getElementById('ann-body').value      = body;
+    document.getElementById('ann-image-url').value = image_url;
+    document.getElementById('ann-display-s').value = disp_s;
+    document.getElementById('ann-pause-s').value   = pause_s;
+    document.getElementById('ann-sort').value      = sort_order;
+    document.getElementById('ann-active').checked  = active;
+    document.getElementById('ann-form-card').scrollIntoView({behavior:'smooth'});
+  }
+
+  function resetAnnForm() {
+    const ft = document.getElementById('ann-form-title');
+    if (ft) ft.textContent = '+ NOUVELLE ANNONCE';
+    const form = document.getElementById('ann-form');
+    if (form) form.reset();
+    const idf = document.getElementById('ann-id-field');
+    if (idf) idf.value = '';
+    const cb = document.getElementById('ann-active');
+    if (cb) cb.checked = true;
+  }
 
 </script>
 </body>
