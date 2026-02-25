@@ -10,3 +10,4 @@ caddy_config/
 /main.py.bak
 data/
 static/uploads/
+data/
