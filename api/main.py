@@ -4563,7 +4563,7 @@ html,body{width:450px;height:170px;background:transparent;overflow:hidden}
 
 /* ── Colonne image (25%) ── */
 .col-img{
-  width:112px;flex-shrink:0;
+  width:150px;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
   background:linear-gradient(180deg,rgba(0,229,255,0.04) 0%,rgba(0,0,0,0) 100%);
   border-right:1px solid rgba(0,229,255,0.1);
@@ -4571,7 +4571,7 @@ html,body{width:450px;height:170px;background:transparent;overflow:hidden}
   position:relative;z-index:3;
 }
 .col-img img{
-  width:86px;height:86px;
+  width:125px;height:125px;
   object-fit:contain;
   image-rendering:pixelated;
   border-radius:10px;
