@@ -53,7 +53,7 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping
 TWITCH_REDIRECT_URI = os.environ.get("TWITCH_REDIRECT_URI", f"{PUBLIC_BASE_URL}/admin/twitch/callback")
 
 # minimum pour recevoir les redemptions; ajoute manage si tu veux pouvoir "FULFILL" ensuite
-TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
+TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions moderation:read"
 
 # =============================================================================
 # App / Static / Templates
@@ -549,6 +549,50 @@ async def mod_callback(
     _mod_session_cookie(resp, login, user_id)
     return resp
 
+
+
+@app.get("/mod/debug/modcheck/{login}")
+async def mod_debug_check(login: str, credentials: HTTPBasicCredentials = Depends(security)):
+    """Debug: vérifie si un login est mod (admin only)."""
+    require_admin(credentials)
+    cid = os.environ.get("TWITCH_CLIENT_ID", "")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            broadcaster_id = (kv_get(cur, "broadcaster_user_id", "") or "").strip()
+            token          = (kv_get(cur, "twitch_user_access_token", "") or "").strip()
+            scopes         = (kv_get(cur, "twitch_user_scopes", "") or "").strip()
+
+    # Résoudre le login en user_id
+    app_token = twitch_app_token()
+    r = requests.get(
+        f"https://api.twitch.tv/helix/users?login={login}",
+        headers={"Authorization": f"Bearer {app_token}", "Client-Id": cid},
+        timeout=5,
+    )
+    users = r.json().get("data", [])
+    user_id = users[0]["id"] if users else "NOT_FOUND"
+
+    result = {
+        "target_login": login,
+        "target_user_id": user_id,
+        "broadcaster_id_in_db": broadcaster_id,
+        "token_present": bool(token),
+        "token_preview": token[:12] + "..." if token else "",
+        "scopes_in_db": scopes,
+    }
+
+    if token and broadcaster_id and user_id != "NOT_FOUND":
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.twitch.tv/helix/moderation/moderators",
+                params={"broadcaster_id": broadcaster_id, "user_id": user_id},
+                headers={"Authorization": f"Bearer {token}", "Client-Id": cid},
+            )
+        result["helix_status"] = resp.status_code
+        result["helix_response"] = resp.json()
+
+    return result
 
 @app.get("/mod/logout")
 def mod_logout():
