@@ -4438,7 +4438,7 @@ def overlay_announcements_all():
 
 @app.post("/admin/announcement/save")
 def announcement_save(
-    ann_id:          int | None = Form(None),
+    ann_id:          str | None = Form(None),
     title:           str        = Form(...),
     body:            str        = Form(""),
     image_url:       str        = Form(""),
@@ -4449,6 +4449,11 @@ def announcement_save(
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
+    # Convertir ann_id : string vide → None, sinon int
+    ann_id_int: int | None = None
+    if ann_id and ann_id.strip():
+        try: ann_id_int = int(ann_id.strip())
+        except ValueError: ann_id_int = None
     is_active       = (active == "on")
     title           = title.strip()
     body            = body.strip()
@@ -4459,14 +4464,14 @@ def announcement_save(
         return RedirectResponse("/admin/announcements?flash_kind=err&flash=Titre+manquant", status_code=303)
     with get_db() as conn:
         with conn.cursor() as cur:
-            if ann_id:
+            if ann_id_int:
                 cur.execute("""
                     UPDATE overlay_announcements
                     SET title=%s, body=%s, image_url=%s, active=%s,
                         display_seconds=%s, pause_seconds=%s, sort_order=%s
                     WHERE id=%s;
                 """, (title, body, image_url, is_active,
-                      display_seconds, pause_seconds, sort_order, ann_id))
+                      display_seconds, pause_seconds, sort_order, ann_id_int))
             else:
                 cur.execute("""
                     INSERT INTO overlay_announcements
@@ -4510,244 +4515,249 @@ def overlay_announcement_page():
 <html>
 <head>
 <meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:transparent;overflow:hidden;width:100vw;height:100vh}
+html,body{width:450px;height:170px;background:transparent;overflow:hidden}
 
+/* ── Scène ── */
 .scene{
-  position:fixed;bottom:0;left:0;right:0;
-  transform:translateY(110%);
-  transition:transform 0.55s cubic-bezier(0.22,1,0.36,1);
-  pointer-events:none;z-index:10;
+  position:absolute;inset:0;
+  opacity:0;
+  transform:translateY(18px);
+  transition:opacity .45s ease, transform .45s cubic-bezier(0.22,1,0.36,1);
+  pointer-events:none;
 }
-.scene.visible{transform:translateY(0)}
-.scene.hiding{transform:translateY(110%)}
+.scene.visible{opacity:1;transform:translateY(0)}
+.scene.out{opacity:0;transform:translateY(18px)}
 
-.banner{
-  display:flex;align-items:center;gap:14px;
-  padding:0 22px;height:76px;
-  background:linear-gradient(90deg,#03070f 0%,#06101e 70%,rgba(3,7,15,0.96) 100%);
-  border-top:2px solid rgba(0,229,255,0.4);
-  box-shadow:0 -6px 40px rgba(0,229,255,0.07);
-  position:relative;overflow:hidden;
+/* ── Carte principale ── */
+.card{
+  width:450px;height:170px;
+  display:flex;
+  background:linear-gradient(135deg,#04090f 0%,#080f1e 60%,#060c18 100%);
+  border:1px solid rgba(0,229,255,0.22);
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:0 0 40px rgba(0,229,255,0.08), 0 4px 32px rgba(0,0,0,0.7);
+  position:relative;
 }
-.banner::before{
+
+/* Ligne de scan animée en haut */
+.card::before{
   content:'';position:absolute;top:0;left:-60%;
   width:60%;height:2px;
   background:linear-gradient(90deg,transparent,#00e5ff,#7b61ff,transparent);
-  animation:scan 2.8s linear infinite;
+  animation:scan 3s linear infinite;z-index:2;
 }
 @keyframes scan{from{left:-60%}to{left:110%}}
 
-.badge-wrap{
-  flex-shrink:0;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;
-  width:58px;height:52px;
-  border:1px solid rgba(0,229,255,0.25);border-radius:8px;
-  background:rgba(0,229,255,0.05);
-}
-.badge-icon{font-size:20px;line-height:1}
-.badge-lbl{
-  font-family:'Orbitron',monospace;font-size:7px;font-weight:900;
-  letter-spacing:.14em;color:#00e5ff;
-  text-shadow:0 0 8px rgba(0,229,255,.7);margin-top:3px;
+/* Coin décoratif */
+.card::after{
+  content:'';position:absolute;
+  top:0;right:0;
+  width:60px;height:60px;
+  background:linear-gradient(225deg,rgba(0,229,255,0.07) 0%,transparent 60%);
+  z-index:1;
 }
 
-.ann-img{
-  width:54px;height:54px;object-fit:contain;
-  border-radius:8px;flex-shrink:0;
+/* ── Colonne image (25%) ── */
+.col-img{
+  width:112px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,rgba(0,229,255,0.04) 0%,rgba(0,0,0,0) 100%);
+  border-right:1px solid rgba(0,229,255,0.1);
+  padding:12px;
+  position:relative;z-index:3;
+}
+.col-img img{
+  width:86px;height:86px;
+  object-fit:contain;
   image-rendering:pixelated;
-  filter:drop-shadow(0 0 8px rgba(0,229,255,.35));
-  display:none;
+  border-radius:10px;
+  filter:drop-shadow(0 0 12px rgba(0,229,255,.4));
+  transition:opacity .3s;
 }
-.ann-img.show{display:block}
+/* Placeholder quand pas d'image */
+.col-img .no-img{
+  width:86px;height:86px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:36px;
+  border:1px solid rgba(0,229,255,0.12);
+  border-radius:10px;
+  background:rgba(0,229,255,0.04);
+}
 
-.divider{width:1px;height:44px;flex-shrink:0;
-  background:linear-gradient(180deg,transparent,rgba(0,229,255,.3),transparent)}
+/* ── Colonne texte (75%) ── */
+.col-text{
+  flex:1;min-width:0;
+  display:flex;flex-direction:column;justify-content:center;
+  padding:18px 20px 18px 18px;
+  position:relative;z-index:3;
+}
 
-.content{flex:1;min-width:0}
+/* Badge NEWS */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;
+  font-family:'Orbitron',monospace;font-size:9px;font-weight:900;
+  letter-spacing:.18em;color:#00e5ff;
+  text-shadow:0 0 10px rgba(0,229,255,.7);
+  margin-bottom:10px;
+}
+.badge::before{content:'◈ ';color:rgba(0,229,255,.5)}
+
 .ann-title{
-  font-family:'Orbitron',monospace;font-size:15px;font-weight:900;
-  color:#e8f4ff;text-shadow:0 0 18px rgba(0,229,255,.2);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;
+  font-family:'Orbitron',monospace;
+  font-size:17px;font-weight:900;line-height:1.15;
+  color:#e8f4ff;
+  text-shadow:0 0 20px rgba(0,229,255,.2);
+  margin-bottom:8px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
 .ann-body{
-  font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;
-  color:#6a8aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:'Rajdhani',sans-serif;
+  font-size:14px;font-weight:600;line-height:1.3;
+  color:#6a8aaa;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
 
-/* Compteur d'annonces */
-.ann-counter{
-  flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:3px;
-}
-.counter-dots{display:flex;gap:5px}
-.dot{
-  width:6px;height:6px;border-radius:50%;
-  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.1);
-  transition:background .3s,box-shadow .3s;
-}
-.dot.active{background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,.8);border-color:#00e5ff}
-.counter-txt{
-  font-family:'Share Tech Mono',monospace;font-size:9px;
-  color:var(--muted,#5a6a90);letter-spacing:.1em;
-}
-
-/* Barre de progression */
+/* ── Barre de progression ── */
 .progress{
   position:absolute;bottom:0;left:0;right:0;height:3px;
   background:linear-gradient(90deg,#00e5ff,#7b61ff,#ff2d78);
-  transform-origin:left;box-shadow:0 0 10px rgba(0,229,255,.4);
-  transition:none;
+  transform-origin:left;
+  box-shadow:0 0 8px rgba(0,229,255,.5);
 }
+
+/* ── Indicateur de carousel (points) ── */
+.dots{
+  position:absolute;bottom:10px;right:14px;
+  display:flex;gap:5px;z-index:4;
+}
+.dot{
+  width:5px;height:5px;border-radius:50%;
+  background:rgba(255,255,255,.15);
+  transition:background .3s,box-shadow .3s;
+}
+.dot.on{background:#00e5ff;box-shadow:0 0 6px rgba(0,229,255,.9)}
 </style>
 </head>
 <body>
 <div class="scene" id="scene">
-  <div class="banner">
-    <div class="badge-wrap">
-      <div class="badge-icon">📢</div>
-      <div class="badge-lbl">NEWS</div>
+  <div class="card">
+    <div class="col-img" id="colImg">
+      <div class="no-img" id="noImg">📢</div>
+      <img id="annImg" src="" alt="" style="display:none">
     </div>
-    <img class="ann-img" id="annImg" src="" alt="">
-    <div class="divider"></div>
-    <div class="content">
+    <div class="col-text">
+      <div class="badge">NEWS</div>
       <div class="ann-title" id="annTitle"></div>
       <div class="ann-body"  id="annBody"></div>
     </div>
-    <div class="ann-counter" id="annCounter" style="display:none">
-      <div class="counter-dots" id="counterDots"></div>
-    </div>
     <div class="progress" id="annProgress"></div>
+    <div class="dots" id="dotsEl"></div>
   </div>
 </div>
 
 <script>
-// ── Config ──────────────────────────────────────────────────────────────────
-const REFRESH_MS   = 60_000;  // re-fetch la liste depuis le serveur toutes les 60s
-let announcements  = [];
-let currentIndex   = 0;
-let running        = false;
-let lastFetch      = 0;
+const REFRESH_MS  = 60_000;
+let anns          = [];
+let idx           = 0;
+let running       = false;
+let lastFetch     = 0;
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const scene    = document.getElementById('scene');
-const img      = document.getElementById('annImg');
-const titleEl  = document.getElementById('annTitle');
-const bodyEl   = document.getElementById('annBody');
-const bar      = document.getElementById('annProgress');
-const counter  = document.getElementById('annCounter');
-const dots     = document.getElementById('counterDots');
+const sleep  = ms => new Promise(r => setTimeout(r, ms));
+const scene  = document.getElementById('scene');
+const img    = document.getElementById('annImg');
+const noImg  = document.getElementById('noImg');
+const titleEl= document.getElementById('annTitle');
+const bodyEl = document.getElementById('annBody');
+const bar    = document.getElementById('annProgress');
+const dotsEl = document.getElementById('dotsEl');
 
-// ── Fetch liste ─────────────────────────────────────────────────────────────
 async function fetchList() {
   try {
-    const d = await fetch('/overlay/announcements_all', {cache:'no-store'}).then(r=>r.json());
-    announcements = d.announcements || [];
+    const d = await fetch('/overlay/announcements_all',{cache:'no-store'}).then(r=>r.json());
+    anns = d.announcements || [];
     buildDots();
     lastFetch = Date.now();
-  } catch(e) {}
+  } catch(e){}
 }
 
 function buildDots() {
-  const n = announcements.length;
-  if (n <= 1) { counter.style.display = 'none'; dots.innerHTML = ''; return; }
-  counter.style.display = 'flex';
-  dots.innerHTML = announcements.map((_, i) =>
-    `<div class="dot${i === currentIndex ? ' active' : ''}" id="dot_${i}"></div>`
+  if (anns.length <= 1){ dotsEl.innerHTML=''; return; }
+  dotsEl.innerHTML = anns.map((_,i) =>
+    `<div class="dot${i===idx?' on':''}" id="d${i}"></div>`
   ).join('');
 }
-
-function updateDots(idx) {
-  document.querySelectorAll('.dot').forEach((d,i) => {
-    d.classList.toggle('active', i === idx);
-  });
+function setDot(i) {
+  document.querySelectorAll('.dot').forEach((d,j)=>d.classList.toggle('on',j===i));
 }
 
-// ── Animation d'une annonce ──────────────────────────────────────────────────
-async function showOne(ann, idx) {
-  // Remplir contenu
+async function showOne(ann, i) {
+  // Remplir
   titleEl.textContent = ann.title || '';
   bodyEl.textContent  = ann.body  || '';
-  if (ann.image_url) { img.src = ann.image_url; img.classList.add('show'); }
-  else               { img.src = '';             img.classList.remove('show'); }
-
-  // Mise à jour des points
-  currentIndex = idx;
-  updateDots(idx);
+  if (ann.image_url) {
+    img.src = ann.image_url;
+    img.style.display = 'block';
+    noImg.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    noImg.style.display = 'flex';
+  }
+  idx = i; setDot(i);
 
   // Reset barre
-  bar.style.transition = 'none';
-  bar.style.transform  = 'scaleX(1)';
+  bar.style.transition='none'; bar.style.transform='scaleX(1)';
 
-  // Slide in
-  scene.classList.remove('hiding');
+  // Entrée
+  scene.classList.remove('out');
   scene.classList.add('visible');
-  await sleep(120);
+  await sleep(80);
 
-  // Progression
-  const displayMs = (ann.display_seconds || 10) * 1000;
-  bar.style.transition = `transform ${displayMs}ms linear`;
-  bar.style.transform  = 'scaleX(0)';
-  await sleep(displayMs);
+  // Progressbar
+  const ms = (ann.display_seconds||10)*1000;
+  bar.style.transition=`transform ${ms}ms linear`;
+  bar.style.transform='scaleX(0)';
+  await sleep(ms);
 
-  // Slide out seulement s'il y a plusieurs annonces OU une pause > 0
-  const pauseMs = (ann.pause_seconds ?? 5) * 1000;
-  if (announcements.length > 1 || pauseMs > 0) {
-    scene.classList.add('hiding');
+  // Sortie si plusieurs annonces ou pause > 0
+  const pause = (ann.pause_seconds??3)*1000;
+  if (anns.length > 1 || pause > 0) {
     scene.classList.remove('visible');
-    await sleep(600 + pauseMs);
+    scene.classList.add('out');
+    await sleep(500 + pause);
   }
 }
 
-// ── Boucle carousel ──────────────────────────────────────────────────────────
 async function loop() {
   if (running) return;
   running = true;
-
   while (true) {
-    // Rafraîchir la liste si besoin
-    if (Date.now() - lastFetch > REFRESH_MS || announcements.length === 0) {
-      await fetchList();
+    if (Date.now()-lastFetch > REFRESH_MS || anns.length===0) await fetchList();
+    if (anns.length===0){ scene.classList.remove('visible'); await sleep(5000); continue; }
+    for (let i=0; i<anns.length; i++) {
+      if (i>0 && Date.now()-lastFetch>REFRESH_MS) await fetchList();
+      await showOne(anns[i], i);
     }
-
-    if (announcements.length === 0) {
-      // Rien à afficher, attendre
-      scene.classList.remove('visible');
-      await sleep(5000);
-      continue;
-    }
-
-    // Jouer toutes les annonces dans l'ordre
-    for (let i = 0; i < announcements.length; i++) {
-      // Re-fetch entre chaque annonce pour détecter les changements
-      if (i > 0 && Date.now() - lastFetch > REFRESH_MS) {
-        await fetchList();
-      }
-      await showOne(announcements[i], i);
-    }
-
-    // Si une seule annonce et pas de pause → rester affiché, juste re-fetch périodique
-    if (announcements.length === 1 && (announcements[0].pause_seconds ?? 5) === 0) {
+    // Une seule annonce sans pause → rester affiché, refresh silencieux
+    if (anns.length===1 && (anns[0].pause_seconds??3)===0) {
       await sleep(REFRESH_MS);
       await fetchList();
-      // Mettre à jour le contenu sans cacher
-      if (announcements.length >= 1) {
-        const a = announcements[0];
-        titleEl.textContent = a.title || '';
-        bodyEl.textContent  = a.body  || '';
-        if (a.image_url) { img.src = a.image_url; img.classList.add('show'); }
-        else             { img.src = '';           img.classList.remove('show'); }
+      if (anns.length>=1){
+        titleEl.textContent=anns[0].title||'';
+        bodyEl.textContent=anns[0].body||'';
       }
     }
   }
 }
 
-// ── Démarrage ────────────────────────────────────────────────────────────────
 fetchList().then(loop);
 </script>
 </body>
 </html>""")
+
 
 @app.get("/overlay/drop", response_class=HTMLResponse)
 def overlay_drop_page():
