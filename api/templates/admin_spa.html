@@ -1048,7 +1048,7 @@
       {% endif %}
       <div class="muted mono" style="margin-bottom:14px">// Chaque CM doit avoir 3 formes : stage 1 (éclosion), 2 (evo1), 3 (evo2)</div>
 
-      {% for it in items %}
+      {% for it in forms_items %}
       <div class="card">
         <div class="card-title">{{ it.cm_name }} <span class="pill" style="margin-left:6px">{{ it.key }}</span> <span class="pill">{{ it.lineage_key }}</span></div>
         <div class="row" style="gap:16px;align-items:flex-start">
@@ -1160,7 +1160,7 @@
       </div>
 
       <div id="rp-cards">
-        {% for item in items %}
+        {% for item in rp_items %}
         <div class="card rp-card" data-key="{{ item.key }}">
           <div class="row" style="justify-content:space-between;margin-bottom:10px">
             <div>
