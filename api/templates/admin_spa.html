@@ -614,13 +614,14 @@
       transition: width .3s ease;
     }
   
+
 /* ══ PREVIEW STUDIO ══ */
 @keyframes holoShift {
   0%   { background-position: 0% 0%; opacity: .6; }
-#page-preview {
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
+  50%  { background-position: 100% 100%; opacity: 1; }
+  100% { background-position: 0% 0%; opacity: .6; }
+}
+#page-preview :root {
   --bg: #060810; --panel: #0a0d18; --panel2: #0d1121;
   --border: #1a2540; --border2: #243060;
   --cyan: #00e5ff; --mag: #ff2d78; --green: #00ff9d;
@@ -629,67 +630,60 @@
   --fu: 'Rajdhani', sans-serif;
   --fm: 'Share Tech Mono', monospace;
 }
-
-
 /* Topbar */
-.topbar { display:flex; align-items:center; justify-content:space-between; padding:0 20px; height:52px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; }
-.logo { font-family:var(--fh); font-size:15px; font-weight:900; color:var(--cyan); letter-spacing:.1em; }
-.logo-sub { font-family:var(--fm); font-size:11px; color:var(--muted); margin-left:8px; }
-.back { font-family:var(--fm); font-size:11px; color:var(--muted); text-decoration:none; }
-.back:hover { color:var(--cyan); }
-
+#page-preview .topbar { display:flex; align-items:center; justify-content:space-between; padding:0 20px; height:52px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; }
+#page-preview .logo { font-family:var(--fh); font-size:15px; font-weight:900; color:var(--cyan); letter-spacing:.1em; }
+#page-preview .logo-sub { font-family:var(--fm); font-size:11px; color:var(--muted); margin-left:8px; }
+#page-preview .back { font-family:var(--fm); font-size:11px; color:var(--muted); text-decoration:none; }
+#page-preview .back:hover { color:var(--cyan); }
 /* Layout 2 colonnes */
-.layout { flex:1; display:grid; grid-template-columns:310px 1fr; overflow:hidden; }
-
+#page-preview .layout { flex:1; display:grid; grid-template-columns:310px 1fr; overflow:hidden; }
 /* Panneau gauche */
-.ctrl { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:16px; }
-.tabs { display:flex; gap:2px; margin-bottom:16px; background:var(--panel2); border-radius:10px; padding:3px; }
-.tab { flex:1; padding:9px; text-align:center; font-family:var(--fh); font-size:10px; font-weight:700; letter-spacing:.1em; cursor:pointer; border-radius:8px; color:var(--muted); transition:all .15s; }
-.tab.on { background:var(--cyan); color:#060810; }
-.sect { margin-bottom:18px; }
-.sect-title { font-family:var(--fh); font-size:10px; letter-spacing:.14em; color:var(--cyan); margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
-.fg { margin-bottom:10px; }
-.fl { font-family:var(--fm); font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
-input[type=text], input[type=number], select { width:100%; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:7px; padding:8px 11px; color:var(--text); font-family:var(--fm); font-size:13px; outline:none; transition:border-color .2s; }
-input:focus, select:focus { border-color:rgba(0,229,255,.5); }
-input::placeholder { color:var(--muted); }
-select option { background:#0a0d18; }
-.rw { display:flex; align-items:center; gap:8px; }
-input[type=range] { flex:1; accent-color:var(--cyan); }
-.rv { font-family:var(--fm); font-size:12px; color:var(--cyan); min-width:32px; text-align:right; }
-.btn { width:100%; border:none; border-radius:8px; padding:11px; font-family:var(--fh); font-size:11px; font-weight:700; letter-spacing:.08em; cursor:pointer; transition:opacity .15s, transform .1s; margin-bottom:6px; }
-.btn:hover { opacity:.85; transform:translateY(-1px); }
-.btn-cyan { background:var(--cyan); color:#060810; }
-.btn-mag  { background:var(--mag); color:#fff; }
-.st { font-family:var(--fm); font-size:11px; min-height:16px; }
-.ok { color:var(--green); } .er { color:var(--mag); }
-
+#page-preview .ctrl { background:var(--panel); border-right:1px solid var(--border); overflow-y:auto; padding:16px; }
+#page-preview .tabs { display:flex; gap:2px; margin-bottom:16px; background:var(--panel2); border-radius:10px; padding:3px; }
+#page-preview .tab { flex:1; padding:9px; text-align:center; font-family:var(--fh); font-size:10px; font-weight:700; letter-spacing:.1em; cursor:pointer; border-radius:8px; color:var(--muted); transition:all .15s; }
+#page-preview .tab.on { background:var(--cyan); color:#060810; }
+#page-preview .sect { margin-bottom:18px; }
+#page-preview .sect-title { font-family:var(--fh); font-size:10px; letter-spacing:.14em; color:var(--cyan); margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+#page-preview .fg { margin-bottom:10px; }
+#page-preview .fl { font-family:var(--fm); font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
+#page-preview input[type=text], #page-preview input[type=number], #page-preview select { width:100%; background:rgba(255,255,255,.04); border:1px solid var(--border); border-radius:7px; padding:8px 11px; color:var(--text); font-family:var(--fm); font-size:13px; outline:none; transition:border-color .2s; }
+#page-preview input:focus, #page-preview select:focus { border-color:rgba(0,229,255,.5); }
+#page-preview input::placeholder { color:var(--muted); }
+#page-preview select option { background:#0a0d18; }
+#page-preview .rw { display:flex; align-items:center; gap:8px; }
+#page-preview input[type=range] { flex:1; accent-color:var(--cyan); }
+#page-preview .rv { font-family:var(--fm); font-size:12px; color:var(--cyan); min-width:32px; text-align:right; }
+#page-preview .btn { width:100%; border:none; border-radius:8px; padding:11px; font-family:var(--fh); font-size:11px; font-weight:700; letter-spacing:.08em; cursor:pointer; transition:opacity .15s, transform .1s; margin-bottom:6px; }
+#page-preview .btn:hover { opacity:.85; transform:translateY(-1px); }
+#page-preview .btn-cyan { background:var(--cyan); color:#060810; }
+#page-preview .btn-mag { background:var(--mag); color:#fff; }
+#page-preview .st { font-family:var(--fm); font-size:11px; min-height:16px; }
+#page-preview .ok { color:var(--green); }
+#page-preview .er { color:var(--mag); }
 /* Mini aperçu CM dans le panneau */
-.cm-mini { display:flex; align-items:center; gap:10px; padding:9px; background:var(--panel2); border:1px solid var(--border); border-radius:9px; margin-bottom:12px; min-height:62px; }
-.cm-mini img { width:44px; height:44px; object-fit:contain; border-radius:7px; image-rendering:pixelated; flex-shrink:0; }
-.cm-mini-ph { width:44px; height:44px; border-radius:7px; background:var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
-.cm-mini-name { font-family:var(--fh); font-size:11px; color:var(--text); }
-.cm-mini-sub  { font-family:var(--fm); font-size:10px; color:var(--muted); margin-top:2px; }
-
+#page-preview .cm-mini { display:flex; align-items:center; gap:10px; padding:9px; background:var(--panel2); border:1px solid var(--border); border-radius:9px; margin-bottom:12px; min-height:62px; }
+#page-preview .cm-mini img { width:44px; height:44px; object-fit:contain; border-radius:7px; image-rendering:pixelated; flex-shrink:0; }
+#page-preview .cm-mini-ph { width:44px; height:44px; border-radius:7px; background:var(--border); display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+#page-preview .cm-mini-name { font-family:var(--fh); font-size:11px; color:var(--text); }
+#page-preview .cm-mini-sub { font-family:var(--fm); font-size:10px; color:var(--muted); margin-top:2px; }
 /* Panneau droit */
-.parea { display:flex; flex-direction:column; overflow:hidden; }
-.ptoolbar { display:flex; align-items:center; gap:8px; padding:10px 16px; background:var(--panel2); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
-.ptlbl { font-family:var(--fm); font-size:11px; color:var(--muted); }
-.bgbtns { display:flex; gap:4px; }
-.bb { padding:5px 12px; border-radius:6px; font-family:var(--fm); font-size:11px; cursor:pointer; border:1px solid var(--border); color:var(--muted); background:var(--panel); transition:all .15s; }
-.bb.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,.07); }
-.btn-cap { margin-left:auto; background:var(--mag); color:#fff; border:none; border-radius:8px; padding:8px 16px; font-family:var(--fh); font-size:11px; font-weight:700; cursor:pointer; letter-spacing:.08em; transition:opacity .15s, transform .1s; white-space:nowrap; }
-.btn-cap:hover { opacity:.85; transform:translateY(-1px); }
-.btn-cap:disabled { opacity:.5; cursor:not-allowed; transform:none; }
-
+#page-preview .parea { display:flex; flex-direction:column; overflow:hidden; }
+#page-preview .ptoolbar { display:flex; align-items:center; gap:8px; padding:10px 16px; background:var(--panel2); border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+#page-preview .ptlbl { font-family:var(--fm); font-size:11px; color:var(--muted); }
+#page-preview .bgbtns { display:flex; gap:4px; }
+#page-preview .bb { padding:5px 12px; border-radius:6px; font-family:var(--fm); font-size:11px; cursor:pointer; border:1px solid var(--border); color:var(--muted); background:var(--panel); transition:all .15s; }
+#page-preview .bb.on { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,.07); }
+#page-preview .btn-cap { margin-left:auto; background:var(--mag); color:#fff; border:none; border-radius:8px; padding:8px 16px; font-family:var(--fh); font-size:11px; font-weight:700; cursor:pointer; letter-spacing:.08em; transition:opacity .15s, transform .1s; white-space:nowrap; }
+#page-preview .btn-cap:hover { opacity:.85; transform:translateY(-1px); }
+#page-preview .btn-cap:disabled { opacity:.5; cursor:not-allowed; transform:none; }
 /* Stage de preview : fond variable */
-.pstage { flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; padding:40px; transition:background .3s; }
-.pstage.dark  { background:#060810; }
-.pstage.cyber { background:linear-gradient(135deg,#060810 0%,#0a1628 45%,#060c1a 100%); }
-.pstage.grid  { background:repeating-conic-gradient(#1a2540 0% 25%,#0d1525 0% 50%) 0 0/20px 20px; }
-
+#page-preview .pstage { flex:1; display:flex; align-items:center; justify-content:center; overflow:auto; padding:40px; transition:background .3s; }
+#page-preview .pstage.dark { background:#060810; }
+#page-preview .pstage.cyber { background:linear-gradient(135deg,#060810 0%,#0a1628 45%,#060c1a 100%); }
+#page-preview .pstage.grid { background:repeating-conic-gradient(#1a2540 0% 25%,#0d1525 0% 50%) 0 0/20px 20px; }
 /* ─── CARTE TCG — CSS identique à l'overlay /overlay/show ─── */
-.tcg-card {
+#page-preview .tcg-card {
   position: relative;
   width: 429px;
   height: 600px;
@@ -709,11 +703,11 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
     inset 0 0 60px rgba(0,0,0,0.5);
   flex-shrink: 0;
 }
-.tcg-card.visible {
+#page-preview .tcg-card.visible {
   opacity: 1;
   transform: scale(1);
 }
-.tcg-card::before {
+#page-preview .tcg-card::before {
   content: '';
   position: absolute; inset: 0;
   background: linear-gradient(115deg, transparent 30%, rgba(0,229,255,.06) 40%, rgba(255,45,120,.06) 50%, rgba(0,255,157,.05) 60%, transparent 70%);
@@ -723,11 +717,7 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   pointer-events: none;
   z-index: 20;
 }
-
-  50%  { background-position: 100% 100%; opacity: 1; }
-  100% { background-position: 0% 0%; opacity: .6; }
-}
-.tcg-card::after {
+#page-preview .tcg-card::after {
   content: '';
   position: absolute; inset: 0;
   background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 3px);
@@ -735,7 +725,7 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   z-index: 21;
   border-radius: 18px;
 }
-.card-header {
+#page-preview .card-header {
   position: relative;
   padding: 12px 14px 8px;
   display: flex;
@@ -746,7 +736,7 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
   flex-shrink: 0;
 }
-.card-name {
+#page-preview .card-name {
   font-family: 'Orbitron', monospace;
   font-size: 13px;
   font-weight: 900;
@@ -758,7 +748,7 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   text-overflow: ellipsis;
   max-width: 180px;
 }
-.card-type {
+#page-preview .card-type {
   font-family: 'Share Tech Mono', monospace;
   font-size: 9px;
   color: #00e5ff;
@@ -769,20 +759,20 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   background: rgba(0,229,255,.06);
   white-space: nowrap;
 }
-.card-img-wrap {
+#page-preview .card-img-wrap {
   position: relative;
   flex: 1;
   overflow: hidden;
   min-height: 0;
 }
-.card-img-wrap img {
+#page-preview .card-img-wrap img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
   filter: saturate(1.1) contrast(1.05);
 }
-.card-img-wrap::after {
+#page-preview .card-img-wrap::after {
   content: '';
   position: absolute; inset: 0;
   background:
@@ -790,30 +780,30 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
     linear-gradient(180deg, rgba(4,9,15,.4) 0%, transparent 20%);
   pointer-events: none;
 }
-.card-hud {
+#page-preview .card-hud {
   position: absolute; inset: 0;
   z-index: 3;
   pointer-events: none;
   opacity: .4;
 }
-.hud-h {
+#page-preview .hud-h {
   position: absolute; left: 0; right: 0;
   height: 1px;
   background: linear-gradient(90deg, transparent 0%, rgba(0,229,255,.4) 20%, rgba(0,229,255,.4) 80%, transparent 100%);
 }
-.hud-v {
+#page-preview .hud-v {
   position: absolute; top: 0; bottom: 0;
   width: 1px;
   background: linear-gradient(180deg, transparent 0%, rgba(0,229,255,.3) 20%, rgba(0,229,255,.3) 80%, transparent 100%);
 }
-.corner-tl, .corner-tr, .corner-bl, .corner-br {
+#page-preview .corner-tl, #page-preview .corner-tr, #page-preview .corner-bl, #page-preview .corner-br {
   position: absolute; width: 14px; height: 14px; z-index: 4;
 }
-.corner-tl { top:6px; left:6px;   border-top:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
-.corner-tr { top:6px; right:6px;  border-top:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
-.corner-bl { bottom:6px; left:6px;  border-bottom:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
-.corner-br { bottom:6px; right:6px; border-bottom:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
-.viewer-badge {
+#page-preview .corner-tl { top:6px; left:6px;   border-top:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
+#page-preview .corner-tr { top:6px; right:6px;  border-top:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
+#page-preview .corner-bl { bottom:6px; left:6px;  border-bottom:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
+#page-preview .corner-br { bottom:6px; right:6px; border-bottom:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
+#page-preview .viewer-badge {
   position: absolute;
   bottom: 10px; left: 10px; right: 10px;
   z-index: 5;
@@ -825,31 +815,30 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   border-radius: 8px;
   padding: 6px 10px;
 }
-.viewer-badge img { width:28px; height:28px; border-radius:6px; object-fit:cover; border:1px solid rgba(0,229,255,.3); flex-shrink:0; }
-.viewer-info { flex:1; min-width:0; }
-.vname { font-family:'Orbitron',monospace; font-size:10px; font-weight:700; color:#e8f4ff; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.vsub  { font-family:'Share Tech Mono',monospace; font-size:9px; color:#00e5ff; margin-top:1px; }
-.card-stats {
+#page-preview .viewer-badge img { width:28px; height:28px; border-radius:6px; object-fit:cover; border:1px solid rgba(0,229,255,.3); flex-shrink:0; }
+#page-preview .viewer-info { flex:1; min-width:0; }
+#page-preview .vname { font-family:'Orbitron',monospace; font-size:10px; font-weight:700; color:#e8f4ff; letter-spacing:.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#page-preview .vsub { font-family:'Share Tech Mono',monospace; font-size:9px; color:#00e5ff; margin-top:1px; }
+#page-preview .card-stats {
   padding: 10px 14px 14px;
   z-index: 5;
   position: relative;
   background: linear-gradient(0deg, rgba(0,229,255,.03) 0%, transparent 100%);
   flex-shrink: 0;
 }
-.stat-row { display:flex; align-items:center; gap:6px; margin-bottom:7px; }
-.stat-row:last-child { margin-bottom:0; }
-.stat-label { font-family:'Share Tech Mono',monospace; font-size:9px; color:#3a6080; letter-spacing:.1em; width:58px; flex-shrink:0; }
-.stat-track { flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:999px; overflow:hidden; border:1px solid rgba(255,255,255,.05); }
-.stat-fill  { height:100%; border-radius:999px; transition:width .6s ease; }
-.stat-fill.xp { background:linear-gradient(90deg,#7aa2ff,#00e5ff); box-shadow:0 0 6px rgba(0,229,255,.4); }
-.stat-fill.hp { background:linear-gradient(90deg,#ff4fb3,#ff2d78); box-shadow:0 0 6px rgba(255,45,120,.4); }
-.stat-val { font-family:'Orbitron',monospace; font-size:9px; color:#c8d8f0; width:54px; text-align:right; flex-shrink:0; }
-.card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
-.tcg-badge { display:inline-block; font-family:'Share Tech Mono',monospace; font-size:8px; color:#5a8aaa; letter-spacing:.1em; padding:2px 7px; border:1px solid rgba(255,255,255,.08); border-radius:999px; background:rgba(255,255,255,.03); }
-.tcg-badge.stage { color:#00ff9d; border-color:rgba(0,255,157,.3); background:rgba(0,255,157,.06); text-shadow:0 0 8px rgba(0,255,157,.5); }
-
+#page-preview .stat-row { display:flex; align-items:center; gap:6px; margin-bottom:7px; }
+#page-preview .stat-row:last-child { margin-bottom:0; }
+#page-preview .stat-label { font-family:'Share Tech Mono',monospace; font-size:9px; color:#3a6080; letter-spacing:.1em; width:58px; flex-shrink:0; }
+#page-preview .stat-track { flex:1; height:5px; background:rgba(255,255,255,.06); border-radius:999px; overflow:hidden; border:1px solid rgba(255,255,255,.05); }
+#page-preview .stat-fill { height:100%; border-radius:999px; transition:width .6s ease; }
+#page-preview .stat-fill.xp { background:linear-gradient(90deg,#7aa2ff,#00e5ff); box-shadow:0 0 6px rgba(0,229,255,.4); }
+#page-preview .stat-fill.hp { background:linear-gradient(90deg,#ff4fb3,#ff2d78); box-shadow:0 0 6px rgba(255,45,120,.4); }
+#page-preview .stat-val { font-family:'Orbitron',monospace; font-size:9px; color:#c8d8f0; width:54px; text-align:right; flex-shrink:0; }
+#page-preview .card-footer { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+#page-preview .tcg-badge { display:inline-block; font-family:'Share Tech Mono',monospace; font-size:8px; color:#5a8aaa; letter-spacing:.1em; padding:2px 7px; border:1px solid rgba(255,255,255,.08); border-radius:999px; background:rgba(255,255,255,.03); }
+#page-preview .tcg-badge.stage { color:#00ff9d; border-color:rgba(0,255,157,.3); background:rgba(0,255,157,.06); text-shadow:0 0 8px rgba(0,255,157,.5); }
 /* ─── CARTE ÉVOLUTION ─── */
-.evo-card {
+#page-preview .evo-card {
   position: relative;
   width: 360px;
   min-height: 420px;
@@ -869,14 +858,12 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
   padding: 32px 24px;
   flex-shrink: 0;
 }
-.evo-card.visible { opacity:1; transform:scale(1); }
-.evo-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,rgba(122,162,255,.08) 0%,transparent 70%); pointer-events:none; }
-.evo-title { font-family:'Orbitron',monospace; font-size:13px; font-weight:900; letter-spacing:.16em; color:#7aa2ff; text-shadow:0 0 20px rgba(122,162,255,.5); z-index:1; }
-.evo-img   { width:180px; height:180px; object-fit:contain; image-rendering:pixelated; filter:drop-shadow(0 0 20px rgba(122,162,255,.5)); z-index:1; }
-.evo-name  { font-family:'Orbitron',monospace; font-size:20px; font-weight:900; color:#e8f4ff; letter-spacing:.06em; z-index:1; text-align:center; }
-.evo-vwr   { font-family:'Share Tech Mono',monospace; font-size:11px; color:#6a8aaa; letter-spacing:.1em; z-index:1; }
-
-}
+#page-preview .evo-card.visible { opacity:1; transform:scale(1); }
+#page-preview .evo-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,rgba(122,162,255,.08) 0%,transparent 70%); pointer-events:none; }
+#page-preview .evo-title { font-family:'Orbitron',monospace; font-size:13px; font-weight:900; letter-spacing:.16em; color:#7aa2ff; text-shadow:0 0 20px rgba(122,162,255,.5); z-index:1; }
+#page-preview .evo-img { width:180px; height:180px; object-fit:contain; image-rendering:pixelated; filter:drop-shadow(0 0 20px rgba(122,162,255,.5)); z-index:1; }
+#page-preview .evo-name { font-family:'Orbitron',monospace; font-size:20px; font-weight:900; color:#e8f4ff; letter-spacing:.06em; z-index:1; text-align:center; }
+#page-preview .evo-vwr { font-family:'Share Tech Mono',monospace; font-size:11px; color:#6a8aaa; letter-spacing:.1em; z-index:1; }
 
 </style>
 </head>
@@ -1966,13 +1953,13 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
     </div><!-- /page-planning -->
 
 
+    
+
+
     <!-- ══════════════════════════════════════════════════════════════════════
          PAGE : PREVIEW STUDIO
     ════════════════════════════════════════════════════════════════════════ -->
     <div class="page" id="page-preview">
-<a href="/admin" class="back">← Admin</a>
-</div>
-
 <div class="layout">
 
   <!-- ══ PANNEAU CONTRÔLES ══ -->
@@ -2126,6 +2113,1210 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
     </div>
   </div>
 </div>
+
+<script>
+const STAGE_LABELS = {0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III'};
+let cmsData = [];
+let curTab  = 'show';
+
+// ── Chargement CMs ───────────────────────────────────────────────────────────
+async function loadCMs() {
+  try {
+    const d = await fetch('/preview/data').then(r => r.json());
+    cmsData = d.cms || [];
+    const opts = cmsData.map(c => `<option value="${c.key}">${c.name}</option>`).join('');
+    document.getElementById('show-cm').innerHTML = opts;
+    document.getElementById('evo-cm').innerHTML  = opts;
+    onShowCM();
+    onEvoCM();
+  } catch(e) { console.error('loadCMs:', e); }
+}
+
+function formsFor(key, minStage = 0) {
+  const cm = cmsData.find(c => c.key === key);
+  return cm ? cm.forms.filter(f => f.stage >= minStage) : [];
+}
+
+function buildFormSel(selId, key, minStage = 0) {
+  document.getElementById(selId).innerHTML = formsFor(key, minStage)
+    .map(f => `<option value="${f.stage}" data-n="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url||''}">`
+              + `Stage ${f.stage} — ${f.name}</option>`)
+    .join('');
+}
+
+function selOpt(id) {
+  const s = document.getElementById(id);
+  return s.options[s.selectedIndex] || null;
+}
+
+// ── SHOW ─────────────────────────────────────────────────────────────────────
+function onShowCM() {
+  const key = document.getElementById('show-cm').value;
+  buildFormSel('show-form', key, 0);
+  refreshCard();
+}
+
+function refreshCard() {
+  const key    = document.getElementById('show-cm').value;
+  const opt    = selOpt('show-form');
+  if (!opt) return;
+  const cm     = cmsData.find(c => c.key === key);
+  const stage  = parseInt(opt.value);
+  const name   = opt.dataset.n;
+  const img    = opt.dataset.img;
+  const viewer = (document.getElementById('show-viewer').value || 'preview').trim();
+  const xp     = parseInt(document.getElementById('show-xp').value) || 0;
+  const hap    = parseInt(document.getElementById('show-hap').value) || 0;
+
+  // Mini panneau
+  document.getElementById('show-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${name}</div>
+       <div class="cm-mini-sub">Stage ${stage} · ${key}</div>
+     </div>`;
+
+  // Carte TCG
+  document.getElementById('p-name').textContent   = name.toUpperCase();
+  document.getElementById('p-type').textContent   = `${(cm?.name||key).toUpperCase()} · ${STAGE_LABELS[stage]||'STAGE '+stage}`;
+  document.getElementById('p-img').src            = img;
+  document.getElementById('p-viewer').textContent = '@' + viewer;
+  document.getElementById('p-avatar').src         = '';
+  document.getElementById('p-xp-val').textContent = xp + ' XP';
+  document.getElementById('p-hp-val').textContent = hap + '%';
+  document.getElementById('p-lineage').textContent= (cm?.name||key).toUpperCase();
+  document.getElementById('p-stage').textContent  = STAGE_LABELS[stage]||'STAGE '+stage;
+
+  // Barres (approximation visuelle)
+  const xpPct = Math.min(100, (xp % 500) / 5);
+  document.getElementById('p-xp-fill').style.width = xpPct + '%';
+  document.getElementById('p-hp-fill').style.width = hap + '%';
+}
+
+function doShow() {
+  const key = document.getElementById('show-cm').value;
+  const opt = selOpt('show-form');
+  if (!opt) { setSt('show','⚠ Sélectionne un CM et une forme',true); return; }
+
+  // Afficher immédiatement
+  refreshCard();
+  const evo  = document.getElementById('evo-card');
+  const show = document.getElementById('show-card');
+  evo.style.display  = 'none'; evo.classList.remove('visible');
+  show.style.display = 'flex';
+  void show.offsetWidth;
+  show.classList.add('visible');
+
+  // Injecter en DB (overlay live aussi)
+  const body = {
+    viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
+    cm_key:    key,
+    stage:     parseInt(opt.value),
+    cm_name:   opt.dataset.n,
+    image_url: opt.dataset.img,
+    xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
+    happiness: parseInt(document.getElementById('show-hap').value) || 0,
+  };
+  fetch('/preview/push_show', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('show', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('show', '✓ Affiché localement', false));
+}
+
+// ── ÉVOLUTION ────────────────────────────────────────────────────────────────
+function onEvoCM() {
+  const key = document.getElementById('evo-cm').value;
+  buildFormSel('evo-form', key, 1);
+  refreshEvoMini();
+}
+
+function refreshEvoMini() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
+  if (!opt) return;
+  const img = opt.dataset.img;
+  document.getElementById('evo-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${opt.dataset.n}</div>
+       <div class="cm-mini-sub">Stage ${opt.value} · ${key}</div>
+     </div>`;
+}
+
+function doEvo() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
+  if (!opt) { setSt('evo','⚠ Sélectionne un CM et une forme',true); return; }
+  const viewer = document.getElementById('evo-viewer').value.trim() || 'preview';
+
+  // Afficher immédiatement
+  document.getElementById('e-img').src            = opt.dataset.img;
+  document.getElementById('e-name').textContent   = opt.dataset.n.toUpperCase();
+  document.getElementById('e-viewer').textContent = '@' + viewer;
+
+  const show = document.getElementById('show-card');
+  const evo  = document.getElementById('evo-card');
+  show.style.display = 'none'; show.classList.remove('visible');
+  evo.style.display  = 'flex';
+  void evo.offsetWidth;
+  evo.classList.add('visible');
+
+  // Injecter en DB
+  const body = {
+    viewer, cm_key: key,
+    stage:     parseInt(opt.value),
+    name:      opt.dataset.n,
+    image_url: opt.dataset.img,
+    sound_url: opt.dataset.snd || '',
+  };
+  fetch('/preview/push_evolution', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('evo', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('evo', '✓ Affiché localement', false));
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  curTab = tab;
+  document.getElementById('tab-show').classList.toggle('on', tab==='show');
+  document.getElementById('tab-evo').classList.toggle('on', tab==='evo');
+  document.getElementById('panel-show').style.display = tab==='show' ? '' : 'none';
+  document.getElementById('panel-evo').style.display  = tab==='evo'  ? '' : 'none';
+}
+
+// ── Fond ─────────────────────────────────────────────────────────────────────
+function setBg(btn, cls) {
+  document.querySelectorAll('.bb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('pstage').className = 'pstage ' + cls;
+}
+
+// ── Capture PNG (directement sur l'élément DOM, pas sur l'iframe) ─────────
+async function doCapture() {
+  const target = curTab === 'show'
+    ? document.getElementById('show-card')
+    : document.getElementById('evo-card');
+
+  if (!target.classList.contains('visible')) {
+    setSt(curTab, '⚠ Simule d\'abord une carte', true);
+    return;
+  }
+
+  const btn = document.getElementById('capbtn');
+  btn.textContent = '⟳…'; btn.disabled = true;
+
+  try {
+    const canvas = await html2canvas(target, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: null,
+      logging: false,
+    });
+    const nm  = (curTab === 'show'
+      ? document.getElementById('p-name').textContent
+      : document.getElementById('e-name').textContent
+    ).toLowerCase().replace(/[^a-z0-9]+/g,'-');
+    const ts  = new Date().toISOString().slice(0,10);
+    const lnk = document.createElement('a');
+    lnk.download = `capsmons-${nm}-${ts}.png`;
+    lnk.href = canvas.toDataURL('image/png');
+    lnk.click();
+    btn.textContent = '✓ OK !';
+    setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
+  } catch(e) {
+    console.error(e);
+    btn.textContent = '✕ Erreur'; btn.disabled = false;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function setSt(tab, msg, err) {
+  const el = document.getElementById(tab + '-st');
+  if (el) { el.textContent = msg; el.className = 'st ' + (err ? 'er' : 'ok'); }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+loadCMs();
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PREVIEW STUDIO
+// ══════════════════════════════════════════════════════════════════════════════
+let _previewReady = false;
+
+function _initPreviewStudio() {
+  if (!_previewReady) {
+    _previewReady = true;
+    if (!window.html2canvas) {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      document.head.appendChild(s);
+    }
+  }
+  loadPreviewCMs();
+}
+
+
+const STAGE_LABELS = {0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III'};
+let cmsData = [];
+let curTab  = 'show';
+
+// ── Chargement CMs ───────────────────────────────────────────────────────────
+async function loadPreviewCMs() {
+  try {
+    const d = await fetch('/preview/data').then(r => r.json());
+    cmsData = d.cms || [];
+    const opts = cmsData.map(c => `<option value="${c.key}">${c.name}</option>`).join('');
+    document.getElementById('show-cm').innerHTML = opts;
+    document.getElementById('evo-cm').innerHTML  = opts;
+    onShowCM();
+    onEvoCM();
+  } catch(e) { console.error('loadCMs:', e); }
+}
+
+function formsFor(key, minStage = 0) {
+  const cm = cmsData.find(c => c.key === key);
+  return cm ? cm.forms.filter(f => f.stage >= minStage) : [];
+}
+
+function buildFormSel(selId, key, minStage = 0) {
+  document.getElementById(selId).innerHTML = formsFor(key, minStage)
+    .map(f => `<option value="${f.stage}" data-n="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url||''}">`
+              + `Stage ${f.stage} — ${f.name}</option>`)
+    .join('');
+}
+
+function selOpt(id) {
+  const s = document.getElementById(id);
+  return s.options[s.selectedIndex] || null;
+}
+
+// ── SHOW ─────────────────────────────────────────────────────────────────────
+function onShowCM() {
+  const key = document.getElementById('show-cm').value;
+  buildFormSel('show-form', key, 0);
+  refreshCard();
+}
+
+function refreshCard() {
+  const key    = document.getElementById('show-cm').value;
+  const opt    = selOpt('show-form');
+  if (!opt) return;
+  const cm     = cmsData.find(c => c.key === key);
+  const stage  = parseInt(opt.value);
+  const name   = opt.dataset.n;
+  const img    = opt.dataset.img;
+  const viewer = (document.getElementById('show-viewer').value || 'preview').trim();
+  const xp     = parseInt(document.getElementById('show-xp').value) || 0;
+  const hap    = parseInt(document.getElementById('show-hap').value) || 0;
+
+  // Mini panneau
+  document.getElementById('show-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${name}</div>
+       <div class="cm-mini-sub">Stage ${stage} · ${key}</div>
+     </div>`;
+
+  // Carte TCG
+  document.getElementById('p-name').textContent   = name.toUpperCase();
+  document.getElementById('p-type').textContent   = `${(cm?.name||key).toUpperCase()} · ${STAGE_LABELS[stage]||'STAGE '+stage}`;
+  document.getElementById('p-img').src            = img;
+  document.getElementById('p-viewer').textContent = '@' + viewer;
+  document.getElementById('p-avatar').src         = '';
+  document.getElementById('p-xp-val').textContent = xp + ' XP';
+  document.getElementById('p-hp-val').textContent = hap + '%';
+  document.getElementById('p-lineage').textContent= (cm?.name||key).toUpperCase();
+  document.getElementById('p-stage').textContent  = STAGE_LABELS[stage]||'STAGE '+stage;
+
+  // Barres (approximation visuelle)
+  const xpPct = Math.min(100, (xp % 500) / 5);
+  document.getElementById('p-xp-fill').style.width = xpPct + '%';
+  document.getElementById('p-hp-fill').style.width = hap + '%';
+}
+
+function doShow() {
+  const key = document.getElementById('show-cm').value;
+  const opt = selOpt('show-form');
+  if (!opt) { setSt('show','⚠ Sélectionne un CM et une forme',true); return; }
+
+  // Afficher immédiatement
+  refreshCard();
+  const evo  = document.getElementById('evo-card');
+  const show = document.getElementById('show-card');
+  evo.style.display  = 'none'; evo.classList.remove('visible');
+  show.style.display = 'flex';
+  void show.offsetWidth;
+  show.classList.add('visible');
+
+  // Injecter en DB (overlay live aussi)
+  const body = {
+    viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
+    cm_key:    key,
+    stage:     parseInt(opt.value),
+    cm_name:   opt.dataset.n,
+    image_url: opt.dataset.img,
+    xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
+    happiness: parseInt(document.getElementById('show-hap').value) || 0,
+  };
+  fetch('/preview/push_show', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('show', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('show', '✓ Affiché localement', false));
+}
+
+// ── ÉVOLUTION ────────────────────────────────────────────────────────────────
+function onEvoCM() {
+  const key = document.getElementById('evo-cm').value;
+  buildFormSel('evo-form', key, 1);
+  refreshEvoMini();
+}
+
+function refreshEvoMini() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
+  if (!opt) return;
+  const img = opt.dataset.img;
+  document.getElementById('evo-mini').innerHTML =
+    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
+     <div>
+       <div class="cm-mini-name">${opt.dataset.n}</div>
+       <div class="cm-mini-sub">Stage ${opt.value} · ${key}</div>
+     </div>`;
+}
+
+function doEvo() {
+  const key = document.getElementById('evo-cm').value;
+  const opt = selOpt('evo-form');
+  if (!opt) { setSt('evo','⚠ Sélectionne un CM et une forme',true); return; }
+  const viewer = document.getElementById('evo-viewer').value.trim() || 'preview';
+
+  // Afficher immédiatement
+  document.getElementById('e-img').src            = opt.dataset.img;
+  document.getElementById('e-name').textContent   = opt.dataset.n.toUpperCase();
+  document.getElementById('e-viewer').textContent = '@' + viewer;
+
+  const show = document.getElementById('show-card');
+  const evo  = document.getElementById('evo-card');
+  show.style.display = 'none'; show.classList.remove('visible');
+  evo.style.display  = 'flex';
+  void evo.offsetWidth;
+  evo.classList.add('visible');
+
+  // Injecter en DB
+  const body = {
+    viewer, cm_key: key,
+    stage:     parseInt(opt.value),
+    name:      opt.dataset.n,
+    image_url: opt.dataset.img,
+    sound_url: opt.dataset.snd || '',
+  };
+  fetch('/preview/push_evolution', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(r => r.json())
+    .then(d => setSt('evo', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
+    .catch(() => setSt('evo', '✓ Affiché localement', false));
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  curTab = tab;
+  document.getElementById('tab-show').classList.toggle('on', tab==='show');
+  document.getElementById('tab-evo').classList.toggle('on', tab==='evo');
+  document.getElementById('panel-show').style.display = tab==='show' ? '' : 'none';
+  document.getElementById('panel-evo').style.display  = tab==='evo'  ? '' : 'none';
+}
+
+// ── Fond ─────────────────────────────────────────────────────────────────────
+function setBg(btn, cls) {
+  document.querySelectorAll('.bb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('pstage').className = 'pstage ' + cls;
+}
+
+// ── Capture PNG (directement sur l'élément DOM, pas sur l'iframe) ─────────
+async function doCapture() {
+  const target = curTab === 'show'
+    ? document.getElementById('show-card')
+    : document.getElementById('evo-card');
+
+  if (!target.classList.contains('visible')) {
+    setSt(curTab, '⚠ Simule d\'abord une carte', true);
+    return;
+  }
+
+  const btn = document.getElementById('capbtn');
+  btn.textContent = '⟳…'; btn.disabled = true;
+
+  try {
+    const canvas = await window.html2canvas(target, {
+      useCORS: true,
+      allowTaint: true,
+      scale: 2,
+      backgroundColor: null,
+      logging: false,
+    });
+    const nm  = (curTab === 'show'
+      ? document.getElementById('p-name').textContent
+      : document.getElementById('e-name').textContent
+    ).toLowerCase().replace(/[^a-z0-9]+/g,'-');
+    const ts  = new Date().toISOString().slice(0,10);
+    const lnk = document.createElement('a');
+    lnk.download = `capsmons-${nm}-${ts}.png`;
+    lnk.href = canvas.toDataURL('image/png');
+    lnk.click();
+    btn.textContent = '✓ OK !';
+    setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
+  } catch(e) {
+    console.error(e);
+    btn.textContent = '✕ Erreur'; btn.disabled = false;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function setSt(tab, msg, err) {
+  const el = document.getElementById(tab + '-st');
+  if (el) { el.textContent = msg; el.className = 'st ' + (err ? 'er' : 'ok'); }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+// init géré par _initPreviewStudio()
+
+</script>
+</body>
+</html>"""
+
+
+
+# =============================================================================
+# PLANNING — Studio de planning de stream
+# =============================================================================
+
+import datetime as _dt
+
+def _iso_week(year: int, week: int):
+    """Retourne (lun, dim) en datetime.date pour une semaine ISO."""
+    jan4 = _dt.date(year, 1, 4)
+    monday = jan4 - _dt.timedelta(days=jan4.isoweekday() - 1) + _dt.timedelta(weeks=week - 1)
+    return monday, monday + _dt.timedelta(days=6)
+
+def _current_iso_week():
+    today = _dt.date.today()
+    y, w, _ = today.isocalendar()
+    return y, w
+
+def _get_or_create_week(cur, year: int, week: int) -> int:
+    cur.execute(
+        "INSERT INTO schedule_weeks (year, week) VALUES (%s,%s) ON CONFLICT (year,week) DO UPDATE SET year=EXCLUDED.year RETURNING id;",
+        (year, week)
+    )
+    return cur.fetchone()[0]
+
+
+# ── API Jeux ─────────────────────────────────────────────────────────────────
+
+@app.get("/admin/schedule/games")
+def schedule_games_list(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,name,image_url,logo_url,color,sort_order FROM schedule_games ORDER BY sort_order,name;")
+            rows = cur.fetchall()
+    return {"games": [{"id":r[0],"name":r[1],"image_url":r[2],"logo_url":r[3],"color":r[4],"sort_order":r[5]} for r in rows]}
+
+
+@app.post("/admin/schedule/games/save")
+def schedule_game_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    gid       = payload.get("id")
+    name      = str(payload.get("name","")).strip()
+    image_url = str(payload.get("image_url","")).strip()
+    logo_url  = str(payload.get("logo_url","")).strip()
+    color     = str(payload.get("color","#00e5ff")).strip() or "#00e5ff"
+    sort_order= int(payload.get("sort_order", 0))
+    if not name:
+        raise HTTPException(400, "name requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if gid:
+                cur.execute(
+                    "UPDATE schedule_games SET name=%s,image_url=%s,logo_url=%s,color=%s,sort_order=%s WHERE id=%s;",
+                    (name, image_url, logo_url, color, sort_order, int(gid))
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO schedule_games (name,image_url,logo_url,color,sort_order) VALUES (%s,%s,%s,%s,%s);",
+                    (name, image_url, logo_url, color, sort_order)
+                )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/schedule/games/delete")
+def schedule_game_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    gid = int(payload.get("id", 0))
+    if not gid:
+        raise HTTPException(400, "id requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schedule_games WHERE id=%s;", (gid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── API Semaine & Créneaux ───────────────────────────────────────────────────
+
+@app.get("/admin/schedule/week")
+def schedule_week_get(
+    year: int | None = None,
+    week: int | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    if year is None or week is None:
+        year, week = _current_iso_week()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,year,week,title,published FROM schedule_weeks WHERE year=%s AND week=%s;",
+                (year, week)
+            )
+            wr = cur.fetchone()
+            if not wr:
+                return {"week": {"id": None, "year": year, "week": week, "title": "", "published": False}, "slots": []}
+            wid = wr[0]
+            cur.execute("""
+                SELECT s.id, s.day, s.hour_start, s.hour_end, s.game_id,
+                       s.custom_name, s.image_url, s.subtitle, s.color,
+                       g.name, g.image_url, g.logo_url, g.color
+                FROM schedule_slots s
+                LEFT JOIN schedule_games g ON g.id = s.game_id
+                WHERE s.week_id = %s
+                ORDER BY s.day, s.hour_start;
+            """, (wid,))
+            slots = []
+            for r in cur.fetchall():
+                slots.append({
+                    "id": r[0], "day": r[1],
+                    "hour_start": float(r[2]), "hour_end": float(r[3]),
+                    "game_id": r[4],
+                    "custom_name": r[5], "image_url": r[6], "subtitle": r[7], "color": r[8],
+                    "game_name": r[9] or "", "game_image": r[10] or "",
+                    "game_logo": r[11] or "", "game_color": r[12] or "",
+                })
+    return {
+        "week": {"id": wr[0], "year": year, "week": week, "title": wr[3], "published": bool(wr[4])},
+        "slots": slots,
+    }
+
+
+@app.post("/admin/schedule/week/save")
+def schedule_week_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    year  = int(payload.get("year", _current_iso_week()[0]))
+    week  = int(payload.get("week", _current_iso_week()[1]))
+    title = str(payload.get("title","")).strip()
+    published = bool(payload.get("published", False))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO schedule_weeks (year,week,title,published)
+                   VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (year,week) DO UPDATE SET title=EXCLUDED.title, published=EXCLUDED.published
+                   RETURNING id;""",
+                (year, week, title, published)
+            )
+            wid = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "week_id": wid}
+
+
+@app.post("/admin/schedule/slot/save")
+def schedule_slot_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    year       = int(payload.get("year", _current_iso_week()[0]))
+    week       = int(payload.get("week", _current_iso_week()[1]))
+    slot_id    = payload.get("id")
+    day        = int(payload.get("day", 0))
+    hour_start = float(payload.get("hour_start", 9))
+    hour_end   = float(payload.get("hour_end", 10))
+    game_id    = payload.get("game_id") or None
+    custom_name= str(payload.get("custom_name","")).strip()
+    image_url  = str(payload.get("image_url","")).strip()
+    subtitle   = str(payload.get("subtitle","")).strip()
+    color      = str(payload.get("color","")).strip()
+
+    if game_id is not None:
+        game_id = int(game_id)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            wid = _get_or_create_week(cur, year, week)
+            if slot_id:
+                cur.execute(
+                    """UPDATE schedule_slots
+                       SET day=%s,hour_start=%s,hour_end=%s,game_id=%s,
+                           custom_name=%s,image_url=%s,subtitle=%s,color=%s
+                       WHERE id=%s AND week_id=%s;""",
+                    (day, hour_start, hour_end, game_id, custom_name, image_url, subtitle, color, int(slot_id), wid)
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO schedule_slots
+                       (week_id,day,hour_start,hour_end,game_id,custom_name,image_url,subtitle,color)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id;""",
+                    (wid, day, hour_start, hour_end, game_id, custom_name, image_url, subtitle, color)
+                )
+                slot_id = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "slot_id": slot_id}
+
+
+@app.post("/admin/schedule/slot/delete")
+def schedule_slot_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    sid = int(payload.get("id", 0))
+    if not sid:
+        raise HTTPException(400, "id requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schedule_slots WHERE id=%s;", (sid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Page publique /planning ───────────────────────────────────────────────────
+
+@app.get("/planning", response_class=HTMLResponse)
+@app.get("/planning/{year}/{week}", response_class=HTMLResponse)
+def planning_public(year: int | None = None, week: int | None = None):
+    if year is None or week is None:
+        year, week = _current_iso_week()
+    monday, sunday = _iso_week(year, week)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,title,published FROM schedule_weeks WHERE year=%s AND week=%s;",
+                (year, week)
+            )
+            wr = cur.fetchone()
+            if not wr or not wr[2]:
+                return HTMLResponse(_render_planning_not_published(year, week, monday), status_code=404)
+            wid, title, _ = wr[0], wr[1], wr[2]
+            cur.execute("""
+                SELECT s.day, s.hour_start, s.hour_end,
+                       COALESCE(NULLIF(s.custom_name,''), g.name, 'Stream'),
+                       COALESCE(NULLIF(s.image_url,''), g.image_url, ''),
+                       s.subtitle,
+                       COALESCE(NULLIF(s.color,''), g.color, '#00e5ff'),
+                       g.logo_url
+                FROM schedule_slots s
+                LEFT JOIN schedule_games g ON g.id = s.game_id
+                WHERE s.week_id = %s
+                ORDER BY s.day, s.hour_start;
+            """, (wid,))
+            slots = [{"day":r[0],"hs":float(r[1]),"he":float(r[2]),"name":r[3],"img":r[4],"sub":r[5],"color":r[6],"logo":r[7] or ""} for r in cur.fetchall()]
+
+    # Liens semaines prev/next
+    prev_d = monday - _dt.timedelta(weeks=1)
+    next_d = monday + _dt.timedelta(weeks=1)
+    py, pw, _ = prev_d.isocalendar()
+    ny, nw, _ = next_d.isocalendar()
+
+    return HTMLResponse(_render_planning_public(year, week, monday, sunday, title or "", slots, py, pw, ny, nw))
+
+
+def _render_planning_not_published(year, week, monday):
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body{{background:#060810;color:#5a6a90;font-family:'Share Tech Mono',monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.box{{text-align:center}}.title{{color:#00e5ff;font-size:18px;margin-bottom:12px}}</style>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700&display=swap" rel="stylesheet">
+</head><body><div class="box"><div class="title">CAPSMÖNS // PLANNING</div>
+<p>Semaine {week} {year} — Pas encore publié.</p>
+<p style="margin-top:20px"><a href="/planning" style="color:#00e5ff">→ Semaine en cours</a></p>
+</div></body></html>"""
+
+
+def _render_planning_public(year, week, monday, sunday, title, slots, py, pw, ny, nw):
+    DAYS_FR = ["LUN","MAR","MER","JEU","VEN","SAM","DIM"]
+    H_START, H_END = 9, 22
+    TOTAL_H = H_END - H_START
+
+    # Construire les colonnes jours
+    day_cols = []
+    for d in range(7):
+        date_obj = monday + _dt.timedelta(days=d)
+        day_slots = [s for s in slots if s["day"] == d]
+        day_cols.append({"label": DAYS_FR[d], "date": date_obj.strftime("%d/%m"), "slots": day_slots})
+
+    # Générer les blocs HTML des créneaux
+    def slot_html(s):
+        pct_top  = (s["hs"] - H_START) / TOTAL_H * 100
+        pct_h    = (s["he"] - s["hs"]) / TOTAL_H * 100
+        bg = f"url('{s['img']}') center/cover" if s["img"] else s["color"]
+        logo_html = f'<img class="s-logo" src="{s["logo"]}">' if s["logo"] else ""
+        sub_html  = f'<div class="s-sub">{s["sub"]}</div>' if s["sub"] else ""
+        dur_h = int(s["he"] - s["hs"])
+        dur_m = int((s["he"] - s["hs"] - dur_h) * 60)
+        dur_str = f"{dur_h}h{dur_m:02d}" if dur_m else f"{dur_h}h"
+        h_start_fmt = f"{int(s['hs'])}h{int((s['hs']%1)*60):02d}" if s['hs']%1 else f"{int(s['hs'])}h"
+        h_end_fmt   = f"{int(s['he'])}h{int((s['he']%1)*60):02d}" if s['he']%1 else f"{int(s['he'])}h"
+        return f"""<div class="slot" style="top:{pct_top:.2f}%;height:{pct_h:.2f}%;background:{bg};border-color:{s['color']}">
+  <div class="s-overlay" style="border-color:{s['color']}"></div>
+  {logo_html}
+  <div class="s-content">
+    <div class="s-name">{s['name']}</div>
+    {sub_html}
+    <div class="s-time">{h_start_fmt}–{h_end_fmt} · {dur_str}</div>
+  </div>
+</div>"""
+
+    cols_html = ""
+    for dc in day_cols:
+        slots_inner = "\n".join(slot_html(s) for s in dc["slots"])
+        cols_html += f"""<div class="day-col">
+  <div class="day-head">
+    <div class="day-name">{dc['label']}</div>
+    <div class="day-date">{dc['date']}</div>
+  </div>
+  <div class="day-body">{slots_inner}</div>
+</div>"""
+
+    # Lignes horaires
+    hour_lines = ""
+    for h in range(H_START, H_END + 1):
+        pct = (h - H_START) / TOTAL_H * 100
+        hour_lines += f'<div class="hour-line" style="top:{pct:.2f}%"><span>{h}h</span></div>'
+
+    week_label = f"{monday.strftime('%d %b')} – {sunday.strftime('%d %b %Y')}"
+    title_display = title or f"Planning semaine {week}"
+
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planning stream — {title_display}</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg:#060810;--panel:#0a0d18;--border:#1a2540;--cyan:#00e5ff;--mag:#ff2d78;--text:#c8d4f0;--muted:#5a6a90}}
+body{{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;min-height:100vh}}
+body::before{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 3px);pointer-events:none;z-index:9999}}
+
+.topbar{{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:var(--panel);border-bottom:1px solid var(--border)}}
+.logo{{font-family:'Orbitron',monospace;font-size:14px;font-weight:900;color:var(--cyan);letter-spacing:.1em}}
+.week-nav{{display:flex;align-items:center;gap:12px}}
+.week-nav a{{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted);text-decoration:none;padding:5px 10px;border:1px solid var(--border);border-radius:6px}}
+.week-nav a:hover{{border-color:var(--cyan);color:var(--cyan)}}
+.week-label{{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text)}}
+
+.main-title{{text-align:center;padding:20px 24px 0;font-family:'Orbitron',monospace;font-size:20px;font-weight:900;color:var(--cyan);text-shadow:0 0 30px rgba(0,229,255,.3);letter-spacing:.08em}}
+.main-sub{{text-align:center;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);margin:4px 0 16px}}
+
+.grid-wrap{{padding:0 16px 32px;overflow-x:auto}}
+.grid{{display:grid;grid-template-columns:44px repeat(7,1fr);min-width:700px}}
+
+/* Colonne heure */
+.hour-col{{position:relative}}
+.hour-label{{position:absolute;right:8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);transform:translateY(-50%);white-space:nowrap}}
+
+/* Colonnes jours */
+.day-col{{border-left:1px solid var(--border)}}
+.day-head{{padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);background:rgba(0,229,255,.03)}}
+.day-name{{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;color:var(--cyan);letter-spacing:.1em}}
+.day-date{{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px}}
+.day-body{{position:relative;height:520px}}
+
+/* Lignes horaires en fond */
+.hour-line{{position:absolute;left:0;right:0;border-top:1px solid rgba(255,255,255,.05);pointer-events:none}}
+.hour-line span{{display:none}}
+
+/* Créneaux */
+.slot{{position:absolute;left:2px;right:2px;border-radius:6px;overflow:hidden;border-left:3px solid #00e5ff;cursor:default;transition:transform .15s,box-shadow .15s}}
+.slot:hover{{transform:scale(1.02);box-shadow:0 4px 20px rgba(0,0,0,.5);z-index:10}}
+.s-overlay{{position:absolute;inset:0;background:linear-gradient(135deg,rgba(6,8,16,.7) 0%,rgba(6,8,16,.4) 100%);pointer-events:none}}
+.s-logo{{position:absolute;top:6px;right:6px;width:100%;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));z-index:2}}
+.s-content{{position:relative;z-index:2;padding:5px 7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end}}
+.s-name{{font-family:'Orbitron',monospace;font-size:16px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.s-sub{{font-family:'Rajdhani',sans-serif;font-size:9px;color:rgba(255,255,255,.7);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.s-time{{font-family:'Share Tech Mono',monospace;font-size:16px;color:rgba(255,255,255,.5);margin-top:2px}}
+
+.footer{{text-align:center;padding:16px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">CAPSMÖNS // PLANNING</div>
+  <div class="week-nav">
+    <a href="/planning/{py}/{pw}">← Préc.</a>
+    <span class="week-label">{week_label}</span>
+    <a href="/planning/{ny}/{nw}">Suiv. →</a>
+  </div>
+</div>
+
+<div class="main-title">{title_display}</div>
+<div class="main-sub">Semaine {week} · {week_label}</div>
+
+<div class="grid-wrap">
+  <div class="grid">
+    <div class="hour-col" style="padding-top:46px;position:relative;height:566px">
+      {''.join(f'<div class="hour-label" style="top:{(h-H_START)/TOTAL_H*100+8:.1f}%">{h}h</div>' for h in range(H_START, H_END+1))}
+    </div>
+    {cols_html}
+  </div>
+</div>
+
+<div class="footer">capsmons.devlooping.fr · Planning auto-généré</div>
+</body></html>"""
+
+
+@app.get("/overlay/drop", response_class=HTMLResponse)
+def overlay_drop_page():
+    return HTMLResponse("""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: transparent;
+    overflow: hidden;
+    width: 100vw; height: 100vh;
+    font-family: 'Rajdhani', sans-serif;
+  }
+
+  /* ── PANEL CONTENEUR ── */
+  #panel {
+    position: fixed;
+    right: 0; top: 50%;
+    transform: translateY(-50%) translateX(380px);
+    width: 400px;
+    transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+    z-index: 10;
+    will-change: transform;
+  }
+  #panel.visible {
+    transform: translateY(-50%) translateX(0px);
+  }
+
+  /* ── CARD ── */
+  .card {
+    position: relative;
+    background: linear-gradient(145deg, #050d1a 0%, #08152a 60%, #060e1c 100%);
+    border-radius: 16px 0 0 16px;
+    overflow: hidden;
+    padding: 18px 16px 14px 18px;
+    border-left: 1px solid rgba(0,200,255,0.25);
+    border-top: 1px solid rgba(0,200,255,0.15);
+    border-bottom: 1px solid rgba(0,200,255,0.1);
+  }
+
+  /* Trait néon gauche */
+  .card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 10%; bottom: 10%;
+    width: 2px;
+    background: linear-gradient(180deg, transparent, #00e5ff, #ff2d78, transparent);
+    border-radius: 999px;
+    animation: borderPulse 2s ease-in-out infinite;
+  }
+  @keyframes borderPulse {
+    0%,100% { opacity: 0.6; }
+    50%      { opacity: 1; box-shadow: 0 0 12px #00e5ff; }
+  }
+
+  /* Grille scanline */
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0,229,255,0.015) 3px,
+      rgba(0,229,255,0.015) 4px
+    );
+    pointer-events: none;
+  }
+
+  /* Coin décoratif top-right */
+  .corner {
+    position: absolute;
+    top: 0; right: 0;
+    width: 40px; height: 40px;
+    border-bottom: 1px solid rgba(0,229,255,0.2);
+    border-left: 1px solid rgba(0,229,255,0.2);
+    border-radius: 0 0 0 14px;
+  }
+
+  /* ── MODE BADGE ── */
+  .mode-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Orbitron', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid;
+    margin-bottom: 12px;
+  }
+  .mode-badge.first   { color: #ffd166; border-color: rgba(255,209,102,.4); background: rgba(255,209,102,.08); }
+  .mode-badge.random  { color: #7aa2ff; border-color: rgba(122,162,255,.4); background: rgba(122,162,255,.08); }
+  .mode-badge.coop    { color: #00ff9d; border-color: rgba(0,255,157,.4);   background: rgba(0,255,157,.08);  }
+  .mode-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    animation: modeDot 1.2s ease-in-out infinite;
+  }
+  .first  .mode-dot { background: #ffd166; box-shadow: 0 0 6px #ffd166; }
+  .random .mode-dot { background: #7aa2ff; box-shadow: 0 0 6px #7aa2ff; }
+  .coop   .mode-dot { background: #00ff9d; box-shadow: 0 0 6px #00ff9d; }
+  @keyframes modeDot { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── BODY ROW ── */
+  .body-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  /* ── IMAGE ── */
+  .img-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+  #img {
+    width: 80px; height: 80px;
+    border-radius: 12px;
+    object-fit: contain;
+    display: block;
+    background: rgba(0,229,255,.04);
+    border: 1px solid rgba(0,229,255,.2);
+  }
+  .img-glow {
+    position: absolute;
+    inset: -4px;
+    border-radius: 16px;
+    background: radial-gradient(circle, rgba(0,229,255,.25) 0%, transparent 70%);
+    animation: imgGlow 1.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes imgGlow {
+    0%,100% { opacity: 0.5; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.05); }
+  }
+
+  /* ── TEXTS ── */
+  .texts { flex: 1; min-width: 0; }
+  .drop-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 14px;
+    font-weight: 900;
+    color: #e8f4ff;
+    line-height: 1.2;
+    letter-spacing: .04em;
+    text-shadow: 0 0 20px rgba(0,229,255,.4);
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .drop-sub {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #5a7a9a;
+    line-height: 1.4;
+  }
+  .drop-sub span { color: #00e5ff; }
+
+  /* ── TIMER ── */
+  .timer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .timer-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #3a5570;
+    letter-spacing: .06em;
+  }
+  #timer-val {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: #00e5ff;
+    text-shadow: 0 0 10px rgba(0,229,255,.6);
+    transition: color .3s;
+  }
+  #timer-val.urgent { color: #ff2d78; text-shadow: 0 0 10px rgba(255,45,120,.6); animation: urgentFlash .5s ease-in-out infinite; }
+  @keyframes urgentFlash { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+  /* ── PROGRESS BAR ── */
+  .progress-track {
+    height: 6px;
+    background: rgba(255,255,255,.06);
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.06);
+    margin-bottom: 10px;
+  }
+  #progress-fill {
+    height: 100%;
+    width: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #00e5ff, #7aa2ff);
+    transform-origin: left;
+    transition: width 0.5s linear;
+    box-shadow: 0 0 8px rgba(0,229,255,.5);
+  }
+  #progress-fill.urgent {
+    background: linear-gradient(90deg, #ff2d78, #ff9d2d);
+    box-shadow: 0 0 8px rgba(255,45,120,.6);
+  }
+
+  /* ── COOP HITS ── */
+  .hits-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .hits-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #3a5570;
+    letter-spacing: .06em;
+    flex-shrink: 0;
+  }
+  .hits-dots {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .hit-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,255,157,.3);
+    background: rgba(0,255,157,.08);
+    transition: all .2s;
+  }
+  .hit-dot.filled {
+    background: #00ff9d;
+    border-color: #00ff9d;
+    box-shadow: 0 0 6px rgba(0,255,157,.8);
+  }
+  #hits-count {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    color: #00ff9d;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  /* ── COMMANDE ── */
+  .cmd-hint {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #2a4560;
+    letter-spacing: .08em;
+    text-align: center;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,.04);
+  }
+  .cmd-hint code {
+    color: #00e5ff;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    text-shadow: 0 0 8px rgba(0,229,255,.5);
+  }
+
+  /* ── PARTICULES ── */
+  #particles {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .particle {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: particleFly linear forwards;
+  }
+  @keyframes particleFly {
+    0%   { opacity: 1; transform: translate(0,0) scale(1); }
+    100% { opacity: 0; transform: var(--tx, translate(0,-80px)) scale(0.2); }
+  }
+
+  /* ── ENTRÉE / SORTIE ── */
+  @keyframes slideIn {
+    from { transform: translateY(-50%) translateX(380px); }
+    to   { transform: translateY(-50%) translateX(0); }
+  }
+  @keyframes slideOut {
+    from { transform: translateY(-50%) translateX(0); }
+    to   { transform: translateY(-50%) translateX(400px); }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+
+<div id="panel">
+  <div class="card">
+    <div class="corner"></div>
+
+    <div id="mode-badge" class="mode-badge coop">
+      <div class="mode-dot"></div>
+      <span id="mode-label">COOP</span>
+    </div>
+
+    <div class="body-row">
+      <div class="img-wrap">
+        <img id="img" src="" alt="">
+        <div class="img-glow"></div>
+      </div>
+      <div class="texts">
+        <div class="drop-title" id="title">Capsule Mystère</div>
+        <div class="drop-sub" id="sub">Tape <span>!grab</span> pour participer</div>
+      </div>
+    </div>
+
+    <div class="timer-row">
+      <div class="timer-label">// TEMPS RESTANT</div>
+      <div id="timer-val">--s</div>
+    </div>
+    <div class="progress-track">
+      <div id="progress-fill"></div>
+    </div>
+
+    <div id="hits-section" class="hits-row" style="display:none">
+      <div class="hits-label">PARTICIPANTS</div>
+      <div id="hits-dots" class="hits-dots"></div>
+      <div id="hits-count">0</div>
+    </div>
+
+    <div class="cmd-hint" id="cmd-hint">
+      Tape <code>!grab</code> dans le chat
+    </div>
+  </div>
+</div>
+
+<audio id="dropSfx" preload="auto" src="/static/drop.mp3"></audio>
     </div><!-- /page-preview -->
 
   </div><!-- /#content -->
@@ -3070,240 +4261,6 @@ if (typeof showToast === 'undefined') {
     setTimeout(() => t.remove(), 2500);
   }
 }
-
-
-// ══ PREVIEW STUDIO JS ══
-let _previewReady = false;
-
-function _initPreviewStudio() {
-  if (_previewReady) return;
-  _previewReady = true;
-  loadCMs();
-}
-
-const STAGE_LABELS = {0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III'};
-let cmsData = [];
-let curTab  = 'show';
-
-// ── Chargement CMs ───────────────────────────────────────────────────────────
-async function loadCMs() {
-  try {
-    const d = await fetch('/preview/data').then(r => r.json());
-    cmsData = d.cms || [];
-    const opts = cmsData.map(c => `<option value="${c.key}">${c.name}</option>`).join('');
-    document.getElementById('show-cm').innerHTML = opts;
-    document.getElementById('evo-cm').innerHTML  = opts;
-    onShowCM();
-    onEvoCM();
-  } catch(e) { console.error('loadCMs:', e); }
-}
-
-function formsFor(key, minStage = 0) {
-  const cm = cmsData.find(c => c.key === key);
-  return cm ? cm.forms.filter(f => f.stage >= minStage) : [];
-}
-
-function buildFormSel(selId, key, minStage = 0) {
-  document.getElementById(selId).innerHTML = formsFor(key, minStage)
-    .map(f => `<option value="${f.stage}" data-n="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url||''}">`
-              + `Stage ${f.stage} — ${f.name}</option>`)
-    .join('');
-}
-
-function selOpt(id) {
-  const s = document.getElementById(id);
-  return s.options[s.selectedIndex] || null;
-}
-
-// ── SHOW ─────────────────────────────────────────────────────────────────────
-function onShowCM() {
-  const key = document.getElementById('show-cm').value;
-  buildFormSel('show-form', key, 0);
-  refreshCard();
-}
-
-function refreshCard() {
-  const key    = document.getElementById('show-cm').value;
-  const opt    = selOpt('show-form');
-  if (!opt) return;
-  const cm     = cmsData.find(c => c.key === key);
-  const stage  = parseInt(opt.value);
-  const name   = opt.dataset.n;
-  const img    = opt.dataset.img;
-  const viewer = (document.getElementById('show-viewer').value || 'preview').trim();
-  const xp     = parseInt(document.getElementById('show-xp').value) || 0;
-  const hap    = parseInt(document.getElementById('show-hap').value) || 0;
-
-  // Mini panneau
-  document.getElementById('show-mini').innerHTML =
-    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
-     <div>
-       <div class="cm-mini-name">${name}</div>
-       <div class="cm-mini-sub">Stage ${stage} · ${key}</div>
-     </div>`;
-
-  // Carte TCG
-  document.getElementById('p-name').textContent   = name.toUpperCase();
-  document.getElementById('p-type').textContent   = `${(cm?.name||key).toUpperCase()} · ${STAGE_LABELS[stage]||'STAGE '+stage}`;
-  document.getElementById('p-img').src            = img;
-  document.getElementById('p-viewer').textContent = '@' + viewer;
-  document.getElementById('p-avatar').src         = '';
-  document.getElementById('p-xp-val').textContent = xp + ' XP';
-  document.getElementById('p-hp-val').textContent = hap + '%';
-  document.getElementById('p-lineage').textContent= (cm?.name||key).toUpperCase();
-  document.getElementById('p-stage').textContent  = STAGE_LABELS[stage]||'STAGE '+stage;
-
-  // Barres (approximation visuelle)
-  const xpPct = Math.min(100, (xp % 500) / 5);
-  document.getElementById('p-xp-fill').style.width = xpPct + '%';
-  document.getElementById('p-hp-fill').style.width = hap + '%';
-}
-
-function doShow() {
-  const key = document.getElementById('show-cm').value;
-  const opt = selOpt('show-form');
-  if (!opt) { setSt('show','⚠ Sélectionne un CM et une forme',true); return; }
-
-  // Afficher immédiatement
-  refreshCard();
-  const evo  = document.getElementById('evo-card');
-  const show = document.getElementById('show-card');
-  evo.style.display  = 'none'; evo.classList.remove('visible');
-  show.style.display = 'flex';
-  void show.offsetWidth;
-  show.classList.add('visible');
-
-  // Injecter en DB (overlay live aussi)
-  const body = {
-    viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
-    cm_key:    key,
-    stage:     parseInt(opt.value),
-    cm_name:   opt.dataset.n,
-    image_url: opt.dataset.img,
-    xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
-    happiness: parseInt(document.getElementById('show-hap').value) || 0,
-  };
-  fetch('/preview/push_show', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(r => r.json())
-    .then(d => setSt('show', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
-    .catch(() => setSt('show', '✓ Affiché localement', false));
-}
-
-// ── ÉVOLUTION ────────────────────────────────────────────────────────────────
-function onEvoCM() {
-  const key = document.getElementById('evo-cm').value;
-  buildFormSel('evo-form', key, 1);
-  refreshEvoMini();
-}
-
-function refreshEvoMini() {
-  const key = document.getElementById('evo-cm').value;
-  const opt = selOpt('evo-form');
-  if (!opt) return;
-  const img = opt.dataset.img;
-  document.getElementById('evo-mini').innerHTML =
-    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
-     <div>
-       <div class="cm-mini-name">${opt.dataset.n}</div>
-       <div class="cm-mini-sub">Stage ${opt.value} · ${key}</div>
-     </div>`;
-}
-
-function doEvo() {
-  const key = document.getElementById('evo-cm').value;
-  const opt = selOpt('evo-form');
-  if (!opt) { setSt('evo','⚠ Sélectionne un CM et une forme',true); return; }
-  const viewer = document.getElementById('evo-viewer').value.trim() || 'preview';
-
-  // Afficher immédiatement
-  document.getElementById('e-img').src            = opt.dataset.img;
-  document.getElementById('e-name').textContent   = opt.dataset.n.toUpperCase();
-  document.getElementById('e-viewer').textContent = '@' + viewer;
-
-  const show = document.getElementById('show-card');
-  const evo  = document.getElementById('evo-card');
-  show.style.display = 'none'; show.classList.remove('visible');
-  evo.style.display  = 'flex';
-  void evo.offsetWidth;
-  evo.classList.add('visible');
-
-  // Injecter en DB
-  const body = {
-    viewer, cm_key: key,
-    stage:     parseInt(opt.value),
-    name:      opt.dataset.n,
-    image_url: opt.dataset.img,
-    sound_url: opt.dataset.snd || '',
-  };
-  fetch('/preview/push_evolution', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(r => r.json())
-    .then(d => setSt('evo', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
-    .catch(() => setSt('evo', '✓ Affiché localement', false));
-}
-
-// ── Tabs ─────────────────────────────────────────────────────────────────────
-function switchTab(tab) {
-  curTab = tab;
-  document.getElementById('tab-show').classList.toggle('on', tab==='show');
-  document.getElementById('tab-evo').classList.toggle('on', tab==='evo');
-  document.getElementById('panel-show').style.display = tab==='show' ? '' : 'none';
-  document.getElementById('panel-evo').style.display  = tab==='evo'  ? '' : 'none';
-}
-
-// ── Fond ─────────────────────────────────────────────────────────────────────
-function setBg(btn, cls) {
-  document.querySelectorAll('.bb').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  document.getElementById('pstage').className = 'pstage ' + cls;
-}
-
-// ── Capture PNG (directement sur l'élément DOM, pas sur l'iframe) ─────────
-async function doCapture() {
-  const target = curTab === 'show'
-    ? document.getElementById('show-card')
-    : document.getElementById('evo-card');
-
-  if (!target.classList.contains('visible')) {
-    setSt(curTab, '⚠ Simule d\'abord une carte', true);
-    return;
-  }
-
-  const btn = document.getElementById('capbtn');
-  btn.textContent = '⟳…'; btn.disabled = true;
-
-  try {
-    const canvas = await html2canvas(target, {
-      useCORS: true,
-      allowTaint: true,
-      scale: 2,
-      backgroundColor: null,
-      logging: false,
-    });
-    const nm  = (curTab === 'show'
-      ? document.getElementById('p-name').textContent
-      : document.getElementById('e-name').textContent
-    ).toLowerCase().replace(/[^a-z0-9]+/g,'-');
-    const ts  = new Date().toISOString().slice(0,10);
-    const lnk = document.createElement('a');
-    lnk.download = `capsmons-${nm}-${ts}.png`;
-    lnk.href = canvas.toDataURL('image/png');
-    lnk.click();
-    btn.textContent = '✓ OK !';
-    setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
-  } catch(e) {
-    console.error(e);
-    btn.textContent = '✕ Erreur'; btn.disabled = false;
-  }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function setSt(tab, msg, err) {
-  const el = document.getElementById(tab + '-st');
-  if (el) { el.textContent = msg; el.className = 'st ' + (err ? 'er' : 'ok'); }
-}
-
-// ── Init ─────────────────────────────────────────────────────────────────────
-loadCMs();
 
 
 </script>
