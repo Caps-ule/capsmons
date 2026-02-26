@@ -1455,6 +1455,15 @@ class Bot(commands.Bot):
         """Affiche le lien du site CapsMöns dans le chat."""
         await ctx.send(f"🌐 CapsMöns → {PUBLIC_BASE_URL}")
 
+    @commands.command(name="planning")
+    async def planning_cmd(self, ctx: commands.Context):
+        """Affiche le lien vers le planning de stream de la semaine en cours."""
+        import datetime
+        today = datetime.date.today()
+        iso = today.isocalendar()
+        year, week = iso[0], iso[1]
+        await ctx.send(f"📅 Planning stream → {PUBLIC_BASE_URL}/planning/{year}/{week}")
+
     @commands.command(name="mylink")
     async def mylink_cmd(self, ctx: commands.Context):
         """Affiche le lien de profil de l'utilisateur dans le chat."""

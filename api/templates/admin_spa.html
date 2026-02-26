@@ -659,8 +659,12 @@
   <div class="nav-item" data-page="announcements" onclick="nav(this)">
     <span class="icon">📢</span> Annonces
   </div>
+  <div class="nav-section">// STUDIO</div>
   <div class="nav-item" onclick="window.open('/preview','_blank')" style="cursor:pointer">
     <span class="icon">🎬</span> Preview Studio
+  </div>
+  <div class="nav-item" data-page="planning" onclick="nav(this)">
+    <span class="icon">📅</span> Planning
   </div>
 
   <div class="nav-section">// GAMEPLAY</div>
@@ -1535,6 +1539,7 @@ const pageTitles = {
   autodrop:      '⟳ AUTODROP',
   points:        '◈ CHANNEL POINTS',
   announcements: '📢 ANNONCES',
+  planning:      '📅 PLANNING',
   medias:        '◫ MÉDIAS',
 };
 
@@ -1550,6 +1555,7 @@ function nav(el) {
   history.replaceState(null, '', '#' + page);
 
   if (page === 'autodrop') loadAutoDrop();
+  if (page === 'planning') initPlanning();
   if (page === 'stats')    startAutoRefresh();
   if (page === 'dashboard') loadDashboardKpis();
 }
@@ -2029,6 +2035,564 @@ function showToast(msg, isError = false) {
     const cb = document.getElementById('ann-active');
     if (cb) cb.checked = true;
   }
+
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         PAGE : PLANNING
+    ════════════════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-planning">
+
+      <!-- Toolbar supérieure -->
+      <div class="card" style="padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-dim btn-sm" onclick="planWeekNav(-1)">← Préc</button>
+          <span class="mono" id="pl-week-label" style="min-width:160px;text-align:center">—</span>
+          <button class="btn btn-dim btn-sm" onclick="planWeekNav(+1)">Suiv →</button>
+        </div>
+        <input type="text" id="pl-title" placeholder="Titre du planning (optionnel)" style="flex:1;min-width:160px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;cursor:pointer">
+            <input type="checkbox" id="pl-published" style="accent-color:var(--color-cyan)"> Publié
+          </label>
+          <button class="btn btn-sm" style="background:var(--color-cyan);color:#060810" onclick="planSaveWeek()">💾 Sauvegarder</button>
+          <button class="btn btn-dim btn-sm" onclick="planCapturePNG()">📷 PNG</button>
+          <a id="pl-public-link" href="/planning" target="_blank" class="btn btn-dim btn-sm" style="text-decoration:none">🌐 Voir</a>
+        </div>
+      </div>
+
+      <!-- Layout : grille + panneau latéral -->
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:12px;align-items:start;flex:1;min-height:0">
+
+        <!-- ── Grille planning ── -->
+        <div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <!-- En-têtes jours -->
+            <div id="pl-grid-container" style="overflow-x:auto">
+              <div id="pl-grid" style="min-width:680px">
+                <!-- Rendu par JS -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Panneau latéral ── -->
+        <div style="display:flex;flex-direction:column;gap:12px">
+
+          <!-- Formulaire créneau -->
+          <div class="card accent-c" id="pl-slot-form-card">
+            <div class="card-title" id="pl-slot-form-title">+ NOUVEAU CRÉNEAU</div>
+
+            <input type="hidden" id="pl-slot-id" value="">
+
+            <div class="form-row" style="gap:8px">
+              <div class="form-group" style="flex:1">
+                <div class="form-label">JOUR</div>
+                <select id="pl-slot-day">
+                  <option value="0">Lundi</option><option value="1">Mardi</option>
+                  <option value="2">Mercredi</option><option value="3">Jeudi</option>
+                  <option value="4">Vendredi</option><option value="5">Samedi</option>
+                  <option value="6">Dimanche</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row" style="gap:8px">
+              <div class="form-group" style="flex:1">
+                <div class="form-label">DÉBUT</div>
+                <input type="number" id="pl-slot-hs" value="9" min="9" max="22" step="0.5" placeholder="9">
+              </div>
+              <div class="form-group" style="flex:1">
+                <div class="form-label">FIN</div>
+                <input type="number" id="pl-slot-he" value="12" min="9" max="22" step="0.5" placeholder="12">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">JEU (bibliothèque)</div>
+              <select id="pl-slot-game">
+                <option value="">— Personnalisé —</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">NOM AFFICHÉ <span class="muted">(override ou custom)</span></div>
+              <input type="text" id="pl-slot-name" placeholder="Nom du stream…">
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">IMAGE DE FOND / COVER</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-slot-img" placeholder="URL ou upload →" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, document.getElementById('pl-slot-img'))">
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">SOUS-TITRE</div>
+              <input type="text" id="pl-slot-sub" placeholder="ex: Raid prog, Ranked, etc.">
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">COULEUR ACCENT</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="pl-slot-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
+                <input type="text" id="pl-slot-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-slot-color').value=this.value">
+              </div>
+            </div>
+
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveSlot()">✓ Enregistrer</button>
+              <button class="btn btn-dim" onclick="planResetSlotForm()">✕ Annuler</button>
+            </div>
+            <div class="flash-inline" id="pl-slot-status" style="margin-top:6px;display:none"></div>
+          </div>
+
+          <!-- Bibliothèque jeux -->
+          <div class="card">
+            <div class="card-title">◈ BIBLIOTHÈQUE JEUX</div>
+            <div id="pl-games-list" style="margin-bottom:10px;max-height:180px;overflow-y:auto"></div>
+            <button class="btn btn-dim btn-sm" style="width:100%" onclick="planOpenGameForm()">+ Ajouter un jeu</button>
+          </div>
+
+          <!-- Formulaire jeu -->
+          <div class="card" id="pl-game-form-card" style="display:none">
+            <div class="card-title" id="pl-game-form-title">+ NOUVEAU JEU</div>
+            <input type="hidden" id="pl-game-id" value="">
+            <div class="form-group">
+              <div class="form-label">NOM *</div>
+              <input type="text" id="pl-game-name" placeholder="World of Warcraft">
+            </div>
+            <div class="form-group">
+              <div class="form-label">IMAGE DE FOND</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-game-img" placeholder="URL background" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-img'))">
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-label">LOGO / ICÔNE</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-game-logo" placeholder="URL logo" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-logo'))">
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-label">COULEUR ACCENT</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="pl-game-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
+                <input type="text" id="pl-game-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-game-color').value=this.value">
+              </div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveGame()">✓ Sauvegarder</button>
+              <button class="btn btn-dim" onclick="document.getElementById('pl-game-form-card').style.display='none'">✕</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div><!-- /page-planning -->
+
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLANNING STUDIO
+// ══════════════════════════════════════════════════════════════════════════════
+
+const PL_H_START = 9, PL_H_END = 22, PL_TOTAL = 13;
+const PL_DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const PL_DAYS_FULL = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+
+let plYear = 0, plWeek = 0;
+let plWeekData = { week: {}, slots: [] };
+let plGames = [];
+
+// ── Init & navigation semaine ──────────────────────────────────────────────────
+function initPlanning() {
+  const now = new Date();
+  const iso = getISOWeek(now);
+  plYear = iso.year; plWeek = iso.week;
+  loadPlanningGames();
+  loadPlanningWeek();
+}
+
+function planWeekNav(delta) {
+  // Calculer la date du lundi de la semaine courante et avancer/reculer
+  const monday = isoWeekToMonday(plYear, plWeek);
+  monday.setDate(monday.getDate() + delta * 7);
+  const iso = getISOWeek(monday);
+  plYear = iso.year; plWeek = iso.week;
+  loadPlanningWeek();
+}
+
+// ── Chargement données ──────────────────────────────────────────────────────────
+async function loadPlanningGames() {
+  try {
+    const d = await fetch('/admin/schedule/games').then(r => r.json());
+    plGames = d.games || [];
+    renderGamesList();
+    buildGameSelect();
+  } catch(e) { console.error('loadPlanningGames:', e); }
+}
+
+async function loadPlanningWeek() {
+  try {
+    const d = await fetch(`/admin/schedule/week?year=${plYear}&week=${plWeek}`).then(r => r.json());
+    plWeekData = d;
+    const monday = isoWeekToMonday(plYear, plWeek);
+    const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+    document.getElementById('pl-week-label').textContent =
+      `S${String(plWeek).padStart(2,'0')} · ${fmtDate(monday)} – ${fmtDate(sunday)} ${plYear}`;
+    document.getElementById('pl-title').value = d.week.title || '';
+    document.getElementById('pl-published').checked = d.week.published || false;
+    // Mettre à jour le lien public
+    document.getElementById('pl-public-link').href = `/planning/${plYear}/${plWeek}`;
+    renderPlanningGrid();
+  } catch(e) { console.error('loadPlanningWeek:', e); }
+}
+
+// ── Rendu grille ───────────────────────────────────────────────────────────────
+function renderPlanningGrid() {
+  const grid = document.getElementById('pl-grid');
+  const slots = plWeekData.slots || [];
+  const monday = isoWeekToMonday(plYear, plWeek);
+
+  // Hauteur de la zone = 540px pour 13h
+  const PX_PER_H = 540 / PL_TOTAL;
+  const HEADER_H = 44;
+  const GUTTER = 44; // colonne heure
+
+  let html = `<div style="display:grid;grid-template-columns:${GUTTER}px repeat(7,1fr);background:var(--color-bg);font-family:var(--font-mono)">`;
+
+  // Header ligne 0 : vide + jours
+  html += `<div style="height:${HEADER_H}px;border-bottom:1px solid var(--color-border)"></div>`;
+  for (let d = 0; d < 7; d++) {
+    const date = new Date(monday); date.setDate(monday.getDate() + d);
+    html += `<div style="height:${HEADER_H}px;border-bottom:1px solid var(--color-border);border-left:1px solid var(--color-border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+      <div style="font-size:10px;font-weight:700;color:var(--color-cyan);letter-spacing:.1em">${PL_DAYS[d]}</div>
+      <div style="font-size:9px;color:var(--color-muted)">${fmtDate(date)}</div>
+    </div>`;
+  }
+
+  // Corps : ligne heure + 7 colonnes
+  html += `<div style="position:relative;height:${PL_TOTAL * PX_PER_H}px">`;
+  // Lignes horaires
+  for (let h = PL_H_START; h <= PL_H_END; h++) {
+    const top = (h - PL_H_START) * PX_PER_H;
+    html += `<div style="position:absolute;top:${top}px;right:4px;left:0;border-top:1px solid var(--color-border);display:flex;align-items:flex-start">
+      <span style="font-size:9px;color:var(--color-muted);padding-right:4px;margin-top:-7px;white-space:nowrap">${h}h</span>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // 7 colonnes jours
+  for (let d = 0; d < 7; d++) {
+    const daySlots = slots.filter(s => s.day === d);
+    html += `<div style="position:relative;height:${PL_TOTAL * PX_PER_H}px;border-left:1px solid var(--color-border)">`;
+    // Lignes horaires dans chaque colonne
+    for (let h = PL_H_START; h <= PL_H_END; h++) {
+      const top = (h - PL_H_START) * PX_PER_H;
+      html += `<div style="position:absolute;top:${top}px;left:0;right:0;border-top:1px solid rgba(255,255,255,.04);pointer-events:none"></div>`;
+    }
+    // Créneaux
+    for (const s of daySlots) {
+      const top = (s.hour_start - PL_H_START) * PX_PER_H;
+      const height = (s.hour_end - s.hour_start) * PX_PER_H;
+      const color = s.color || s.game_color || '#00e5ff';
+      const img = s.image_url || s.game_image || '';
+      const name = s.custom_name || s.game_name || 'Stream';
+      const logo = s.game_logo || '';
+      const bgStyle = img
+        ? `background:url('${img}') center/cover no-repeat;`
+        : `background:rgba(0,229,255,.07);`;
+      const hsFmt = fmtHour(s.hour_start), heFmt = fmtHour(s.hour_end);
+      html += `<div onclick="planEditSlot(${JSON.stringify(s).replace(/"/g,'&quot;')})"
+        style="position:absolute;top:${top}px;height:${height}px;left:2px;right:2px;
+               border-radius:5px;overflow:hidden;cursor:pointer;
+               border-left:3px solid ${color};
+               ${bgStyle}
+               transition:opacity .15s"
+        onmouseenter="this.style.opacity='.8'" onmouseleave="this.style.opacity='1'">
+        <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(6,8,16,.75),rgba(6,8,16,.4));pointer-events:none"></div>
+        ${logo ? `<img src="${logo}" style="position:absolute;top:4px;right:4px;width:20px;height:20px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.8));z-index:2">` : ''}
+        <div style="position:relative;z-index:2;padding:3px 5px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
+          <div style="font-size:9px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+          ${s.subtitle ? `<div style="font-size:8px;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.subtitle}</div>` : ''}
+          <div style="font-size:8px;color:rgba(255,255,255,.4)">${hsFmt}–${heFmt}</div>
+        </div>
+        <button onclick="event.stopPropagation();planDeleteSlot(${s.id})"
+          style="position:absolute;top:2px;right:2px;background:rgba(255,45,120,.7);border:none;border-radius:3px;
+                 color:#fff;font-size:9px;cursor:pointer;padding:1px 4px;line-height:1.4;z-index:3">✕</button>
+      </div>`;
+    }
+    // Zone de clic pour créer un créneau
+    html += `<div onclick="planQuickAdd(${d}, event)"
+      title="Clic pour créer un créneau"
+      style="position:absolute;inset:0;z-index:0;cursor:cell"></div>`;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  grid.innerHTML = html;
+}
+
+// ── Créneau : form ─────────────────────────────────────────────────────────────
+function planQuickAdd(day, evt) {
+  // Si on clique sur un créneau existant, ne pas créer
+  if (evt.target.closest('[onclick*="planEditSlot"]') || evt.target.tagName === 'BUTTON') return;
+  planResetSlotForm();
+  document.getElementById('pl-slot-day').value = day;
+  document.getElementById('pl-slot-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planEditSlot(s) {
+  document.getElementById('pl-slot-form-title').textContent = '✎ MODIFIER CRÉNEAU';
+  document.getElementById('pl-slot-id').value   = s.id;
+  document.getElementById('pl-slot-day').value  = s.day;
+  document.getElementById('pl-slot-hs').value   = s.hour_start;
+  document.getElementById('pl-slot-he').value   = s.hour_end;
+  document.getElementById('pl-slot-game').value = s.game_id || '';
+  document.getElementById('pl-slot-name').value = s.custom_name || '';
+  document.getElementById('pl-slot-img').value  = s.image_url || '';
+  document.getElementById('pl-slot-sub').value  = s.subtitle || '';
+  const col = s.color || '#00e5ff';
+  document.getElementById('pl-slot-color').value     = col;
+  document.getElementById('pl-slot-color-txt').value = col;
+  document.getElementById('pl-slot-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planResetSlotForm() {
+  document.getElementById('pl-slot-form-title').textContent = '+ NOUVEAU CRÉNEAU';
+  document.getElementById('pl-slot-id').value   = '';
+  document.getElementById('pl-slot-day').value  = '0';
+  document.getElementById('pl-slot-hs').value   = '9';
+  document.getElementById('pl-slot-he').value   = '12';
+  document.getElementById('pl-slot-game').value = '';
+  document.getElementById('pl-slot-name').value = '';
+  document.getElementById('pl-slot-img').value  = '';
+  document.getElementById('pl-slot-sub').value  = '';
+  document.getElementById('pl-slot-color').value     = '#00e5ff';
+  document.getElementById('pl-slot-color-txt').value = '#00e5ff';
+  planSlotStatus('');
+}
+
+async function planSaveSlot() {
+  const body = {
+    year: plYear, week: plWeek,
+    id:         document.getElementById('pl-slot-id').value || null,
+    day:        parseInt(document.getElementById('pl-slot-day').value),
+    hour_start: parseFloat(document.getElementById('pl-slot-hs').value),
+    hour_end:   parseFloat(document.getElementById('pl-slot-he').value),
+    game_id:    document.getElementById('pl-slot-game').value || null,
+    custom_name:document.getElementById('pl-slot-name').value.trim(),
+    image_url:  document.getElementById('pl-slot-img').value.trim(),
+    subtitle:   document.getElementById('pl-slot-sub').value.trim(),
+    color:      document.getElementById('pl-slot-color-txt').value.trim() || '#00e5ff',
+  };
+  if (body.hour_end <= body.hour_start) { planSlotStatus('⚠ Fin doit être après le début', true); return; }
+  try {
+    const r = await fetch('/admin/schedule/slot/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) {
+      planSlotStatus('✓ Créneau sauvegardé', false);
+      planResetSlotForm();
+      loadPlanningWeek();
+    } else { planSlotStatus('✕ Erreur: ' + (r.detail||'?'), true); }
+  } catch(e) { planSlotStatus('✕ Erreur réseau', true); }
+}
+
+async function planDeleteSlot(id) {
+  if (!confirm('Supprimer ce créneau ?')) return;
+  await fetch('/admin/schedule/slot/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})
+  });
+  loadPlanningWeek();
+}
+
+function planSlotStatus(msg, err=false) {
+  const el = document.getElementById('pl-slot-status');
+  el.style.display = msg ? '' : 'none';
+  el.textContent   = msg;
+  el.className = 'flash-inline ' + (err ? 'flash-err' : 'flash-ok');
+}
+
+// ── Semaine ────────────────────────────────────────────────────────────────────
+async function planSaveWeek() {
+  const body = {
+    year:      plYear,
+    week:      plWeek,
+    title:     document.getElementById('pl-title').value.trim(),
+    published: document.getElementById('pl-published').checked,
+  };
+  try {
+    const r = await fetch('/admin/schedule/week/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) { showToast('Planning sauvegardé !'); loadPlanningWeek(); }
+  } catch(e) { console.error(e); }
+}
+
+// ── Bibliothèque jeux ──────────────────────────────────────────────────────────
+function buildGameSelect() {
+  const sel = document.getElementById('pl-slot-game');
+  sel.innerHTML = '<option value="">— Personnalisé —</option>'
+    + plGames.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+}
+
+function renderGamesList() {
+  const el = document.getElementById('pl-games-list');
+  if (!plGames.length) { el.innerHTML = '<div class="muted mono" style="font-size:11px;padding:4px">Aucun jeu enregistré</div>'; return; }
+  el.innerHTML = plGames.map(g => `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--color-border)">
+      ${g.image_url ? `<img src="${g.image_url}" style="width:32px;height:20px;object-fit:cover;border-radius:3px">` : `<div style="width:32px;height:20px;background:${g.color};border-radius:3px"></div>`}
+      <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.name}</span>
+      <button class="btn btn-dim btn-sm" onclick="planEditGame(${JSON.stringify(g).replace(/"/g,'&quot;')})">✎</button>
+      <button class="btn btn-sm" style="background:rgba(255,45,120,.2);border:1px solid rgba(255,45,120,.4);color:#ff2d78" onclick="planDeleteGame(${g.id})">✕</button>
+    </div>`).join('');
+}
+
+function planOpenGameForm() {
+  planResetGameForm();
+  document.getElementById('pl-game-form-card').style.display = '';
+  document.getElementById('pl-game-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planEditGame(g) {
+  document.getElementById('pl-game-form-title').textContent = '✎ MODIFIER JEU';
+  document.getElementById('pl-game-id').value         = g.id;
+  document.getElementById('pl-game-name').value       = g.name;
+  document.getElementById('pl-game-img').value        = g.image_url || '';
+  document.getElementById('pl-game-logo').value       = g.logo_url || '';
+  document.getElementById('pl-game-color').value      = g.color || '#00e5ff';
+  document.getElementById('pl-game-color-txt').value  = g.color || '#00e5ff';
+  document.getElementById('pl-game-form-card').style.display = '';
+  document.getElementById('pl-game-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planResetGameForm() {
+  document.getElementById('pl-game-form-title').textContent = '+ NOUVEAU JEU';
+  document.getElementById('pl-game-id').value   = '';
+  document.getElementById('pl-game-name').value = '';
+  document.getElementById('pl-game-img').value  = '';
+  document.getElementById('pl-game-logo').value = '';
+  document.getElementById('pl-game-color').value     = '#00e5ff';
+  document.getElementById('pl-game-color-txt').value = '#00e5ff';
+}
+
+async function planSaveGame() {
+  const body = {
+    id:        document.getElementById('pl-game-id').value || null,
+    name:      document.getElementById('pl-game-name').value.trim(),
+    image_url: document.getElementById('pl-game-img').value.trim(),
+    logo_url:  document.getElementById('pl-game-logo').value.trim(),
+    color:     document.getElementById('pl-game-color-txt').value.trim() || '#00e5ff',
+  };
+  if (!body.name) { alert('Nom requis'); return; }
+  try {
+    const r = await fetch('/admin/schedule/games/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) {
+      document.getElementById('pl-game-form-card').style.display = 'none';
+      loadPlanningGames();
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function planDeleteGame(id) {
+  if (!confirm('Supprimer ce jeu ?')) return;
+  await fetch('/admin/schedule/games/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})
+  });
+  loadPlanningGames();
+}
+
+// ── Capture PNG (html2canvas via CDN) ──────────────────────────────────────────
+async function planCapturePNG() {
+  const btn = document.querySelector('[onclick="planCapturePNG()"]');
+  if (btn) { btn.textContent = '⟳…'; btn.disabled = true; }
+  try {
+    // Charger html2canvas si pas déjà chargé
+    if (!window.html2canvas) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    const grid = document.getElementById('pl-grid');
+    const canvas = await html2canvas(grid, {
+      useCORS: true, allowTaint: true, scale: 2, backgroundColor: '#060810', logging: false,
+    });
+    const link = document.createElement('a');
+    const ts   = new Date().toISOString().slice(0,10);
+    link.download = `planning-s${String(plWeek).padStart(2,'0')}-${plYear}-${ts}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch(e) { console.error(e); alert('Erreur capture: ' + e.message); }
+  finally { if (btn) { btn.textContent = '📷 PNG'; btn.disabled = false; } }
+}
+
+// ── Helpers date ────────────────────────────────────────────────────────────────
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return {
+    year: d.getUTCFullYear(),
+    week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  };
+}
+
+function isoWeekToMonday(year, week) {
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - (dayOfWeek - 1) + (week - 1) * 7);
+  return monday;
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+}
+
+function fmtHour(h) {
+  const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return mm ? `${hh}h${String(mm).padStart(2,'0')}` : `${hh}h`;
+}
+
+// Sync color picker <-> texte
+document.addEventListener('DOMContentLoaded', () => {
+  ['pl-slot-color','pl-game-color'].forEach(id => {
+    const picker = document.getElementById(id);
+    const txt    = document.getElementById(id + '-txt');
+    if (picker && txt) {
+      picker.addEventListener('input', () => txt.value = picker.value);
+    }
+  });
+});
+
+// Ajouter un toast si pas déjà défini
+if (typeof showToast === 'undefined') {
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--color-cyan,#00e5ff);color:#060810;padding:10px 18px;border-radius:8px;font-family:var(--font-mono,"Share Tech Mono",monospace);font-size:12px;z-index:9999;pointer-events:none';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+  }
+}
+
 
 </script>
 </body>

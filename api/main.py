@@ -2595,6 +2595,43 @@ def init_db():
                 """
             )
 
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_games (
+                  id          SERIAL PRIMARY KEY,
+                  name        TEXT NOT NULL,
+                  image_url   TEXT NOT NULL DEFAULT '',
+                  logo_url    TEXT NOT NULL DEFAULT '',
+                  color       TEXT NOT NULL DEFAULT '#00e5ff',
+                  sort_order  INT  NOT NULL DEFAULT 0,
+                  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+
+                CREATE TABLE IF NOT EXISTS schedule_weeks (
+                  id          SERIAL PRIMARY KEY,
+                  year        INT  NOT NULL,
+                  week        INT  NOT NULL,
+                  title       TEXT NOT NULL DEFAULT '',
+                  published   BOOLEAN NOT NULL DEFAULT FALSE,
+                  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                  UNIQUE (year, week)
+                );
+
+                CREATE TABLE IF NOT EXISTS schedule_slots (
+                  id          SERIAL PRIMARY KEY,
+                  week_id     INT  NOT NULL REFERENCES schedule_weeks(id) ON DELETE CASCADE,
+                  day         INT  NOT NULL CHECK (day BETWEEN 0 AND 6),
+                  hour_start  NUMERIC(4,2) NOT NULL,
+                  hour_end    NUMERIC(4,2) NOT NULL,
+                  game_id     INT  REFERENCES schedule_games(id) ON DELETE SET NULL,
+                  custom_name TEXT NOT NULL DEFAULT '',
+                  image_url   TEXT NOT NULL DEFAULT '',
+                  subtitle    TEXT NOT NULL DEFAULT '',
+                  color       TEXT NOT NULL DEFAULT '',
+                  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+            """)
+
             cur.execute(
                 """
                 INSERT INTO kv (key, value) VALUES ('is_live', 'false')
@@ -5528,6 +5565,392 @@ loadCMs();
 </script>
 </body>
 </html>"""
+
+
+
+# =============================================================================
+# PLANNING — Studio de planning de stream
+# =============================================================================
+
+import datetime as _dt
+
+def _iso_week(year: int, week: int):
+    """Retourne (lun, dim) en datetime.date pour une semaine ISO."""
+    jan4 = _dt.date(year, 1, 4)
+    monday = jan4 - _dt.timedelta(days=jan4.isoweekday() - 1) + _dt.timedelta(weeks=week - 1)
+    return monday, monday + _dt.timedelta(days=6)
+
+def _current_iso_week():
+    today = _dt.date.today()
+    y, w, _ = today.isocalendar()
+    return y, w
+
+def _get_or_create_week(cur, year: int, week: int) -> int:
+    cur.execute(
+        "INSERT INTO schedule_weeks (year, week) VALUES (%s,%s) ON CONFLICT (year,week) DO UPDATE SET year=EXCLUDED.year RETURNING id;",
+        (year, week)
+    )
+    return cur.fetchone()[0]
+
+
+# ── API Jeux ─────────────────────────────────────────────────────────────────
+
+@app.get("/admin/schedule/games")
+def schedule_games_list(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,name,image_url,logo_url,color,sort_order FROM schedule_games ORDER BY sort_order,name;")
+            rows = cur.fetchall()
+    return {"games": [{"id":r[0],"name":r[1],"image_url":r[2],"logo_url":r[3],"color":r[4],"sort_order":r[5]} for r in rows]}
+
+
+@app.post("/admin/schedule/games/save")
+def schedule_game_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    gid       = payload.get("id")
+    name      = str(payload.get("name","")).strip()
+    image_url = str(payload.get("image_url","")).strip()
+    logo_url  = str(payload.get("logo_url","")).strip()
+    color     = str(payload.get("color","#00e5ff")).strip() or "#00e5ff"
+    sort_order= int(payload.get("sort_order", 0))
+    if not name:
+        raise HTTPException(400, "name requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if gid:
+                cur.execute(
+                    "UPDATE schedule_games SET name=%s,image_url=%s,logo_url=%s,color=%s,sort_order=%s WHERE id=%s;",
+                    (name, image_url, logo_url, color, sort_order, int(gid))
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO schedule_games (name,image_url,logo_url,color,sort_order) VALUES (%s,%s,%s,%s,%s);",
+                    (name, image_url, logo_url, color, sort_order)
+                )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/schedule/games/delete")
+def schedule_game_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    gid = int(payload.get("id", 0))
+    if not gid:
+        raise HTTPException(400, "id requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schedule_games WHERE id=%s;", (gid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── API Semaine & Créneaux ───────────────────────────────────────────────────
+
+@app.get("/admin/schedule/week")
+def schedule_week_get(
+    year: int | None = None,
+    week: int | None = None,
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    require_admin(credentials)
+    if year is None or week is None:
+        year, week = _current_iso_week()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,year,week,title,published FROM schedule_weeks WHERE year=%s AND week=%s;",
+                (year, week)
+            )
+            wr = cur.fetchone()
+            if not wr:
+                return {"week": {"id": None, "year": year, "week": week, "title": "", "published": False}, "slots": []}
+            wid = wr[0]
+            cur.execute("""
+                SELECT s.id, s.day, s.hour_start, s.hour_end, s.game_id,
+                       s.custom_name, s.image_url, s.subtitle, s.color,
+                       g.name, g.image_url, g.logo_url, g.color
+                FROM schedule_slots s
+                LEFT JOIN schedule_games g ON g.id = s.game_id
+                WHERE s.week_id = %s
+                ORDER BY s.day, s.hour_start;
+            """, (wid,))
+            slots = []
+            for r in cur.fetchall():
+                slots.append({
+                    "id": r[0], "day": r[1],
+                    "hour_start": float(r[2]), "hour_end": float(r[3]),
+                    "game_id": r[4],
+                    "custom_name": r[5], "image_url": r[6], "subtitle": r[7], "color": r[8],
+                    "game_name": r[9] or "", "game_image": r[10] or "",
+                    "game_logo": r[11] or "", "game_color": r[12] or "",
+                })
+    return {
+        "week": {"id": wr[0], "year": year, "week": week, "title": wr[3], "published": bool(wr[4])},
+        "slots": slots,
+    }
+
+
+@app.post("/admin/schedule/week/save")
+def schedule_week_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    year  = int(payload.get("year", _current_iso_week()[0]))
+    week  = int(payload.get("week", _current_iso_week()[1]))
+    title = str(payload.get("title","")).strip()
+    published = bool(payload.get("published", False))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO schedule_weeks (year,week,title,published)
+                   VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (year,week) DO UPDATE SET title=EXCLUDED.title, published=EXCLUDED.published
+                   RETURNING id;""",
+                (year, week, title, published)
+            )
+            wid = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "week_id": wid}
+
+
+@app.post("/admin/schedule/slot/save")
+def schedule_slot_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    year       = int(payload.get("year", _current_iso_week()[0]))
+    week       = int(payload.get("week", _current_iso_week()[1]))
+    slot_id    = payload.get("id")
+    day        = int(payload.get("day", 0))
+    hour_start = float(payload.get("hour_start", 9))
+    hour_end   = float(payload.get("hour_end", 10))
+    game_id    = payload.get("game_id") or None
+    custom_name= str(payload.get("custom_name","")).strip()
+    image_url  = str(payload.get("image_url","")).strip()
+    subtitle   = str(payload.get("subtitle","")).strip()
+    color      = str(payload.get("color","")).strip()
+
+    if game_id is not None:
+        game_id = int(game_id)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            wid = _get_or_create_week(cur, year, week)
+            if slot_id:
+                cur.execute(
+                    """UPDATE schedule_slots
+                       SET day=%s,hour_start=%s,hour_end=%s,game_id=%s,
+                           custom_name=%s,image_url=%s,subtitle=%s,color=%s
+                       WHERE id=%s AND week_id=%s;""",
+                    (day, hour_start, hour_end, game_id, custom_name, image_url, subtitle, color, int(slot_id), wid)
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO schedule_slots
+                       (week_id,day,hour_start,hour_end,game_id,custom_name,image_url,subtitle,color)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id;""",
+                    (wid, day, hour_start, hour_end, game_id, custom_name, image_url, subtitle, color)
+                )
+                slot_id = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "slot_id": slot_id}
+
+
+@app.post("/admin/schedule/slot/delete")
+def schedule_slot_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    sid = int(payload.get("id", 0))
+    if not sid:
+        raise HTTPException(400, "id requis")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schedule_slots WHERE id=%s;", (sid,))
+        conn.commit()
+    return {"ok": True}
+
+
+# ── Page publique /planning ───────────────────────────────────────────────────
+
+@app.get("/planning", response_class=HTMLResponse)
+@app.get("/planning/{year}/{week}", response_class=HTMLResponse)
+def planning_public(year: int | None = None, week: int | None = None):
+    if year is None or week is None:
+        year, week = _current_iso_week()
+    monday, sunday = _iso_week(year, week)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id,title,published FROM schedule_weeks WHERE year=%s AND week=%s;",
+                (year, week)
+            )
+            wr = cur.fetchone()
+            if not wr or not wr[2]:
+                return HTMLResponse(_render_planning_not_published(year, week, monday), status_code=404)
+            wid, title, _ = wr[0], wr[1], wr[2]
+            cur.execute("""
+                SELECT s.day, s.hour_start, s.hour_end,
+                       COALESCE(NULLIF(s.custom_name,''), g.name, 'Stream'),
+                       COALESCE(NULLIF(s.image_url,''), g.image_url, ''),
+                       s.subtitle,
+                       COALESCE(NULLIF(s.color,''), g.color, '#00e5ff'),
+                       g.logo_url
+                FROM schedule_slots s
+                LEFT JOIN schedule_games g ON g.id = s.game_id
+                WHERE s.week_id = %s
+                ORDER BY s.day, s.hour_start;
+            """, (wid,))
+            slots = [{"day":r[0],"hs":float(r[1]),"he":float(r[2]),"name":r[3],"img":r[4],"sub":r[5],"color":r[6],"logo":r[7] or ""} for r in cur.fetchall()]
+
+    # Liens semaines prev/next
+    prev_d = monday - _dt.timedelta(weeks=1)
+    next_d = monday + _dt.timedelta(weeks=1)
+    py, pw, _ = prev_d.isocalendar()
+    ny, nw, _ = next_d.isocalendar()
+
+    return HTMLResponse(_render_planning_public(year, week, monday, sunday, title or "", slots, py, pw, ny, nw))
+
+
+def _render_planning_not_published(year, week, monday):
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<style>body{{background:#060810;color:#5a6a90;font-family:'Share Tech Mono',monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.box{{text-align:center}}.title{{color:#00e5ff;font-size:18px;margin-bottom:12px}}</style>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@700&display=swap" rel="stylesheet">
+</head><body><div class="box"><div class="title">CAPSMÖNS // PLANNING</div>
+<p>Semaine {week} {year} — Pas encore publié.</p>
+<p style="margin-top:20px"><a href="/planning" style="color:#00e5ff">→ Semaine en cours</a></p>
+</div></body></html>"""
+
+
+def _render_planning_public(year, week, monday, sunday, title, slots, py, pw, ny, nw):
+    DAYS_FR = ["LUN","MAR","MER","JEU","VEN","SAM","DIM"]
+    H_START, H_END = 9, 22
+    TOTAL_H = H_END - H_START
+
+    # Construire les colonnes jours
+    day_cols = []
+    for d in range(7):
+        date_obj = monday + _dt.timedelta(days=d)
+        day_slots = [s for s in slots if s["day"] == d]
+        day_cols.append({"label": DAYS_FR[d], "date": date_obj.strftime("%d/%m"), "slots": day_slots})
+
+    # Générer les blocs HTML des créneaux
+    def slot_html(s):
+        pct_top  = (s["hs"] - H_START) / TOTAL_H * 100
+        pct_h    = (s["he"] - s["hs"]) / TOTAL_H * 100
+        bg = f"url('{s['img']}') center/cover" if s["img"] else s["color"]
+        logo_html = f'<img class="s-logo" src="{s["logo"]}">' if s["logo"] else ""
+        sub_html  = f'<div class="s-sub">{s["sub"]}</div>' if s["sub"] else ""
+        dur_h = int(s["he"] - s["hs"])
+        dur_m = int((s["he"] - s["hs"] - dur_h) * 60)
+        dur_str = f"{dur_h}h{dur_m:02d}" if dur_m else f"{dur_h}h"
+        h_start_fmt = f"{int(s['hs'])}h{int((s['hs']%1)*60):02d}" if s['hs']%1 else f"{int(s['hs'])}h"
+        h_end_fmt   = f"{int(s['he'])}h{int((s['he']%1)*60):02d}" if s['he']%1 else f"{int(s['he'])}h"
+        return f"""<div class="slot" style="top:{pct_top:.2f}%;height:{pct_h:.2f}%;background:{bg};border-color:{s['color']}">
+  <div class="s-overlay" style="border-color:{s['color']}"></div>
+  {logo_html}
+  <div class="s-content">
+    <div class="s-name">{s['name']}</div>
+    {sub_html}
+    <div class="s-time">{h_start_fmt}–{h_end_fmt} · {dur_str}</div>
+  </div>
+</div>"""
+
+    cols_html = ""
+    for dc in day_cols:
+        slots_inner = "\n".join(slot_html(s) for s in dc["slots"])
+        cols_html += f"""<div class="day-col">
+  <div class="day-head">
+    <div class="day-name">{dc['label']}</div>
+    <div class="day-date">{dc['date']}</div>
+  </div>
+  <div class="day-body">{slots_inner}</div>
+</div>"""
+
+    # Lignes horaires
+    hour_lines = ""
+    for h in range(H_START, H_END + 1):
+        pct = (h - H_START) / TOTAL_H * 100
+        hour_lines += f'<div class="hour-line" style="top:{pct:.2f}%"><span>{h}h</span></div>'
+
+    week_label = f"{monday.strftime('%d %b')} – {sunday.strftime('%d %b %Y')}"
+    title_display = title or f"Planning semaine {week}"
+
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planning stream — {title_display}</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+:root{{--bg:#060810;--panel:#0a0d18;--border:#1a2540;--cyan:#00e5ff;--mag:#ff2d78;--text:#c8d4f0;--muted:#5a6a90}}
+body{{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;min-height:100vh}}
+body::before{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 3px);pointer-events:none;z-index:9999}}
+
+.topbar{{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:56px;background:var(--panel);border-bottom:1px solid var(--border)}}
+.logo{{font-family:'Orbitron',monospace;font-size:14px;font-weight:900;color:var(--cyan);letter-spacing:.1em}}
+.week-nav{{display:flex;align-items:center;gap:12px}}
+.week-nav a{{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--muted);text-decoration:none;padding:5px 10px;border:1px solid var(--border);border-radius:6px}}
+.week-nav a:hover{{border-color:var(--cyan);color:var(--cyan)}}
+.week-label{{font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--text)}}
+
+.main-title{{text-align:center;padding:20px 24px 0;font-family:'Orbitron',monospace;font-size:20px;font-weight:900;color:var(--cyan);text-shadow:0 0 30px rgba(0,229,255,.3);letter-spacing:.08em}}
+.main-sub{{text-align:center;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--muted);margin:4px 0 16px}}
+
+.grid-wrap{{padding:0 16px 32px;overflow-x:auto}}
+.grid{{display:grid;grid-template-columns:44px repeat(7,1fr);min-width:700px}}
+
+/* Colonne heure */
+.hour-col{{position:relative}}
+.hour-label{{position:absolute;right:8px;font-family:'Share Tech Mono',monospace;font-size:9px;color:var(--muted);transform:translateY(-50%);white-space:nowrap}}
+
+/* Colonnes jours */
+.day-col{{border-left:1px solid var(--border)}}
+.day-head{{padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);background:rgba(0,229,255,.03)}}
+.day-name{{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;color:var(--cyan);letter-spacing:.1em}}
+.day-date{{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px}}
+.day-body{{position:relative;height:520px}}
+
+/* Lignes horaires en fond */
+.hour-line{{position:absolute;left:0;right:0;border-top:1px solid rgba(255,255,255,.05);pointer-events:none}}
+.hour-line span{{display:none}}
+
+/* Créneaux */
+.slot{{position:absolute;left:2px;right:2px;border-radius:6px;overflow:hidden;border-left:3px solid #00e5ff;cursor:default;transition:transform .15s,box-shadow .15s}}
+.slot:hover{{transform:scale(1.02);box-shadow:0 4px 20px rgba(0,0,0,.5);z-index:10}}
+.s-overlay{{position:absolute;inset:0;background:linear-gradient(135deg,rgba(6,8,16,.7) 0%,rgba(6,8,16,.4) 100%);pointer-events:none}}
+.s-logo{{position:absolute;top:6px;right:6px;width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));z-index:2}}
+.s-content{{position:relative;z-index:2;padding:5px 7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end}}
+.s-name{{font-family:'Orbitron',monospace;font-size:9px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.s-sub{{font-family:'Rajdhani',sans-serif;font-size:9px;color:rgba(255,255,255,.7);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.s-time{{font-family:'Share Tech Mono',monospace;font-size:8px;color:rgba(255,255,255,.5);margin-top:2px}}
+
+.footer{{text-align:center;padding:16px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">CAPSMÖNS // PLANNING</div>
+  <div class="week-nav">
+    <a href="/planning/{py}/{pw}">← Préc.</a>
+    <span class="week-label">{week_label}</span>
+    <a href="/planning/{ny}/{nw}">Suiv. →</a>
+  </div>
+</div>
+
+<div class="main-title">{title_display}</div>
+<div class="main-sub">Semaine {week} · {week_label}</div>
+
+<div class="grid-wrap">
+  <div class="grid">
+    <div class="hour-col" style="padding-top:46px;position:relative;height:566px">
+      {''.join(f'<div class="hour-label" style="top:{(h-H_START)/TOTAL_H*100+8:.1f}%">{h}h</div>' for h in range(H_START, H_END+1))}
+    </div>
+    {cols_html}
+  </div>
+</div>
+
+<div class="footer">capsmons.devlooping.fr · Planning auto-généré</div>
+</body></html>"""
 
 
 @app.get("/overlay/drop", response_class=HTMLResponse)
@@ -8891,6 +9314,7 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
 @app.get("/admin/drops", response_class=HTMLResponse)
 @app.get("/admin/autodrop", response_class=HTMLResponse)
 @app.get("/admin/announcements", response_class=HTMLResponse)
+@app.get("/admin/planning", response_class=HTMLResponse)
 def admin_spa(
     request: Request,
     q: str | None = None,
