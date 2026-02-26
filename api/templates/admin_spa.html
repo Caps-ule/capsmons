@@ -2115,233 +2115,942 @@
 </div>
 
 <script>
-const STAGE_LABELS = {0:'ŒOEUF', 1:'STAGE I', 2:'STAGE II', 3:'STAGE III'};
-let cmsData = [];
-let curTab  = 'show';
 
-// ── Chargement CMs ───────────────────────────────────────────────────────────
-async function loadCMs() {
+// ══ NAVIGATION ══
+
+/* ─── NAVIGATION ─────────────────────────────────────────── */
+const pageTitles = {
+  dashboard:     '⬡ DASHBOARD',
+  stats:         '◈ STATS',
+  viewers:       '◎ VIEWERS',
+  cms:           '◈ CM & POOL',
+  forms:         '◇ FORMS',
+  rp:            '◉ PHRASES RP',
+  medias:        '◫ MÉDIAS',
+  announcements: '📢 ANNONCES',
+  drops:         '▽ DROPS',
+  autodrop:      '⟳ AUTODROP',
+  points:        '◈ CHANNEL POINTS',
+  planning:      '📅 PLANNING',
+  preview:       '🎬 PREVIEW STUDIO',
+};
+
+function nav(el) {
+  const page = el.dataset.page;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.getElementById('pageTitle').textContent = pageTitles[page] || page.toUpperCase();
+  history.replaceState(null, '', '#' + page);
+
+  if (page === 'medias')        { initMainUploadZone(); loadMediaLibrary(); }
+  if (page === 'announcements') resetAnnForm();
+  if (page === 'autodrop')      loadAutoDrop();
+  if (page === 'planning')      initPlanning();
+  if (page === 'preview')       _initPreviewStudio();
+  if (page === 'stats')         startAutoRefresh();
+  if (page === 'dashboard')     loadDashboardKpis();
+}
+
+// restore from hash
+window.addEventListener('DOMContentLoaded', () => {
+  const hash = location.hash.replace('#', '') || 'dashboard';
+  const target = document.querySelector(`[data-page="${hash}"]`);
+  if (target) nav(target);
+  loadDashboardKpis();
+  initTheme();
+});
+
+/* ─── THEME ──────────────────────────────────────────────── */
+function initTheme() {
+  const saved = localStorage.getItem('capsmons_theme') || 'dark';
+  applyTheme(saved);
+  document.getElementById('themeToggle').addEventListener('change', e => {
+    const t = e.target.checked ? 'light' : 'dark';
+    localStorage.setItem('capsmons_theme', t);
+    applyTheme(t);
+  });
+}
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  const cb = document.getElementById('themeToggle');
+  if (cb) cb.checked = (t === 'light');
+  const lbl = document.getElementById('themeLabel');
+  if (lbl) lbl.textContent = t === 'light' ? 'Dark mode' : 'Light mode';
+}
+
+/* ─── LIVE ───────────────────────────────────────────────── */
+async function setLive(v) {
+  const r = await fetch('/admin/set_live', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: v})
+  });
+  if (r.ok) location.reload();
+  else alert(await r.text());
+}
+
+/* ─── SEARCH VIEWER ──────────────────────────────────────── */
+let searchTimer;
+function searchViewer(q) {
+  clearTimeout(searchTimer);
+  const box = document.getElementById('searchResults');
+  const content = document.getElementById('searchResultContent');
+  if (!q || q.length < 2) { box.style.display = 'none'; return; }
+  searchTimer = setTimeout(async () => {
+    const r = await fetch(`/admin?q=${encodeURIComponent(q)}`);
+    // Simple: just redirect to admin with search
+    box.style.display = 'block';
+    content.innerHTML = `<a href="/admin?q=${encodeURIComponent(q)}" class="btn btn-cyan btn-sm">Rechercher "${q}"</a>`;
+  }, 300);
+}
+
+function openUser(login) {
+  nav(document.querySelector('[data-page="viewers"]'));
+  window.open(`/admin/user/${login}`, '_blank');
+}
+function openCollection(login) {
+  window.open(`/admin/user/${login}/collection`, '_blank');
+}
+function closeUserPanel() {
+  document.getElementById('userPanel').style.display = 'none';
+}
+
+/* ─── TABLE: SORT & FILTER ───────────────────────────────── */
+let sortState = {};
+function sortTable(tbodyId, col) {
+  const tbody = document.getElementById(tbodyId);
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const key = tbodyId + col;
+  const asc = sortState[key] !== true;
+  sortState[key] = asc;
+
+  // update header classes
+  const thead = tbody.closest('table').querySelector('thead');
+  thead.querySelectorAll('th').forEach((th, i) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (i === col) th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+  });
+
+  rows.sort((a, b) => {
+    const av = a.cells[col]?.textContent.trim() || '';
+    const bv = b.cells[col]?.textContent.trim() || '';
+    const an = parseFloat(av.replace(/[^\d.-]/g, ''));
+    const bn = parseFloat(bv.replace(/[^\d.-]/g, ''));
+    if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+    return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function filterTable(tbodyId, q) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+function filterCards(containerId, q) {
+  document.querySelectorAll(`#${containerId} .rp-card`).forEach(card => {
+    card.style.display = card.dataset.key.toLowerCase().includes(q.toLowerCase()) ? '' : 'none';
+  });
+}
+
+/* ─── DROPS ──────────────────────────────────────────────── */
+function setStatus(id, msg, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'status-line ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
+}
+
+async function spawnCoop() {
+  const title = document.getElementById('coop_title').value.trim();
+  const media_url = document.getElementById('coop_media').value.trim();
+  const duration = parseInt(document.getElementById('coop_duration').value) || 20;
+  if (!title || !media_url) { setStatus('coop_status', '⛔ Titre et image requis', false); return; }
+  setStatus('coop_status', '…');
+  const r = await fetch('/admin/drop/spawn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ mode: 'coop', title, media_url, duration_seconds: duration, ticket_key: 'none', ticket_qty: 1, xp_bonus: 0 })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('coop_status', r.ok ? `✓ Drop COOP lancé (id ${j.drop_id}) — !grab` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+async function spawnDrop() {
+  const title = document.getElementById('d_title').value.trim();
+  const media_url = document.getElementById('d_media').value.trim();
+  const ticket_key = document.getElementById('d_ticket').value.trim();
+  if (!title || !media_url || !ticket_key) { setStatus('d_status', '⛔ Titre, image et ticket_key requis', false); return; }
+  setStatus('d_status', '…');
+  const r = await fetch('/admin/drop/spawn', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      mode: document.getElementById('d_mode').value,
+      title, media_url,
+      duration_seconds: parseInt(document.getElementById('d_duration').value) || 15,
+      xp_bonus: parseInt(document.getElementById('d_xp').value) || 50,
+      ticket_key,
+      ticket_qty: parseInt(document.getElementById('d_qty').value) || 1,
+    })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('d_status', r.ok ? `✓ Drop lancé (id ${j.drop_id})` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+/* ─── AUTODROP ───────────────────────────────────────────── */
+async function loadAutoDrop() {
+  const r = await fetch('/admin/autodrop');
+  if (!r.ok) return;
+  const j = await r.json();
+  const s = j.settings || {};
+  const el = id => document.getElementById(id);
+  el('ad_enabled').checked = String(s.auto_drop_enabled || 'false') === 'true';
+  el('ad_min').value   = s.auto_drop_min_seconds || 900;
+  el('ad_max').value   = s.auto_drop_max_seconds || 1500;
+  el('ad_dmin').value  = s.auto_drop_duration_min_seconds || 10;
+  el('ad_dmax').value  = s.auto_drop_duration_max_seconds || 20;
+  el('ad_kind').value  = s.auto_drop_pick_kind || 'any';
+  el('ad_mode').value  = s.auto_drop_mode || 'random';
+  el('ad_qty').value   = s.auto_drop_ticket_qty || 1;
+  el('ad_fallback').value = s.auto_drop_fallback_media_url || '';
+}
+
+async function saveAutoDrop() {
+  const el = id => document.getElementById(id);
+  setStatus('ad_status', '…');
+  const r = await fetch('/admin/autodrop/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      enabled: el('ad_enabled').checked,
+      min_seconds: el('ad_min').value,
+      max_seconds: el('ad_max').value,
+      duration_min: el('ad_dmin').value,
+      duration_max: el('ad_dmax').value,
+      pick_kind: el('ad_kind').value,
+      mode: el('ad_mode').value,
+      ticket_qty: el('ad_qty').value,
+      fallback_media_url: el('ad_fallback').value
+    })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('ad_status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+async function testAutoDrop(statusId) {
+  setStatus(statusId, '…');
+  const r = await fetch('/admin/autodrop/test', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { setStatus(statusId, `⛔ ${JSON.stringify(j)}`, false); return; }
+  const p = j.picked || {};
+  setStatus(statusId, `✓ Drop lancé : ${p.item_name || p.item_key || '?'}`, true);
+}
+
+/* ─── EVENTSUB ───────────────────────────────────────────── */
+async function createEventSub() {
+  setStatus('eventsub_status', '…');
+  const r = await fetch('/admin/eventsub/subscribe_channel_points', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  setStatus('eventsub_status', r.ok ? `✓ ${j.message || 'Souscription créée'}` : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+/* ─── DASHBOARD KPIs ─────────────────────────────────────── */
+async function loadDashboardKpis() {
   try {
-    const d = await fetch('/preview/data').then(r => r.json());
-    cmsData = d.cms || [];
-    const opts = cmsData.map(c => `<option value="${c.key}">${c.name}</option>`).join('');
-    document.getElementById('show-cm').innerHTML = opts;
-    document.getElementById('evo-cm').innerHTML  = opts;
-    onShowCM();
-    onEvoCM();
-  } catch(e) { console.error('loadCMs:', e); }
+    const r = await fetch('/admin/stats/json');
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = id => document.getElementById(id);
+    if (el('kpi-xp-today'))   el('kpi-xp-today').textContent   = d.xp_today   ?? '—';
+    if (el('kpi-active-24h')) el('kpi-active-24h').textContent = d.active_users_24h ?? '—';
+    if (el('kpi-active-15m')) el('kpi-active-15m').textContent = d.active_users_15m ?? '—';
+    if (el('kpi-events-24h')) el('kpi-events-24h').textContent = d.events_24h  ?? '—';
+    // XP chart
+    if (d.xp_by_day) {
+      const chart = document.getElementById('xpChart');
+      if (chart) {
+        chart.innerHTML = d.xp_by_day.map(row => `
+          <div class="bar-row">
+            <div class="bar-label">${row.day}</div>
+            <div class="bar-track"><div class="bar-fill" style="width:${row.pct}%"></div></div>
+            <div class="bar-val">${row.xp}</div>
+          </div>
+        `).join('');
+      }
+    }
+  } catch(e) {}
 }
 
-function formsFor(key, minStage = 0) {
-  const cm = cmsData.find(c => c.key === key);
-  return cm ? cm.forms.filter(f => f.stage >= minStage) : [];
+/* ─── AUTO-REFRESH (stats) ───────────────────────────────── */
+let refreshTimer = null;
+function startAutoRefresh() {
+  const cb = document.getElementById('autoRefreshCb');
+  if (!cb || !cb.checked) return;
+  clearInterval(refreshTimer);
+  const deadline = new Date(Date.now() + 30000);
+  const info = document.getElementById('nextRefreshInfo');
+  if (info) info.textContent = `Prochain refresh à ${deadline.toLocaleTimeString()}`;
+  refreshTimer = setInterval(() => {
+    if (document.getElementById('page-stats')?.classList.contains('active'))
+      location.reload();
+  }, 30000);
+}
+function toggleAutoRefresh() {
+  const cb = document.getElementById('autoRefreshCb');
+  if (cb.checked) startAutoRefresh();
+  else { clearInterval(refreshTimer); const info = document.getElementById('nextRefreshInfo'); if(info) info.textContent = 'Auto-refresh désactivé.'; }
 }
 
-function buildFormSel(selId, key, minStage = 0) {
-  document.getElementById(selId).innerHTML = formsFor(key, minStage)
-    .map(f => `<option value="${f.stage}" data-n="${f.name}" data-img="${f.image_url}" data-snd="${f.sound_url||''}">`
-              + `Stage ${f.stage} — ${f.name}</option>`)
-    .join('');
+
+// ══ MÉDIAS ══
+
+
+/* ═══════════════════════════════════════════════════
+   MEDIA LIBRARY
+═══════════════════════════════════════════════════ */
+
+let _allMediaFiles = [];
+
+async function loadMediaLibrary() {
+  const grid = document.getElementById('mediaGrid');
+  if (!grid) return;
+  grid.innerHTML = '<div class="media-empty">Chargement…</div>';
+  try {
+    const r = await fetch('/admin/uploads/list');
+    const d = await r.json();
+    _allMediaFiles = d.files || [];
+    renderMediaGrid(_allMediaFiles);
+  } catch(e) {
+    grid.innerHTML = '<div class="media-empty">Erreur de chargement</div>';
+  }
 }
 
-function selOpt(id) {
-  const s = document.getElementById(id);
-  return s.options[s.selectedIndex] || null;
+function filterMediaGrid() {
+  const type   = document.getElementById('mediaFilterType')?.value || 'all';
+  const search = (document.getElementById('mediaSearch')?.value || '').toLowerCase();
+  const filtered = _allMediaFiles.filter(f =>
+    (type === 'all' || f.type === type) &&
+    f.filename.toLowerCase().includes(search)
+  );
+  renderMediaGrid(filtered);
 }
 
-// ── SHOW ─────────────────────────────────────────────────────────────────────
-function onShowCM() {
-  const key = document.getElementById('show-cm').value;
-  buildFormSel('show-form', key, 0);
-  refreshCard();
-}
-
-function refreshCard() {
-  const key    = document.getElementById('show-cm').value;
-  const opt    = selOpt('show-form');
-  if (!opt) return;
-  const cm     = cmsData.find(c => c.key === key);
-  const stage  = parseInt(opt.value);
-  const name   = opt.dataset.n;
-  const img    = opt.dataset.img;
-  const viewer = (document.getElementById('show-viewer').value || 'preview').trim();
-  const xp     = parseInt(document.getElementById('show-xp').value) || 0;
-  const hap    = parseInt(document.getElementById('show-hap').value) || 0;
-
-  // Mini panneau
-  document.getElementById('show-mini').innerHTML =
-    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
-     <div>
-       <div class="cm-mini-name">${name}</div>
-       <div class="cm-mini-sub">Stage ${stage} · ${key}</div>
-     </div>`;
-
-  // Carte TCG
-  document.getElementById('p-name').textContent   = name.toUpperCase();
-  document.getElementById('p-type').textContent   = `${(cm?.name||key).toUpperCase()} · ${STAGE_LABELS[stage]||'STAGE '+stage}`;
-  document.getElementById('p-img').src            = img;
-  document.getElementById('p-viewer').textContent = '@' + viewer;
-  document.getElementById('p-avatar').src         = '';
-  document.getElementById('p-xp-val').textContent = xp + ' XP';
-  document.getElementById('p-hp-val').textContent = hap + '%';
-  document.getElementById('p-lineage').textContent= (cm?.name||key).toUpperCase();
-  document.getElementById('p-stage').textContent  = STAGE_LABELS[stage]||'STAGE '+stage;
-
-  // Barres (approximation visuelle)
-  const xpPct = Math.min(100, (xp % 500) / 5);
-  document.getElementById('p-xp-fill').style.width = xpPct + '%';
-  document.getElementById('p-hp-fill').style.width = hap + '%';
-}
-
-function doShow() {
-  const key = document.getElementById('show-cm').value;
-  const opt = selOpt('show-form');
-  if (!opt) { setSt('show','⚠ Sélectionne un CM et une forme',true); return; }
-
-  // Afficher immédiatement
-  refreshCard();
-  const evo  = document.getElementById('evo-card');
-  const show = document.getElementById('show-card');
-  evo.style.display  = 'none'; evo.classList.remove('visible');
-  show.style.display = 'flex';
-  void show.offsetWidth;
-  show.classList.add('visible');
-
-  // Injecter en DB (overlay live aussi)
-  const body = {
-    viewer:    document.getElementById('show-viewer').value.trim() || 'preview',
-    cm_key:    key,
-    stage:     parseInt(opt.value),
-    cm_name:   opt.dataset.n,
-    image_url: opt.dataset.img,
-    xp_total:  parseInt(document.getElementById('show-xp').value) || 0,
-    happiness: parseInt(document.getElementById('show-hap').value) || 0,
-  };
-  fetch('/preview/push_show', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(r => r.json())
-    .then(d => setSt('show', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
-    .catch(() => setSt('show', '✓ Affiché localement', false));
-}
-
-// ── ÉVOLUTION ────────────────────────────────────────────────────────────────
-function onEvoCM() {
-  const key = document.getElementById('evo-cm').value;
-  buildFormSel('evo-form', key, 1);
-  refreshEvoMini();
-}
-
-function refreshEvoMini() {
-  const key = document.getElementById('evo-cm').value;
-  const opt = selOpt('evo-form');
-  if (!opt) return;
-  const img = opt.dataset.img;
-  document.getElementById('evo-mini').innerHTML =
-    `${img ? `<img src="${img}">` : '<div class="cm-mini-ph">?</div>'}
-     <div>
-       <div class="cm-mini-name">${opt.dataset.n}</div>
-       <div class="cm-mini-sub">Stage ${opt.value} · ${key}</div>
-     </div>`;
-}
-
-function doEvo() {
-  const key = document.getElementById('evo-cm').value;
-  const opt = selOpt('evo-form');
-  if (!opt) { setSt('evo','⚠ Sélectionne un CM et une forme',true); return; }
-  const viewer = document.getElementById('evo-viewer').value.trim() || 'preview';
-
-  // Afficher immédiatement
-  document.getElementById('e-img').src            = opt.dataset.img;
-  document.getElementById('e-name').textContent   = opt.dataset.n.toUpperCase();
-  document.getElementById('e-viewer').textContent = '@' + viewer;
-
-  const show = document.getElementById('show-card');
-  const evo  = document.getElementById('evo-card');
-  show.style.display = 'none'; show.classList.remove('visible');
-  evo.style.display  = 'flex';
-  void evo.offsetWidth;
-  evo.classList.add('visible');
-
-  // Injecter en DB
-  const body = {
-    viewer, cm_key: key,
-    stage:     parseInt(opt.value),
-    name:      opt.dataset.n,
-    image_url: opt.dataset.img,
-    sound_url: opt.dataset.snd || '',
-  };
-  fetch('/preview/push_evolution', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(r => r.json())
-    .then(d => setSt('evo', d.ok ? '✓ Affiché + injecté live (30s)' : '✓ Affiché', false))
-    .catch(() => setSt('evo', '✓ Affiché localement', false));
-}
-
-// ── Tabs ─────────────────────────────────────────────────────────────────────
-function switchTab(tab) {
-  curTab = tab;
-  document.getElementById('tab-show').classList.toggle('on', tab==='show');
-  document.getElementById('tab-evo').classList.toggle('on', tab==='evo');
-  document.getElementById('panel-show').style.display = tab==='show' ? '' : 'none';
-  document.getElementById('panel-evo').style.display  = tab==='evo'  ? '' : 'none';
-}
-
-// ── Fond ─────────────────────────────────────────────────────────────────────
-function setBg(btn, cls) {
-  document.querySelectorAll('.bb').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  document.getElementById('pstage').className = 'pstage ' + cls;
-}
-
-// ── Capture PNG (directement sur l'élément DOM, pas sur l'iframe) ─────────
-async function doCapture() {
-  const target = curTab === 'show'
-    ? document.getElementById('show-card')
-    : document.getElementById('evo-card');
-
-  if (!target.classList.contains('visible')) {
-    setSt(curTab, '⚠ Simule d\'abord une carte', true);
+function renderMediaGrid(files) {
+  const grid = document.getElementById('mediaGrid');
+  if (!grid) return;
+  if (!files.length) {
+    grid.innerHTML = '<div class="media-empty">Aucun fichier</div>';
     return;
   }
+  grid.innerHTML = files.map(f => {
+    const thumb = f.type === 'image'
+      ? `<img class="media-thumb" src="${f.url}" loading="lazy" alt="${f.filename}">`
+      : `<div class="media-audio-icon">🔊</div>`;
+    const kb = (f.size / 1024).toFixed(0);
+    return `
+      <div class="media-item" data-type="${f.type}" data-name="${f.filename}">
+        ${thumb}
+        <div class="media-info" title="${f.filename}">${f.filename}</div>
+        <div class="media-info" style="margin-top:-4px">${kb} Ko</div>
+        <div class="media-actions">
+          <button class="btn btn-cyan btn-sm" onclick="copyUrl('${f.url}')" title="Copier l'URL">📋 Copier</button>
+          <button class="btn btn-magenta btn-sm" onclick="deleteMedia('${f.filename}', this)" title="Supprimer">✕</button>
+        </div>
+      </div>`;
+  }).join('');
+}
 
-  const btn = document.getElementById('capbtn');
-  btn.textContent = '⟳…'; btn.disabled = true;
-
+async function copyUrl(url) {
   try {
-    const canvas = await html2canvas(target, {
-      useCORS: true,
-      allowTaint: true,
-      scale: 2,
-      backgroundColor: null,
-      logging: false,
-    });
-    const nm  = (curTab === 'show'
-      ? document.getElementById('p-name').textContent
-      : document.getElementById('e-name').textContent
-    ).toLowerCase().replace(/[^a-z0-9]+/g,'-');
-    const ts  = new Date().toISOString().slice(0,10);
-    const lnk = document.createElement('a');
-    lnk.download = `capsmons-${nm}-${ts}.png`;
-    lnk.href = canvas.toDataURL('image/png');
-    lnk.click();
-    btn.textContent = '✓ OK !';
-    setTimeout(() => { btn.textContent = '📷 Capturer PNG'; btn.disabled = false; }, 2000);
+    await navigator.clipboard.writeText(url);
+    showToast('URL copiée !');
   } catch(e) {
-    console.error(e);
-    btn.textContent = '✕ Erreur'; btn.disabled = false;
+    prompt('Copier cette URL :', url);
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function setSt(tab, msg, err) {
-  const el = document.getElementById(tab + '-st');
-  if (el) { el.textContent = msg; el.className = 'st ' + (err ? 'er' : 'ok'); }
+async function deleteMedia(filename, btn) {
+  if (!confirm(`Supprimer "${filename}" ?`)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/admin/uploads/${encodeURIComponent(filename)}`, {method: 'DELETE'});
+    if (r.ok) {
+      _allMediaFiles = _allMediaFiles.filter(f => f.filename !== filename);
+      renderMediaGrid(_allMediaFiles);
+      showToast('Fichier supprimé');
+    } else {
+      const d = await r.json();
+      showToast('Erreur : ' + (d.detail || r.status), true);
+    }
+  } catch(e) { showToast('Erreur réseau', true); btn.disabled = false; }
 }
 
-// ── Init ─────────────────────────────────────────────────────────────────────
-loadCMs();
+/* ─── Upload drag-drop zone principale ─── */
+function initMainUploadZone() {
+  const zone   = document.getElementById('mainDropZone');
+  const input  = document.getElementById('mainFileInput');
+  if (!zone || !input) return;
+
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag');
+    uploadFiles(Array.from(e.dataTransfer.files), null,
+      document.getElementById('mainUploadStatus'),
+      document.getElementById('mainUploadBar'),
+      document.getElementById('mainUploadProgress'));
+  });
+
+  input.addEventListener('change', () => {
+    uploadFiles(Array.from(input.files), null,
+      document.getElementById('mainUploadStatus'),
+      document.getElementById('mainUploadBar'),
+      document.getElementById('mainUploadProgress'));
+    input.value = '';
+  });
+}
+
+/* ─── Upload inline (bouton ⬆ à côté d'un input) ─── */
+async function uploadInline(fileInput, targetInput) {
+  if (!fileInput.files.length) return;
+  const file = fileInput.files[0];
+  fileInput.value = '';
+
+  // Mini status sous l'input
+  const wrap = fileInput.closest('.url-field-wrap') || fileInput.closest('.form-group');
+  let statusEl = wrap?.querySelector('.inline-upload-status');
+  if (!statusEl && wrap) {
+    statusEl = document.createElement('div');
+    statusEl.className = 'status-line inline-upload-status';
+    statusEl.style.cssText = 'font-size:11px;margin-top:3px';
+    wrap.appendChild(statusEl);
+  }
+  if (statusEl) { statusEl.textContent = '⟳ Upload…'; statusEl.className = 'status-line inline-upload-status'; }
+
+  const url = await uploadSingleFile(file);
+  if (url) {
+    if (targetInput) targetInput.value = url;
+    if (statusEl) { statusEl.textContent = '✓ ' + url.split('/').pop(); statusEl.className = 'status-line ok inline-upload-status'; }
+    showToast('Uploadé : ' + url.split('/').pop());
+    // Rafraîchir la bibliothèque si elle est chargée
+    if (_allMediaFiles.length > 0) loadMediaLibrary();
+  } else {
+    if (statusEl) { statusEl.textContent = '✕ Échec upload'; statusEl.className = 'status-line err inline-upload-status'; }
+  }
+}
+
+/* ─── Fonction upload générique ─── */
+async function uploadSingleFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/admin/upload', { method: 'POST', body: fd });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showToast('Erreur : ' + (d.detail || r.status), true);
+      return null;
+    }
+    const d = await r.json();
+    return d.url || null;
+  } catch(e) {
+    showToast('Erreur réseau', true);
+    return null;
+  }
+}
+
+async function uploadFiles(files, targetInput, statusEl, barEl, progressWrap) {
+  if (!files.length) return;
+  if (progressWrap) progressWrap.style.display = 'block';
+  const results = [];
+  for (let i = 0; i < files.length; i++) {
+    const pct = Math.round((i / files.length) * 100);
+    if (barEl) barEl.style.width = pct + '%';
+    if (statusEl) { statusEl.textContent = `⟳ Upload ${i+1}/${files.length}…`; statusEl.className = 'status-line'; }
+    const url = await uploadSingleFile(files[i]);
+    if (url) results.push(url);
+  }
+  if (barEl) barEl.style.width = '100%';
+  if (progressWrap) setTimeout(() => { progressWrap.style.display = 'none'; if(barEl) barEl.style.width = '0'; }, 1200);
+
+  if (results.length) {
+    if (statusEl) { statusEl.textContent = `✓ ${results.length} fichier(s) uploadé(s)`; statusEl.className = 'status-line ok'; }
+    if (targetInput) targetInput.value = results[results.length - 1];
+    loadMediaLibrary();
+  } else {
+    if (statusEl) { statusEl.textContent = '✕ Aucun fichier uploadé'; statusEl.className = 'status-line err'; }
+  }
+}
+
+/* ─── Toast ─── */
+let _toastTimer = null;
+function showToast(msg, isError = false) {
+  let t = document.getElementById('_adminToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_adminToast';
+    t.style.cssText = `position:fixed;bottom:24px;right:24px;padding:10px 18px;border-radius:8px;
+      font-family:var(--font-mono);font-size:13px;z-index:99999;
+      transition:opacity .3s;box-shadow:0 4px 20px rgba(0,0,0,.4);`;
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background  = isError ? 'rgba(255,45,120,.9)' : 'rgba(0,229,255,.9)';
+  t.style.color       = '#060810';
+  t.style.opacity     = '1';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2800);
+}
+
+
+
+// ══ ANNONCES ══
+  function editAnn(id, title, body, image_url, disp_s, pause_s, sort_order, active) {
+    document.getElementById('ann-form-title').textContent = '✎ MODIFIER ANNONCE';
+    document.getElementById('ann-id-field').value  = id;
+    document.getElementById('ann-title').value     = title;
+    document.getElementById('ann-body').value      = body;
+    document.getElementById('ann-image-url').value = image_url;
+    document.getElementById('ann-display-s').value = disp_s;
+    document.getElementById('ann-pause-s').value   = pause_s;
+    document.getElementById('ann-sort').value      = sort_order;
+    document.getElementById('ann-active').checked  = (active === true || active === 'true');
+    // Naviguer vers la page announcements si besoin
+    const annPage = document.getElementById('page-announcements');
+    if (annPage && !annPage.classList.contains('active')) {
+      const navEl = document.querySelector('[data-page="announcements"]');
+      if (navEl) nav(navEl);
+    }
+    setTimeout(() => {
+      const card = document.getElementById('ann-form-card');
+      if (card) card.scrollIntoView({behavior:'smooth'});
+    }, 50);
+  }
+
+  // Listener délégué pour les boutons ✎ des annonces (data-attributes, évite le pb de quotes)
+  document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.btn-edit-ann');
+    if (!btn) return;
+    e.preventDefault();
+    editAnn(
+      btn.dataset.id,
+      btn.dataset.title,
+      btn.dataset.body,
+      btn.dataset.image,
+      btn.dataset.disp,
+      btn.dataset.pause,
+      btn.dataset.sort,
+      btn.dataset.active
+    );
+  });
+  function resetAnnForm() {
+    document.getElementById('ann-form-title').textContent = '+ NOUVELLE ANNONCE';
+    document.getElementById('ann-form').reset();
+    document.getElementById('ann-id-field').value = '';
+    document.getElementById('ann-active').checked = true;
+  }
+
+
+// ══ PLANNING ══
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PREVIEW STUDIO
+// PLANNING STUDIO
 // ══════════════════════════════════════════════════════════════════════════════
+
+const PL_H_START = 9, PL_H_END = 22, PL_TOTAL = 13;
+const PL_DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const PL_DAYS_FULL = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
+
+let plYear = 0, plWeek = 0;
+let plWeekData = { week: {}, slots: [] };
+let plGames = [];
+
+// ── Init & navigation semaine ──────────────────────────────────────────────────
+function initPlanning() {
+  const now = new Date();
+  const iso = getISOWeek(now);
+  plYear = iso.year; plWeek = iso.week;
+  loadPlanningGames();
+  loadPlanningWeek();
+}
+
+function planWeekNav(delta) {
+  // Calculer la date du lundi de la semaine courante et avancer/reculer
+  const monday = isoWeekToMonday(plYear, plWeek);
+  monday.setDate(monday.getDate() + delta * 7);
+  const iso = getISOWeek(monday);
+  plYear = iso.year; plWeek = iso.week;
+  loadPlanningWeek();
+}
+
+// ── Chargement données ──────────────────────────────────────────────────────────
+async function loadPlanningGames() {
+  try {
+    const d = await fetch('/admin/schedule/games').then(r => r.json());
+    plGames = d.games || [];
+    renderGamesList();
+    buildGameSelect();
+  } catch(e) { console.error('loadPlanningGames:', e); }
+}
+
+async function loadPlanningWeek() {
+  try {
+    const d = await fetch(`/admin/schedule/week?year=${plYear}&week=${plWeek}`).then(r => r.json());
+    plWeekData = d;
+    const monday = isoWeekToMonday(plYear, plWeek);
+    const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+    document.getElementById('pl-week-label').textContent =
+      `S${String(plWeek).padStart(2,'0')} · ${fmtDate(monday)} – ${fmtDate(sunday)} ${plYear}`;
+    document.getElementById('pl-title').value = d.week.title || '';
+    document.getElementById('pl-published').checked = d.week.published || false;
+    // Mettre à jour le lien public
+    document.getElementById('pl-public-link').href = `/planning/${plYear}/${plWeek}`;
+    renderPlanningGrid();
+  } catch(e) { console.error('loadPlanningWeek:', e); }
+}
+
+// ── Rendu grille ───────────────────────────────────────────────────────────────
+function renderPlanningGrid() {
+  const grid = document.getElementById('pl-grid');
+  const slots = plWeekData.slots || [];
+  const monday = isoWeekToMonday(plYear, plWeek);
+
+  // Hauteur de la zone = 540px pour 13h
+  const PX_PER_H = 540 / PL_TOTAL;
+  const HEADER_H = 44;
+  const GUTTER = 44; // colonne heure
+
+  let html = `<div style="display:grid;grid-template-columns:${GUTTER}px repeat(7,1fr);background:var(--color-bg);font-family:var(--font-mono)">`;
+
+  // Header ligne 0 : vide + jours
+  html += `<div style="height:${HEADER_H}px;border-bottom:1px solid var(--color-border)"></div>`;
+  for (let d = 0; d < 7; d++) {
+    const date = new Date(monday); date.setDate(monday.getDate() + d);
+    html += `<div style="height:${HEADER_H}px;border-bottom:1px solid var(--color-border);border-left:1px solid var(--color-border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+      <div style="font-size:10px;font-weight:700;color:var(--color-cyan);letter-spacing:.1em">${PL_DAYS[d]}</div>
+      <div style="font-size:9px;color:var(--color-muted)">${fmtDate(date)}</div>
+    </div>`;
+  }
+
+  // Corps : ligne heure + 7 colonnes
+  html += `<div style="position:relative;height:${PL_TOTAL * PX_PER_H}px">`;
+  // Lignes horaires
+  for (let h = PL_H_START; h <= PL_H_END; h++) {
+    const top = (h - PL_H_START) * PX_PER_H;
+    html += `<div style="position:absolute;top:${top}px;right:4px;left:0;border-top:1px solid var(--color-border);display:flex;align-items:flex-start">
+      <span style="font-size:9px;color:var(--color-muted);padding-right:4px;margin-top:-7px;white-space:nowrap">${h}h</span>
+    </div>`;
+  }
+  html += `</div>`;
+
+  // 7 colonnes jours
+  for (let d = 0; d < 7; d++) {
+    const daySlots = slots.filter(s => s.day === d);
+    html += `<div style="position:relative;height:${PL_TOTAL * PX_PER_H}px;border-left:1px solid var(--color-border)">`;
+    // Lignes horaires dans chaque colonne
+    for (let h = PL_H_START; h <= PL_H_END; h++) {
+      const top = (h - PL_H_START) * PX_PER_H;
+      html += `<div style="position:absolute;top:${top}px;left:0;right:0;border-top:1px solid rgba(255,255,255,.04);pointer-events:none"></div>`;
+    }
+    // Créneaux
+    for (const s of daySlots) {
+      const top = (s.hour_start - PL_H_START) * PX_PER_H;
+      const height = (s.hour_end - s.hour_start) * PX_PER_H;
+      const color = s.color || s.game_color || '#00e5ff';
+      const img = s.image_url || s.game_image || '';
+      const name = s.custom_name || s.game_name || 'Stream';
+      const logo = s.game_logo || '';
+      const bgStyle = img
+        ? `background:url('${img}') center/cover no-repeat;`
+        : `background:rgba(0,229,255,.07);`;
+      const hsFmt = fmtHour(s.hour_start), heFmt = fmtHour(s.hour_end);
+      html += `<div onclick="planEditSlot(${JSON.stringify(s).replace(/"/g,'&quot;')})"
+        style="position:absolute;top:${top}px;height:${height}px;left:2px;right:2px;
+               border-radius:5px;overflow:hidden;cursor:pointer;
+               border-left:3px solid ${color};
+               ${bgStyle}
+               transition:opacity .15s"
+        onmouseenter="this.style.opacity='.8'" onmouseleave="this.style.opacity='1'">
+        <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(6,8,16,.75),rgba(6,8,16,.4));pointer-events:none"></div>
+        ${logo ? `<img src="${logo}" style="position:absolute;top:4px;right:4px;width:20px;height:20px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.8));z-index:2">` : ''}
+        <div style="position:relative;z-index:2;padding:3px 5px;height:100%;display:flex;flex-direction:column;justify-content:flex-end">
+          <div style="font-size:9px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</div>
+          ${s.subtitle ? `<div style="font-size:8px;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.subtitle}</div>` : ''}
+          <div style="font-size:8px;color:rgba(255,255,255,.4)">${hsFmt}–${heFmt}</div>
+        </div>
+        <button onclick="event.stopPropagation();planDeleteSlot(${s.id})"
+          style="position:absolute;top:2px;right:2px;background:rgba(255,45,120,.7);border:none;border-radius:3px;
+                 color:#fff;font-size:9px;cursor:pointer;padding:1px 4px;line-height:1.4;z-index:3">✕</button>
+      </div>`;
+    }
+    // Zone de clic pour créer un créneau
+    html += `<div onclick="planQuickAdd(${d}, event)"
+      title="Clic pour créer un créneau"
+      style="position:absolute;inset:0;z-index:0;cursor:cell"></div>`;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  grid.innerHTML = html;
+}
+
+// ── Créneau : form ─────────────────────────────────────────────────────────────
+function planQuickAdd(day, evt) {
+  // Si on clique sur un créneau existant, ne pas créer
+  if (evt.target.closest('[onclick*="planEditSlot"]') || evt.target.tagName === 'BUTTON') return;
+  planResetSlotForm();
+  document.getElementById('pl-slot-day').value = day;
+  document.getElementById('pl-slot-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planEditSlot(s) {
+  document.getElementById('pl-slot-form-title').textContent = '✎ MODIFIER CRÉNEAU';
+  document.getElementById('pl-slot-id').value   = s.id;
+  document.getElementById('pl-slot-day').value  = s.day;
+  document.getElementById('pl-slot-hs').value   = s.hour_start;
+  document.getElementById('pl-slot-he').value   = s.hour_end;
+  document.getElementById('pl-slot-game').value = s.game_id || '';
+  document.getElementById('pl-slot-name').value = s.custom_name || '';
+  document.getElementById('pl-slot-img').value  = s.image_url || '';
+  document.getElementById('pl-slot-sub').value  = s.subtitle || '';
+  const col = s.color || '#00e5ff';
+  document.getElementById('pl-slot-color').value     = col;
+  document.getElementById('pl-slot-color-txt').value = col;
+  document.getElementById('pl-slot-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planResetSlotForm() {
+  document.getElementById('pl-slot-form-title').textContent = '+ NOUVEAU CRÉNEAU';
+  document.getElementById('pl-slot-id').value   = '';
+  document.getElementById('pl-slot-day').value  = '0';
+  document.getElementById('pl-slot-hs').value   = '9';
+  document.getElementById('pl-slot-he').value   = '12';
+  document.getElementById('pl-slot-game').value = '';
+  document.getElementById('pl-slot-name').value = '';
+  document.getElementById('pl-slot-img').value  = '';
+  document.getElementById('pl-slot-sub').value  = '';
+  document.getElementById('pl-slot-color').value     = '#00e5ff';
+  document.getElementById('pl-slot-color-txt').value = '#00e5ff';
+  planSlotStatus('');
+}
+
+async function planSaveSlot() {
+  const body = {
+    year: plYear, week: plWeek,
+    id:         document.getElementById('pl-slot-id').value || null,
+    day:        parseInt(document.getElementById('pl-slot-day').value),
+    hour_start: parseFloat(document.getElementById('pl-slot-hs').value),
+    hour_end:   parseFloat(document.getElementById('pl-slot-he').value),
+    game_id:    document.getElementById('pl-slot-game').value || null,
+    custom_name:document.getElementById('pl-slot-name').value.trim(),
+    image_url:  document.getElementById('pl-slot-img').value.trim(),
+    subtitle:   document.getElementById('pl-slot-sub').value.trim(),
+    color:      document.getElementById('pl-slot-color-txt').value.trim() || '#00e5ff',
+  };
+  if (body.hour_end <= body.hour_start) { planSlotStatus('⚠ Fin doit être après le début', true); return; }
+  try {
+    const r = await fetch('/admin/schedule/slot/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) {
+      planSlotStatus('✓ Créneau sauvegardé', false);
+      planResetSlotForm();
+      loadPlanningWeek();
+    } else { planSlotStatus('✕ Erreur: ' + (r.detail||'?'), true); }
+  } catch(e) { planSlotStatus('✕ Erreur réseau', true); }
+}
+
+async function planDeleteSlot(id) {
+  if (!confirm('Supprimer ce créneau ?')) return;
+  await fetch('/admin/schedule/slot/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})
+  });
+  loadPlanningWeek();
+}
+
+function planSlotStatus(msg, err=false) {
+  const el = document.getElementById('pl-slot-status');
+  el.style.display = msg ? '' : 'none';
+  el.textContent   = msg;
+  el.className = 'flash-inline ' + (err ? 'flash-err' : 'flash-ok');
+}
+
+// ── Semaine ────────────────────────────────────────────────────────────────────
+async function planSaveWeek() {
+  const body = {
+    year:      plYear,
+    week:      plWeek,
+    title:     document.getElementById('pl-title').value.trim(),
+    published: document.getElementById('pl-published').checked,
+  };
+  try {
+    const r = await fetch('/admin/schedule/week/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) { showToast('Planning sauvegardé !'); loadPlanningWeek(); }
+  } catch(e) { console.error(e); }
+}
+
+// ── Bibliothèque jeux ──────────────────────────────────────────────────────────
+function buildGameSelect() {
+  const sel = document.getElementById('pl-slot-game');
+  sel.innerHTML = '<option value="">— Personnalisé —</option>'
+    + plGames.map(g => `<option value="${g.id}">${g.name}</option>`).join('');
+}
+
+function renderGamesList() {
+  const el = document.getElementById('pl-games-list');
+  if (!plGames.length) { el.innerHTML = '<div class="muted mono" style="font-size:11px;padding:4px">Aucun jeu enregistré</div>'; return; }
+  el.innerHTML = plGames.map(g => `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--color-border)">
+      ${g.image_url ? `<img src="${g.image_url}" style="width:32px;height:20px;object-fit:cover;border-radius:3px">` : `<div style="width:32px;height:20px;background:${g.color};border-radius:3px"></div>`}
+      <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.name}</span>
+      <button class="btn btn-dim btn-sm" onclick="planEditGame(${JSON.stringify(g).replace(/"/g,'&quot;')})">✎</button>
+      <button class="btn btn-sm" style="background:rgba(255,45,120,.2);border:1px solid rgba(255,45,120,.4);color:#ff2d78" onclick="planDeleteGame(${g.id})">✕</button>
+    </div>`).join('');
+}
+
+function planOpenGameForm() {
+  planResetGameForm();
+  document.getElementById('pl-game-form-card').style.display = '';
+  document.getElementById('pl-game-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planEditGame(g) {
+  document.getElementById('pl-game-form-title').textContent = '✎ MODIFIER JEU';
+  document.getElementById('pl-game-id').value         = g.id;
+  document.getElementById('pl-game-name').value       = g.name;
+  document.getElementById('pl-game-img').value        = g.image_url || '';
+  document.getElementById('pl-game-logo').value       = g.logo_url || '';
+  document.getElementById('pl-game-color').value      = g.color || '#00e5ff';
+  document.getElementById('pl-game-color-txt').value  = g.color || '#00e5ff';
+  document.getElementById('pl-game-form-card').style.display = '';
+  document.getElementById('pl-game-form-card').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function planResetGameForm() {
+  document.getElementById('pl-game-form-title').textContent = '+ NOUVEAU JEU';
+  document.getElementById('pl-game-id').value   = '';
+  document.getElementById('pl-game-name').value = '';
+  document.getElementById('pl-game-img').value  = '';
+  document.getElementById('pl-game-logo').value = '';
+  document.getElementById('pl-game-color').value     = '#00e5ff';
+  document.getElementById('pl-game-color-txt').value = '#00e5ff';
+}
+
+async function planSaveGame() {
+  const body = {
+    id:        document.getElementById('pl-game-id').value || null,
+    name:      document.getElementById('pl-game-name').value.trim(),
+    image_url: document.getElementById('pl-game-img').value.trim(),
+    logo_url:  document.getElementById('pl-game-logo').value.trim(),
+    color:     document.getElementById('pl-game-color-txt').value.trim() || '#00e5ff',
+  };
+  if (!body.name) { alert('Nom requis'); return; }
+  try {
+    const r = await fetch('/admin/schedule/games/save', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    }).then(r => r.json());
+    if (r.ok) {
+      document.getElementById('pl-game-form-card').style.display = 'none';
+      loadPlanningGames();
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function planDeleteGame(id) {
+  if (!confirm('Supprimer ce jeu ?')) return;
+  await fetch('/admin/schedule/games/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})
+  });
+  loadPlanningGames();
+}
+
+// ── Capture PNG (html2canvas via CDN) ──────────────────────────────────────────
+async function planCapturePNG() {
+  const btn = document.querySelector('[onclick="planCapturePNG()"]');
+  if (btn) { btn.textContent = '⟳…'; btn.disabled = true; }
+  try {
+    // Charger html2canvas si pas déjà chargé
+    if (!window.html2canvas) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    const grid = document.getElementById('pl-grid');
+    const canvas = await html2canvas(grid, {
+      useCORS: true, allowTaint: true, scale: 2, backgroundColor: '#060810', logging: false,
+    });
+    const link = document.createElement('a');
+    const ts   = new Date().toISOString().slice(0,10);
+    link.download = `planning-s${String(plWeek).padStart(2,'0')}-${plYear}-${ts}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch(e) { console.error(e); alert('Erreur capture: ' + e.message); }
+  finally { if (btn) { btn.textContent = '📷 PNG'; btn.disabled = false; } }
+}
+
+// ── Helpers date ────────────────────────────────────────────────────────────────
+function getISOWeek(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return {
+    year: d.getUTCFullYear(),
+    week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  };
+}
+
+function isoWeekToMonday(year, week) {
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - (dayOfWeek - 1) + (week - 1) * 7);
+  return monday;
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'});
+}
+
+function fmtHour(h) {
+  const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return mm ? `${hh}h${String(mm).padStart(2,'0')}` : `${hh}h`;
+}
+
+// Sync color picker <-> texte
+document.addEventListener('DOMContentLoaded', () => {
+  ['pl-slot-color','pl-game-color'].forEach(id => {
+    const picker = document.getElementById(id);
+    const txt    = document.getElementById(id + '-txt');
+    if (picker && txt) {
+      picker.addEventListener('input', () => txt.value = picker.value);
+    }
+  });
+});
+
+// Ajouter un toast si pas déjà défini
+if (typeof showToast === 'undefined') {
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--color-cyan,#00e5ff);color:#060810;padding:10px 18px;border-radius:8px;font-family:var(--font-mono,"Share Tech Mono",monospace);font-size:12px;z-index:9999;pointer-events:none';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+  }
+}
+
+
+// ══ PREVIEW STUDIO ══
 let _previewReady = false;
 
 function _initPreviewStudio() {
@@ -2580,6 +3289,8 @@ function setSt(tab, msg, err) {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 // init géré par _initPreviewStudio()
+
+
 
 </script>
 </body>
