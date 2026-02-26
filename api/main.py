@@ -4901,8 +4901,9 @@ def preview_push_evolution(
 
 @app.get("/preview", response_class=HTMLResponse)
 def preview_page(credentials: HTTPBasicCredentials = Depends(security)):
+    """Redirige vers le SPA admin — le Preview Studio est désormais intégré."""
     require_admin(credentials)
-    return HTMLResponse(_render_preview_page())
+    return RedirectResponse(url="/admin#preview", status_code=302)
 
 
 def _render_preview_page() -> str:
