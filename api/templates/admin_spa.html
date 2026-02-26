@@ -1519,6 +1519,168 @@
       </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════════════════
+         PAGE : PLANNING
+    ════════════════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-planning">
+
+      <!-- Toolbar supérieure -->
+      <div class="card" style="padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn btn-dim btn-sm" onclick="planWeekNav(-1)">← Préc</button>
+          <span class="mono" id="pl-week-label" style="min-width:160px;text-align:center">—</span>
+          <button class="btn btn-dim btn-sm" onclick="planWeekNav(+1)">Suiv →</button>
+        </div>
+        <input type="text" id="pl-title" placeholder="Titre du planning (optionnel)" style="flex:1;min-width:160px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;cursor:pointer">
+            <input type="checkbox" id="pl-published" style="accent-color:var(--color-cyan)"> Publié
+          </label>
+          <button class="btn btn-sm" style="background:var(--color-cyan);color:#060810" onclick="planSaveWeek()">💾 Sauvegarder</button>
+          <button class="btn btn-dim btn-sm" onclick="planCapturePNG()">📷 PNG</button>
+          <a id="pl-public-link" href="/planning" target="_blank" class="btn btn-dim btn-sm" style="text-decoration:none">🌐 Voir</a>
+        </div>
+      </div>
+
+      <!-- Layout : grille + panneau latéral -->
+      <div style="display:grid;grid-template-columns:1fr 280px;gap:12px;align-items:start;flex:1;min-height:0">
+
+        <!-- ── Grille planning ── -->
+        <div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <!-- En-têtes jours -->
+            <div id="pl-grid-container" style="overflow-x:auto">
+              <div id="pl-grid" style="min-width:680px">
+                <!-- Rendu par JS -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Panneau latéral ── -->
+        <div style="display:flex;flex-direction:column;gap:12px">
+
+          <!-- Formulaire créneau -->
+          <div class="card accent-c" id="pl-slot-form-card">
+            <div class="card-title" id="pl-slot-form-title">+ NOUVEAU CRÉNEAU</div>
+
+            <input type="hidden" id="pl-slot-id" value="">
+
+            <div class="form-row" style="gap:8px">
+              <div class="form-group" style="flex:1">
+                <div class="form-label">JOUR</div>
+                <select id="pl-slot-day">
+                  <option value="0">Lundi</option><option value="1">Mardi</option>
+                  <option value="2">Mercredi</option><option value="3">Jeudi</option>
+                  <option value="4">Vendredi</option><option value="5">Samedi</option>
+                  <option value="6">Dimanche</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row" style="gap:8px">
+              <div class="form-group" style="flex:1">
+                <div class="form-label">DÉBUT</div>
+                <input type="number" id="pl-slot-hs" value="9" min="9" max="22" step="0.5" placeholder="9">
+              </div>
+              <div class="form-group" style="flex:1">
+                <div class="form-label">FIN</div>
+                <input type="number" id="pl-slot-he" value="12" min="9" max="22" step="0.5" placeholder="12">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">JEU (bibliothèque)</div>
+              <select id="pl-slot-game">
+                <option value="">— Personnalisé —</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">NOM AFFICHÉ <span class="muted">(override ou custom)</span></div>
+              <input type="text" id="pl-slot-name" placeholder="Nom du stream…">
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">IMAGE DE FOND / COVER</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-slot-img" placeholder="URL ou upload →" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, document.getElementById('pl-slot-img'))">
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">SOUS-TITRE</div>
+              <input type="text" id="pl-slot-sub" placeholder="ex: Raid prog, Ranked, etc.">
+            </div>
+
+            <div class="form-group">
+              <div class="form-label">COULEUR ACCENT</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="pl-slot-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
+                <input type="text" id="pl-slot-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-slot-color').value=this.value">
+              </div>
+            </div>
+
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveSlot()">✓ Enregistrer</button>
+              <button class="btn btn-dim" onclick="planResetSlotForm()">✕ Annuler</button>
+            </div>
+            <div class="flash-inline" id="pl-slot-status" style="margin-top:6px;display:none"></div>
+          </div>
+
+          <!-- Bibliothèque jeux -->
+          <div class="card">
+            <div class="card-title">◈ BIBLIOTHÈQUE JEUX</div>
+            <div id="pl-games-list" style="margin-bottom:10px;max-height:180px;overflow-y:auto"></div>
+            <button class="btn btn-dim btn-sm" style="width:100%" onclick="planOpenGameForm()">+ Ajouter un jeu</button>
+          </div>
+
+          <!-- Formulaire jeu -->
+          <div class="card" id="pl-game-form-card" style="display:none">
+            <div class="card-title" id="pl-game-form-title">+ NOUVEAU JEU</div>
+            <input type="hidden" id="pl-game-id" value="">
+            <div class="form-group">
+              <div class="form-label">NOM *</div>
+              <input type="text" id="pl-game-name" placeholder="World of Warcraft">
+            </div>
+            <div class="form-group">
+              <div class="form-label">IMAGE DE FOND</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-game-img" placeholder="URL background" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-img'))">
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-label">LOGO / ICÔNE</div>
+              <div class="url-field-wrap">
+                <input type="text" id="pl-game-logo" placeholder="URL logo" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
+                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-logo'))">
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-label">COULEUR ACCENT</div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="color" id="pl-game-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
+                <input type="text" id="pl-game-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-game-color').value=this.value">
+              </div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveGame()">✓ Sauvegarder</button>
+              <button class="btn btn-dim" onclick="document.getElementById('pl-game-form-card').style.display='none'">✕</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div><!-- /page-planning -->
+
   </div><!-- /#content -->
 </div><!-- /#main -->
 
@@ -2037,167 +2199,8 @@ function showToast(msg, isError = false) {
   }
 
 
-    <!-- ══════════════════════════════════════════════════════════════════════
-         PAGE : PLANNING
-    ════════════════════════════════════════════════════════════════════════ -->
-    <div class="page" id="page-planning">
 
-      <!-- Toolbar supérieure -->
-      <div class="card" style="padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0">
-        <div style="display:flex;align-items:center;gap:8px">
-          <button class="btn btn-dim btn-sm" onclick="planWeekNav(-1)">← Préc</button>
-          <span class="mono" id="pl-week-label" style="min-width:160px;text-align:center">—</span>
-          <button class="btn btn-dim btn-sm" onclick="planWeekNav(+1)">Suiv →</button>
-        </div>
-        <input type="text" id="pl-title" placeholder="Titre du planning (optionnel)" style="flex:1;min-width:160px">
-        <div style="display:flex;gap:6px;align-items:center">
-          <label style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;cursor:pointer">
-            <input type="checkbox" id="pl-published" style="accent-color:var(--color-cyan)"> Publié
-          </label>
-          <button class="btn btn-sm" style="background:var(--color-cyan);color:#060810" onclick="planSaveWeek()">💾 Sauvegarder</button>
-          <button class="btn btn-dim btn-sm" onclick="planCapturePNG()">📷 PNG</button>
-          <a id="pl-public-link" href="/planning" target="_blank" class="btn btn-dim btn-sm" style="text-decoration:none">🌐 Voir</a>
-        </div>
-      </div>
 
-      <!-- Layout : grille + panneau latéral -->
-      <div style="display:grid;grid-template-columns:1fr 280px;gap:12px;align-items:start;flex:1;min-height:0">
-
-        <!-- ── Grille planning ── -->
-        <div>
-          <div class="card" style="padding:0;overflow:hidden">
-            <!-- En-têtes jours -->
-            <div id="pl-grid-container" style="overflow-x:auto">
-              <div id="pl-grid" style="min-width:680px">
-                <!-- Rendu par JS -->
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── Panneau latéral ── -->
-        <div style="display:flex;flex-direction:column;gap:12px">
-
-          <!-- Formulaire créneau -->
-          <div class="card accent-c" id="pl-slot-form-card">
-            <div class="card-title" id="pl-slot-form-title">+ NOUVEAU CRÉNEAU</div>
-
-            <input type="hidden" id="pl-slot-id" value="">
-
-            <div class="form-row" style="gap:8px">
-              <div class="form-group" style="flex:1">
-                <div class="form-label">JOUR</div>
-                <select id="pl-slot-day">
-                  <option value="0">Lundi</option><option value="1">Mardi</option>
-                  <option value="2">Mercredi</option><option value="3">Jeudi</option>
-                  <option value="4">Vendredi</option><option value="5">Samedi</option>
-                  <option value="6">Dimanche</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="form-row" style="gap:8px">
-              <div class="form-group" style="flex:1">
-                <div class="form-label">DÉBUT</div>
-                <input type="number" id="pl-slot-hs" value="9" min="9" max="22" step="0.5" placeholder="9">
-              </div>
-              <div class="form-group" style="flex:1">
-                <div class="form-label">FIN</div>
-                <input type="number" id="pl-slot-he" value="12" min="9" max="22" step="0.5" placeholder="12">
-              </div>
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">JEU (bibliothèque)</div>
-              <select id="pl-slot-game">
-                <option value="">— Personnalisé —</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">NOM AFFICHÉ <span class="muted">(override ou custom)</span></div>
-              <input type="text" id="pl-slot-name" placeholder="Nom du stream…">
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">IMAGE DE FOND / COVER</div>
-              <div class="url-field-wrap">
-                <input type="text" id="pl-slot-img" placeholder="URL ou upload →" class="url-input">
-                <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader">
-                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, document.getElementById('pl-slot-img'))">
-                </label>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">SOUS-TITRE</div>
-              <input type="text" id="pl-slot-sub" placeholder="ex: Raid prog, Ranked, etc.">
-            </div>
-
-            <div class="form-group">
-              <div class="form-label">COULEUR ACCENT</div>
-              <div style="display:flex;gap:6px;align-items:center">
-                <input type="color" id="pl-slot-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
-                <input type="text" id="pl-slot-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-slot-color').value=this.value">
-              </div>
-            </div>
-
-            <div style="display:flex;gap:6px">
-              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveSlot()">✓ Enregistrer</button>
-              <button class="btn btn-dim" onclick="planResetSlotForm()">✕ Annuler</button>
-            </div>
-            <div class="flash-inline" id="pl-slot-status" style="margin-top:6px;display:none"></div>
-          </div>
-
-          <!-- Bibliothèque jeux -->
-          <div class="card">
-            <div class="card-title">◈ BIBLIOTHÈQUE JEUX</div>
-            <div id="pl-games-list" style="margin-bottom:10px;max-height:180px;overflow-y:auto"></div>
-            <button class="btn btn-dim btn-sm" style="width:100%" onclick="planOpenGameForm()">+ Ajouter un jeu</button>
-          </div>
-
-          <!-- Formulaire jeu -->
-          <div class="card" id="pl-game-form-card" style="display:none">
-            <div class="card-title" id="pl-game-form-title">+ NOUVEAU JEU</div>
-            <input type="hidden" id="pl-game-id" value="">
-            <div class="form-group">
-              <div class="form-label">NOM *</div>
-              <input type="text" id="pl-game-name" placeholder="World of Warcraft">
-            </div>
-            <div class="form-group">
-              <div class="form-label">IMAGE DE FOND</div>
-              <div class="url-field-wrap">
-                <input type="text" id="pl-game-img" placeholder="URL background" class="url-input">
-                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
-                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-img'))">
-                </label>
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="form-label">LOGO / ICÔNE</div>
-              <div class="url-field-wrap">
-                <input type="text" id="pl-game-logo" placeholder="URL logo" class="url-input">
-                <label class="btn btn-dim btn-sm btn-upload-inline" title="Upload">
-                  ⬆<input type="file" accept=".png,.jpg,.jpeg,.webp" onchange="uploadInline(this, document.getElementById('pl-game-logo'))">
-                </label>
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="form-label">COULEUR ACCENT</div>
-              <div style="display:flex;gap:6px;align-items:center">
-                <input type="color" id="pl-game-color" value="#00e5ff" style="width:36px;height:32px;padding:2px;cursor:pointer;background:transparent;border:1px solid var(--color-border);border-radius:6px">
-                <input type="text" id="pl-game-color-txt" value="#00e5ff" placeholder="#00e5ff" style="flex:1" oninput="document.getElementById('pl-game-color').value=this.value">
-              </div>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button class="btn" style="flex:1;background:var(--color-cyan);color:#060810" onclick="planSaveGame()">✓ Sauvegarder</button>
-              <button class="btn btn-dim" onclick="document.getElementById('pl-game-form-card').style.display='none'">✕</button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </div><!-- /page-planning -->
 
 
 
@@ -2592,7 +2595,6 @@ if (typeof showToast === 'undefined') {
     setTimeout(() => t.remove(), 2500);
   }
 }
-
 
 </script>
 </body>
