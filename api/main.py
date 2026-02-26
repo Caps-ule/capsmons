@@ -5918,11 +5918,11 @@ body::before{{content:'';position:fixed;inset:0;background:repeating-linear-grad
 .slot{{position:absolute;left:2px;right:2px;border-radius:6px;overflow:hidden;border-left:3px solid #00e5ff;cursor:default;transition:transform .15s,box-shadow .15s}}
 .slot:hover{{transform:scale(1.02);box-shadow:0 4px 20px rgba(0,0,0,.5);z-index:10}}
 .s-overlay{{position:absolute;inset:0;background:linear-gradient(135deg,rgba(6,8,16,.7) 0%,rgba(6,8,16,.4) 100%);pointer-events:none}}
-.s-logo{{position:absolute;top:6px;right:6px;width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));z-index:2}}
+.s-logo{{position:absolute;top:6px;right:6px;width:100%;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.8));z-index:2}}
 .s-content{{position:relative;z-index:2;padding:5px 7px;height:100%;display:flex;flex-direction:column;justify-content:flex-end}}
-.s-name{{font-family:'Orbitron',monospace;font-size:9px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.s-name{{font-family:'Orbitron',monospace;font-size:16px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .s-sub{{font-family:'Rajdhani',sans-serif;font-size:9px;color:rgba(255,255,255,.7);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.s-time{{font-family:'Share Tech Mono',monospace;font-size:8px;color:rgba(255,255,255,.5);margin-top:2px}}
+.s-time{{font-family:'Share Tech Mono',monospace;font-size:16px;color:rgba(255,255,255,.5);margin-top:2px}}
 
 .footer{{text-align:center;padding:16px;font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--muted)}}
 </style>
