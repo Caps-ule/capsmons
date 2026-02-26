@@ -7865,6 +7865,17 @@ def admin_cms_action(
                 conn.commit()
                 return go(f"CM renommé: {key}")
 
+            if action == "change_lineage":
+                if not (key and lineage_key):
+                    return go("Champs manquants", "err")
+                lineage_key = lineage_key.strip().lower()
+                cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
+                if not cur.fetchone():
+                    return go("Lineage inconnue", "err")
+                cur.execute("UPDATE cms SET lineage_key=%s WHERE key=%s;", (lineage_key, key))
+                conn.commit()
+                return go(f"Lignée mise à jour: {key} → {lineage_key}")
+
             if action == "toggle_cm_enabled":
                 if not key:
                     return go("Key manquante", "err")
