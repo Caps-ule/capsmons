@@ -115,8 +115,8 @@ def _render_homepage() -> str:
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    padding: 24px;
+    justify-content: flex-start;
+    padding: 48px 24px 60px;
     overflow-x: hidden;
   }
 
@@ -140,7 +140,7 @@ def _render_homepage() -> str:
 
   .container {
     position: relative; z-index: 1;
-    width: 100%; max-width: 520px;
+    width: 100%; max-width: 660px;
     text-align: center;
   }
 
@@ -245,6 +245,77 @@ def _render_homepage() -> str:
   }
   .footer a { color: var(--muted); text-decoration: none; }
   .footer a:hover { color: var(--cyan); }
+
+  /* Commandes */
+  .commands-section {
+    margin-top: 28px;
+    text-align: left;
+    width: 100%;
+  }
+  .commands-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 11px;
+    letter-spacing: .18em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .commands-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .cmd-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .cmd-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 9px 14px;
+    background: rgba(255,255,255,.02);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    transition: border-color .15s, background .15s;
+  }
+  .cmd-row:hover {
+    border-color: rgba(0,229,255,.2);
+    background: rgba(0,229,255,.03);
+  }
+  .cmd-row.mod {
+    border-color: rgba(255,45,120,.12);
+    background: rgba(255,45,120,.02);
+  }
+  .cmd-row.mod:hover { border-color: rgba(255,45,120,.3); }
+  .cmd-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--cyan);
+    flex-shrink: 0;
+    min-width: 120px;
+  }
+  .cmd-row.mod .cmd-name { color: var(--magenta); }
+  .cmd-desc {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: #8a9abf;
+    line-height: 1.35;
+  }
+  .cmd-sep {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: .14em;
+    color: var(--muted);
+    padding: 8px 0 4px;
+    text-transform: uppercase;
+  }
 </style>
 </head>
 <body>
@@ -261,6 +332,75 @@ def _render_homepage() -> str:
       <button class="search-btn" onclick="goProfile()">▶ GO</button>
     </div>
     <div class="search-error" id="errMsg"></div>
+  </div>
+
+  <div class="commands-section">
+    <div class="commands-title">◈ Commandes Chat</div>
+    <div class="cmd-list">
+
+      <div class="cmd-sep">// Pour tous les viewers</div>
+
+      <div class="cmd-row">
+        <div class="cmd-name">!creature</div>
+        <div class="cmd-desc">Affiche l'état de ton CapsMöns actif — stade, XP, bonheur et progression</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!show</div>
+        <div class="cmd-desc">Déclenche l'affichage de ta carte CapsMöns sur l'overlay du stream</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!inv</div>
+        <div class="cmd-desc">Consulte ton inventaire d'objets dans le chat</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!use &lt;item_key&gt;</div>
+        <div class="cmd-desc">Utilise un objet de ton inventaire — ex : <code style="font-family:inherit;color:var(--cyan)">!use bonbon</code> pour soigner ton CM</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!grab</div>
+        <div class="cmd-desc">Participe au drop en cours pour gagner XP et objets</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!choose &lt;lignée&gt;</div>
+        <div class="cmd-desc">Choisis ta lignée de départ : <code style="font-family:inherit;color:var(--cyan)">biolab</code>, <code style="font-family:inherit;color:var(--cyan)">securite</code>, <code style="font-family:inherit;color:var(--cyan)">extraction</code> ou <code style="font-family:inherit;color:var(--cyan)">limited</code></div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!companion</div>
+        <div class="cmd-desc">Affiche tous les CapsMöns que tu possèdes dans ta collection</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!companion &lt;n°&gt;</div>
+        <div class="cmd-desc">Change ton CapsMöns actif pour celui qui porte ce numéro dans ta liste</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!mylink</div>
+        <div class="cmd-desc">Affiche le lien vers ta page de profil CapsMöns dans le chat</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!link</div>
+        <div class="cmd-desc">Affiche le lien du site CapsMöns</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!planning</div>
+        <div class="cmd-desc">Affiche le planning des streams de la semaine en cours</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!commands</div>
+        <div class="cmd-desc">Rappelle la liste des commandes disponibles directement dans le chat</div>
+      </div>
+
+      <div class="cmd-sep">// Modérateurs &amp; streamer</div>
+
+      <div class="cmd-row mod">
+        <div class="cmd-name">!drop &lt;mode&gt;</div>
+        <div class="cmd-desc">Lance un drop avec le mode choisi : <code style="font-family:inherit;color:var(--magenta)">first</code>, <code style="font-family:inherit;color:var(--magenta)">random</code> ou <code style="font-family:inherit;color:var(--magenta)">coop</code></div>
+      </div>
+      <div class="cmd-row mod">
+        <div class="cmd-name">!spawn &lt;mode&gt;</div>
+        <div class="cmd-desc">Crée un drop rapide sans passer par le panneau admin</div>
+      </div>
+
+    </div>
   </div>
 
   <div class="footer">
@@ -9482,11 +9622,12 @@ def _stage_roman(n):
     return {0: "Œuf", 1: "I", 2: "II", 3: "III"}.get(n, str(n))
 
 def _render_user_page(login: str, d: dict) -> str:
-    active   = d["active_cm"]
-    quests   = d["quests"]
-    badges   = d["badges"]
-    sections = d["album_sections"]
-    stats    = d["stats"]
+    active    = d["active_cm"]
+    quests    = d["quests"]
+    badges    = d["badges"]
+    sections  = d["album_sections"]
+    stats     = d["stats"]
+    inventory = d.get("inventory", [])
 
     if active and active.get("image_url"):
         cm_card = f"""
@@ -9598,6 +9739,43 @@ def _render_user_page(login: str, d: dict) -> str:
 
     rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
     week_str = _current_week_start().strftime("%d/%m/%Y")
+
+    # Inventaire HTML
+    item_icons = {
+        "ticket_basic":   ("🎫", "Ticket Basic"),
+        "ticket_premium": ("🎟️", "Ticket Premium"),
+        "bonbon":         ("🍬", "Bonbon"),
+        "grande_capsule": ("💊", "Grande Capsule"),
+        "capsule":        ("💊", "Capsule"),
+        "egg":            ("🥚", "Œuf"),
+        "boost_xp":       ("⚡", "Boost XP"),
+        "boost_happiness":("🥰", "Boost Bonheur"),
+    }
+    if inventory:
+        inv_items_html = ""
+        for it in inventory:
+            key    = it["item_key"]
+            name   = it["name"] or key
+            icon_url = it["icon_url"]
+            qty    = it["qty"]
+            if icon_url:
+                icon_html = f'<img src="{icon_url}" class="inv-icon" alt="{name}">'
+            else:
+                emoji, _ = item_icons.get(key, ("📦", name))
+                icon_html = f'<div class="inv-icon-ph">{emoji}</div>'
+            inv_items_html += f"""
+        <div class="inv-item">
+          {icon_html}
+          <div class="inv-info">
+            <div class="inv-name">{name}</div>
+            <div class="inv-key">{key}</div>
+          </div>
+          <div class="inv-qty">×{qty}</div>
+        </div>"""
+        inv_html = f'<div class="inv-grid">{inv_items_html}</div>'
+    else:
+        inv_html = '<div class="muted-sm">Inventaire vide</div>'
+
     completed_count = sum(1 for q in quests if q["completed"])
     total_forms_real = sum(
         sum(1 for f in c["forms"] if f["name"] or f["image_url"])
@@ -9700,6 +9878,15 @@ a{{color:var(--cyan);text-decoration:none}}
 .album-stats-row{{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
 .week-badge{{font-family:var(--font-mono);font-size:10px;color:var(--muted);padding:4px 10px;border:1px solid var(--border);border-radius:999px}}
 body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 60% 40% at 50% 0%,rgba(0,229,255,.04) 0%,transparent 70%)}}
+/* ── Inventaire ── */
+.inv-grid{{display:flex;flex-wrap:wrap;gap:8px}}
+.inv-item{{display:flex;align-items:center;gap:8px;background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.15);border-radius:10px;padding:8px 12px;min-width:0}}
+.inv-icon{{width:32px;height:32px;object-fit:contain;border-radius:6px;flex-shrink:0}}
+.inv-icon-ph{{width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;background:rgba(255,209,102,.08);border-radius:6px}}
+.inv-info{{display:flex;flex-direction:column;gap:1px;min-width:0}}
+.inv-name{{font-family:var(--font-ui);font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.inv-key{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
+.inv-qty{{font-family:var(--font-head);font-size:16px;font-weight:900;color:var(--amber);text-shadow:0 0 12px rgba(255,209,102,.3);margin-left:auto;flex-shrink:0;padding-left:8px}}
 </style></head>
 <body>
 <div class="wrap">
@@ -9716,6 +9903,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
     <div style="display:flex;flex-direction:column;gap:16px">
       <div class="card"><div class="card-title">// MON CAPSMÖN ACTIF</div>{cm_card}</div>
       <div class="card"><div class="card-title">// BADGES</div><div class="badges-row">{badges_html}</div></div>
+      <div class="card"><div class="card-title">// INVENTAIRE</div>{inv_html}</div>
     </div>
     <div class="card">
       <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
@@ -9830,10 +10018,23 @@ def user_profile_page(login: str):
     total_cms   = sum(len(s["cms"]) for s in album_sections)
     owned_total = sum(s["owned_count"] for s in album_sections)
 
+    # Inventaire
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT inv.item_key, inv.qty, COALESCE(it.name, inv.item_key), COALESCE(it.icon_url, '')
+                FROM inventory inv
+                LEFT JOIN items it ON it.key = inv.item_key
+                WHERE inv.twitch_login=%s AND inv.qty > 0
+                ORDER BY inv.item_key ASC;
+            """, (login,))
+            inventory = [{"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3]} for r in cur.fetchall()]
+
     page_data = {
         "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
         "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
         "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
+        "inventory": inventory,
     }
     return HTMLResponse(_render_user_page(login, page_data))
 
