@@ -1516,7 +1516,8 @@ def handle_channel_points_redemption(ev: dict) -> None:
                         target_hits=target_hits,
                         xp_bonus=0,
                     )
-                    _announce(f"🤝 Drop COOP lancé par {user_name or user_login} ! Tapez !grab pour participer — XP progressif selon le nombre de participants !")
+                    # Note : drop_spawn insère déjà le message d'annonce dans bot_announcements.
+                    # On n'appelle pas _announce() ici pour éviter le doublon.
 
                     cur.execute(
                         "UPDATE cp_redemptions SET status='ok', detail=%s, drop_id=%s, processed_at=now() WHERE redemption_id=%s;",
@@ -2130,6 +2131,8 @@ def grant_xp(login: str, amount: int):
 
     login = login.strip().lower()
 
+    evo_payload = None
+
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -2137,8 +2140,10 @@ def grant_xp(login: str, amount: int):
                 (login,),
             )
 
+            ensure_active_egg(conn, login)
+
             cur.execute("""
-                SELECT cm_key, stage, xp_total
+                SELECT id, cm_key, lineage_key, stage, xp_total
                 FROM creatures_v2
                 WHERE twitch_login=%s AND is_active=true
                 LIMIT 1;
@@ -2147,37 +2152,77 @@ def grant_xp(login: str, amount: int):
             if not row:
                 return
 
-            cm_key, prev_stage, _prev_xp = row
+            creature_id, cm_key, lineage_key, prev_stage, xp_total = row
             prev_stage = int(prev_stage or 0)
+            xp_total   = int(xp_total or 0)
 
             cur.execute(
                 "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
                 (login, amount),
             )
 
+            new_xp_total = xp_total + amount
+            new_stage    = int(stage_from_xp(new_xp_total))
+
             cur.execute("""
                 UPDATE creatures_v2
-                SET xp_total = xp_total + %s,
-                    updated_at = now()
-                WHERE twitch_login=%s AND cm_key=%s
-                RETURNING xp_total;
-            """, (amount, login, cm_key))
-            new_xp_total = int(cur.fetchone()[0])
+                SET xp_total=%s,
+                    stage=%s,
+                    updated_at=now()
+                WHERE id=%s;
+            """, (new_xp_total, new_stage, creature_id))
 
-            new_stage = int(stage_from_xp(new_xp_total))
-            if new_stage != prev_stage:
+            stage_changed = (new_stage > prev_stage)
+
+            # Hatch (stage 0 → 1) : si pas de lignée, en attribuer une au hasard
+            if prev_stage == 0 and new_stage >= 1:
+                if not lineage_key:
+                    lineage_key = pick_random_lineage(conn)
+                    if lineage_key:
+                        cur.execute("""
+                            UPDATE creatures_v2
+                            SET lineage_key=%s, updated_at=now()
+                            WHERE id=%s;
+                        """, (lineage_key, creature_id))
+
+                if lineage_key and cm_key == "egg":
+                    picked = pick_cm_for_lineage(conn, lineage_key)
+                    if picked:
+                        cm_key = picked
+                        cur.execute("""
+                            UPDATE creatures_v2
+                            SET cm_key=%s, updated_at=now()
+                            WHERE id=%s;
+                        """, (cm_key, creature_id))
+
+            # Préparer le payload d'évolution si changement de stage
+            if stage_changed and new_stage >= 1:
                 cur.execute("""
-                    UPDATE creatures_v2
-                    SET stage=%s,
-                        updated_at=now()
-                    WHERE twitch_login=%s AND cm_key=%s;
-                """, (new_stage, login, cm_key))
+                    SELECT name, image_url, sound_url
+                    FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
+                """, (cm_key, new_stage))
+                f = cur.fetchone()
+                if f:
+                    form_name, image_url, sound_url = f
+                    evo_payload = {
+                        "twitch_login": login,
+                        "cm_key":       cm_key,
+                        "stage":        new_stage,
+                        "name":         form_name,
+                        "image_url":    image_url,
+                        "sound_url":    sound_url,
+                    }
 
             _ensure_quests(cur, login)
             _quest_progress(cur, login, 'xp', amount)
             _quest_check_top10(cur, login)
 
         conn.commit()
+
+    # Déclencher l'overlay d'évolution hors transaction
+    if evo_payload:
+        trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
 
 
 
@@ -2300,24 +2345,30 @@ def coop_xp_for_count(count: int) -> int:
 def resolve_drop(drop_id: int):
     with get_db() as conn:
         with conn.cursor() as cur:
+            # Atomique : on tente de passer status 'active' → 'resolving' en une seule opération.
+            # Si deux appels concurrents arrivent, un seul réussit le RETURNING — l'autre ne voit rien.
             cur.execute(
                 """
-                SELECT id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at
-                FROM drops
-                WHERE id=%s;
+                UPDATE drops
+                SET status='resolving'
+                WHERE id=%s AND status='active'
+                RETURNING id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, expires_at;
                 """,
                 (drop_id,),
             )
             d = cur.fetchone()
+            conn.commit()  # libérer le verrou immédiatement
             if not d:
+                # Soit le drop n'existe pas, soit il est déjà en cours de résolution ou résolu
                 return None
 
-            _id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, status, expires_at = d
-            if status != 'active':
-                return None
+            _id, mode, title, xp_bonus, ticket_key, ticket_qty, target_hits, expires_at = d
 
             cur.execute("SELECT now() >= %s;", (expires_at,))
             if not bool(cur.fetchone()[0]):
+                # Pas encore expiré : remettre 'active'
+                cur.execute("UPDATE drops SET status='active' WHERE id=%s;", (drop_id,))
+                conn.commit()
                 return None
 
             cur.execute(
@@ -2679,7 +2730,7 @@ def init_db():
                   ticket_key TEXT NOT NULL DEFAULT 'ticket_basic',
                   ticket_qty INT NOT NULL DEFAULT 1,
                   target_hits INT,
-                  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','resolved','expired')),
+                  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','resolving','resolved','expired')),
                   winner_login TEXT,
                   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                   expires_at TIMESTAMPTZ NOT NULL,
@@ -2874,6 +2925,18 @@ def init_db():
               ('candy_10',        'Très gourmand',     'Faire manger 10 bonbons à ton CM',               'candy',      10, FALSE, 80, 'grande_capsule',  2, 'badge_gourmand'),
               ('presence_120min', 'Fidèle',            'Rester au moins 2h en stream cette semaine',     'presence', 7200, FALSE, 75, NULL,             0, 'badge_loyal')
             ON CONFLICT (key) DO NOTHING;
+            """)
+
+            # Migration : ajout du statut 'resolving' dans le CHECK constraint de drops
+            # (le CREATE TABLE IF NOT EXISTS ne modifie pas une contrainte existante)
+            cur.execute("""
+                DO $$
+                BEGIN
+                    ALTER TABLE drops DROP CONSTRAINT IF EXISTS drops_status_check;
+                    ALTER TABLE drops ADD CONSTRAINT drops_status_check
+                        CHECK (status IN ('active','resolving','resolved','expired'));
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
             """)
 
 
@@ -3076,17 +3139,6 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
                 (mode, title, media_url, xp_bonus, ticket_key, ticket_qty, target_hits, duration),
             )
             drop_id = int(cur.fetchone()[0])
-
-
-            # ← AJOUTER ICI
-            if mode == "first":
-                announce_msg = f"⚡ Drop '{title}' — tapez !grab, LE PREMIER gagne ! ({duration}s)"
-            elif mode == "random":
-                announce_msg = f"🎲 Drop '{title}' — tapez !grab pour tenter votre chance ! ({duration}s)"
-            else:
-                announce_msg = f"🤝 Drop COOP '{title}' — tapez !grab, tout le monde gagne du XP ! ({duration}s)"
-            cur.execute("INSERT INTO bot_announcements (message) VALUES (%s);", (announce_msg,))
-            # ← FIN AJOUT
 
         conn.commit()
 
@@ -8184,7 +8236,7 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    if amount <= 0 or amount > 100:
+    if amount <= 0 or amount > 10000:
         raise HTTPException(status_code=400, detail="Amount out of range")
 
     evo_payload = None

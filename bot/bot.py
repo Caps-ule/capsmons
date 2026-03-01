@@ -1238,23 +1238,16 @@ class Bot(commands.Bot):
                     )
                 
                 else:
-                    # COOP : annonce selon le nombre de participants
-                    count = len(winners)
-                    if count == 0:
-                        msg = f"⌛ Drop COOP '{title}' expiré sans participants."
-                    elif count == 1:
-                        msg = f"🤝 Drop COOP '{title}' — 1 participant, XP entre 20 et 30 !"
-                    elif count <= 3:
-                        msg = f"🤝 Drop COOP '{title}' — {count} participants, XP entre 30 et 50 chacun !"
-                    elif count <= 5:
-                        msg = f"🤝 Drop COOP '{title}' — {count} participants, XP entre 50 et 75 chacun !"
-                    else:
-                        msg = f"🔥 Drop COOP '{title}' — {count} participants, XP entre 100 et 250 chacun !"
+                    # COOP : l'annonce des gagnants et de l'XP est déjà faite par _announce()
+                    # dans resolve_drop côté serveur (via bot_announcements). On ne renvoie pas
+                    # un second message ici pour éviter le doublon.
+                    msg = None
                 
             try:
-                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                if chan:
-                    await chan.send(msg)
+                if msg:
+                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                    if chan:
+                        await chan.send(msg)
             except Exception:
                 pass
 
