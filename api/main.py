@@ -7871,7 +7871,7 @@ def overlay_evolution_page():
       </div>
     </div>
 
-    <audio id="snd"></audio>
+<audio id="sfx" preload="auto" src="/static/evo.mp3"></audio>
   </div>
 </div>
 
@@ -8199,7 +8199,6 @@ tick();
 </script>
 </body>
 </html>
-
 """)
 
 
