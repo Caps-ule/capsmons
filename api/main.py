@@ -1454,6 +1454,7 @@ def handle_channel_points_redemption(ev: dict) -> None:
             capsule_reward_id = (kv_get(cur, "cp_reward_capsule_id", "") or "").strip()
             candy_reward_id = (kv_get(cur, "cp_reward_candy_id", "") or "").strip()
             egg_reward_id = (kv_get(cur, "cp_reward_egg_id", "") or "").strip()
+            event_reward_id = (kv_get(cur, "event_cp_reward_id", "") or "").strip()
 
             action = None
             if drop_reward_id and reward_id == drop_reward_id:
@@ -1464,6 +1465,8 @@ def handle_channel_points_redemption(ev: dict) -> None:
                 action = {"type": "grant_candy"}
             elif egg_reward_id and reward_id == egg_reward_id:
                 action = {"type": "grant_egg"}
+            elif event_reward_id and reward_id == event_reward_id:
+                action = {"type": "trigger_event"}
 
             if not action:
                 # non mappé -> on log seulement
@@ -1556,6 +1559,21 @@ def handle_channel_points_redemption(ev: dict) -> None:
                         (f"granted:{item_key}", redemption_id),
                     )
 
+                elif action["type"] == "trigger_event":
+                    # Choisir un event aléatoire parmi le catalogue
+                    import random as _rand
+                    event_keys = list(EVENT_CATALOG.keys())
+                    chosen_key = _rand.choice(event_keys)
+                    ev_info = EVENT_CATALOG[chosen_key]
+                    # start_event sera appelé hors transaction (après commit)
+                    cur.execute(
+                        "UPDATE cp_redemptions SET status='ok', detail=%s, processed_at=now() WHERE redemption_id=%s;",
+                        (f"event:{chosen_key}", redemption_id),
+                    )
+                    # stocker pour déclencher hors transaction
+                    action["_chosen_event_key"] = chosen_key
+                    action["_triggered_by"] = user_name or user_login
+
                 else:
                     cur.execute(
                         "UPDATE cp_redemptions SET status='ignored', detail='unknown_action', processed_at=now() WHERE redemption_id=%s;",
@@ -1571,6 +1589,13 @@ def handle_channel_points_redemption(ev: dict) -> None:
                 raise
 
         conn.commit()
+
+    # Déclencher l'event hors transaction pour éviter les locks
+    if action and action.get("type") == "trigger_event" and action.get("_chosen_event_key"):
+        try:
+            start_event(action["_chosen_event_key"], triggered_by=action.get("_triggered_by", "cp"))
+        except Exception:
+            pass
 
 
 def pick_random_lineage(conn) -> str | None:
@@ -2341,6 +2366,196 @@ def coop_xp_for_count(count: int) -> int:
         return random.randint(50, 75)
     else:
         return random.randint(100, 250)
+# =============================================================================
+# SYSTÈME D'ÉVÉNEMENTS
+# =============================================================================
+
+EVENT_CATALOG = {
+    "vent_ouest": {
+        "key":         "vent_ouest",
+        "name":        "Vent d'Ouest",
+        "emoji":       "🌬️",
+        "desc":        "XP passif × 2 pendant 10 minutes",
+        "duration":    600,
+    },
+    "pluie_etoiles": {
+        "key":         "pluie_etoiles",
+        "name":        "Pluie d'Étoiles Filantes",
+        "emoji":       "🌠",
+        "desc":        "Un drop toutes les 3 minutes pendant 10 minutes",
+        "duration":    600,
+    },
+    "golden_hour": {
+        "key":         "golden_hour",
+        "name":        "Golden Hour",
+        "emoji":       "✨",
+        "desc":        "+1% bonheur par message dans le tchat (max +5%) pendant 10 minutes",
+        "duration":    600,
+    },
+    "douce_chaleur": {
+        "key":         "douce_chaleur",
+        "name":        "Douce Chaleur",
+        "emoji":       "🔥",
+        "desc":        "Drop COOP spécial : chaque participant reçoit un œuf",
+        "duration":    600,
+        "drop_type":   "egg",
+    },
+    "douce_brise": {
+        "key":         "douce_brise",
+        "name":        "Douce Brise",
+        "emoji":       "💨",
+        "desc":        "Drop COOP spécial : XP doublé pour chaque participant",
+        "duration":    600,
+        "drop_type":   "double_xp",
+    },
+    "pluie_sucree": {
+        "key":         "pluie_sucree",
+        "name":        "Pluie Sucrée",
+        "emoji":       "🍬",
+        "desc":        "Drop COOP spécial : chaque participant gagne entre 3 et 10 bonheur",
+        "duration":    600,
+        "drop_type":   "happiness",
+    },
+}
+
+
+def get_active_event() -> dict | None:
+    """Retourne l'event actif s'il en existe un non expiré, sinon None."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, event_key, started_at, ends_at, triggered_by
+                FROM active_event
+                WHERE ends_at > now()
+                ORDER BY started_at DESC
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+    if not row:
+        return None
+    _id, key, started_at, ends_at, triggered_by = row
+    ev = EVENT_CATALOG.get(key, {})
+    return {
+        "id":           _id,
+        "key":          key,
+        "name":         ev.get("name", key),
+        "emoji":        ev.get("emoji", "✨"),
+        "desc":         ev.get("desc", ""),
+        "drop_type":    ev.get("drop_type"),
+        "started_at":   started_at.isoformat() if started_at else None,
+        "ends_at":      ends_at.isoformat() if ends_at else None,
+        "triggered_by": triggered_by,
+    }
+
+
+def start_event(event_key: str, triggered_by: str = "auto") -> dict:
+    """Démarre un event. Annule l'event actif si présent."""
+    ev = EVENT_CATALOG.get(event_key)
+    if not ev:
+        raise HTTPException(status_code=400, detail=f"Unknown event: {event_key}")
+    duration = int(ev["duration"])
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Invalider les events encore actifs
+            cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
+            cur.execute("""
+                INSERT INTO active_event (event_key, triggered_by, ends_at)
+                VALUES (%s, %s, now() + (%s || ' seconds')::interval)
+                RETURNING id, started_at, ends_at;
+            """, (event_key, triggered_by, duration))
+            row = cur.fetchone()
+        conn.commit()
+    _id, started_at, ends_at = row
+    _announce(f"{ev['emoji']} ÉVÉNEMENT : {ev['name']} — {ev['desc']} !")
+    return {
+        "ok": True, "id": _id, "event_key": event_key,
+        "name": ev["name"], "ends_at": ends_at.isoformat(),
+    }
+
+
+# ── Endpoints events ─────────────────────────────────────────────────────────
+
+@app.get("/internal/event/active")
+def internal_event_active(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    ev = get_active_event()
+    return {"active": ev is not None, "event": ev}
+
+
+@app.post("/internal/event/start")
+def internal_event_start(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    event_key = str(payload.get("event_key", "")).strip()
+    triggered_by = str(payload.get("triggered_by", "auto")).strip()
+    return start_event(event_key, triggered_by)
+
+
+@app.post("/internal/event/stop")
+def internal_event_stop(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/admin/events/json")
+def admin_events_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    ev = get_active_event()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Config event
+            ev_keys = [
+                "event_auto_enabled", "event_chance_pct",
+                "event_cp_reward_id", "event_special_drop_duration",
+                "event_special_drop_target_hits",
+            ]
+            cfg = kv_get_many(cur, ev_keys)
+    return {
+        "active_event": ev,
+        "catalog":      list(EVENT_CATALOG.values()),
+        "config":       cfg,
+    }
+
+
+@app.post("/admin/events/start")
+def admin_events_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    event_key = str(payload.get("event_key", "")).strip()
+    return start_event(event_key, triggered_by="admin")
+
+
+@app.post("/admin/events/stop")
+def admin_events_stop(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/events/config")
+def admin_events_config(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            if "event_auto_enabled" in payload:
+                kv_set(cur, "event_auto_enabled", "true" if payload["event_auto_enabled"] else "false")
+            if "event_chance_pct" in payload:
+                kv_set(cur, "event_chance_pct", str(max(0, min(100, int(payload["event_chance_pct"])))))
+            if "event_cp_reward_id" in payload:
+                kv_set(cur, "event_cp_reward_id", str(payload["event_cp_reward_id"]).strip())
+            if "event_special_drop_duration" in payload:
+                kv_set(cur, "event_special_drop_duration", str(max(10, min(120, int(payload["event_special_drop_duration"])))))
+            if "event_special_drop_target_hits" in payload:
+                kv_set(cur, "event_special_drop_target_hits", str(max(2, min(200, int(payload["event_special_drop_target_hits"])))))
+        conn.commit()
+    return {"ok": True}
+
+
 
 def resolve_drop(drop_id: int):
     with get_db() as conn:
@@ -2388,31 +2603,67 @@ def resolve_drop(drop_id: int):
                     winners = [random.choice(participants)]
 
             elif mode == 'coop':
-                # Nouveau système : tout le monde gagne, XP selon le nombre
+                # Tout le monde gagne, XP selon le nombre
                 winners = participants[:]
 
             if winners:
                 if mode == 'coop':
                     count = len(winners)
+                    # Détecter si c'est un drop spécial d'event (préfixe dans ticket_key)
+                    special = None
+                    if (ticket_key or "").startswith("__event_"):
+                        special = ticket_key[len("__event_"):]  # egg / double_xp / happiness
+
                     xp_details = []
                     for w in winners:
-                        xp_amount = coop_xp_for_count(count)
-                        grant_xp(w, xp_amount)
-                        xp_details.append((w, xp_amount))
+                        if special == "egg":
+                            # Donner un œuf random dans l'inventaire
+                            with get_db() as _conn:
+                                with _conn.cursor() as _cur:
+                                    try:
+                                        picked_egg = _pick_item_db(_cur, "egg")
+                                        _grant_item_db(_cur, w, picked_egg["item_key"], 1)
+                                    except Exception:
+                                        pass
+                                _conn.commit()
+                        elif special == "happiness":
+                            # Donner entre 3 et 10 bonheur
+                            hbonus = random.randint(3, 10)
+                            with get_db() as _conn:
+                                with _conn.cursor() as _cur:
+                                    _cur.execute("""
+                                        UPDATE creatures_v2
+                                        SET happiness = LEAST(100, GREATEST(0, COALESCE(happiness,50) + %s)),
+                                            updated_at=now()
+                                        WHERE twitch_login=%s AND is_active=true;
+                                    """, (hbonus, w))
+                                _conn.commit()
+                        else:
+                            # XP normal (double si special == "double_xp")
+                            xp_amount = coop_xp_for_count(count)
+                            if special == "double_xp":
+                                xp_amount *= 2
+                            grant_xp(w, xp_amount)
+                            xp_details.append((w, xp_amount))
 
                     # Construire le message d'annonce
-                    if len(xp_details) == 1:
-                        w, xp = xp_details[0]
-                        _announce(f"⏱️ Drop COOP '{title}' terminé ! @{w} gagne {xp} XP !")
-                    elif len(xp_details) <= 5:
-                        parts = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details])
-                        _announce(f"⏱️ Drop COOP '{title}' terminé ! {parts}")
-                    else:
-                        # Trop de monde pour tout lister : résumé
-                        total = sum(xp for _, xp in xp_details)
-                        best_w, best_xp = max(xp_details, key=lambda x: x[1])
-                        parts_short = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details[:5]])
-                        _announce(f"🔥 Drop COOP '{title}' terminé ! {len(xp_details)} participants ! {parts_short}... | Meilleur tirage : @{best_w} +{best_xp}XP !")
+                    if special == "egg":
+                        _announce(f"🔥 Drop COOP Douce Chaleur '{title}' terminé ! {count} participant(s) — chacun reçoit un œuf !")
+                    elif special == "happiness":
+                        _announce(f"🍬 Drop COOP Pluie Sucrée '{title}' terminé ! {count} participant(s) — +3 à 10 bonheur chacun !")
+                    elif xp_details:
+                        if len(xp_details) == 1:
+                            w, xp = xp_details[0]
+                            _announce(f"⏱️ Drop COOP '{title}' terminé ! @{w} gagne {xp} XP !")
+                        elif len(xp_details) <= 5:
+                            parts = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details])
+                            suffix = " (Douce Brise — XP×2 !)" if special == "double_xp" else ""
+                            _announce(f"⏱️ Drop COOP '{title}' terminé ! {parts}{suffix}")
+                        else:
+                            best_w, best_xp = max(xp_details, key=lambda x: x[1])
+                            parts_short = ", ".join([f"@{w} +{xp}XP" for w, xp in xp_details[:5]])
+                            suffix = " (Douce Brise — XP×2 !)" if special == "double_xp" else ""
+                            _announce(f"🔥 Drop COOP '{title}' terminé ! {len(xp_details)} participants ! {parts_short}...{suffix}")
 
                     winner_login = None  # pas de winner unique en coop
 
@@ -2867,6 +3118,15 @@ def init_db():
             );
             """)
             cur.execute("""
+            CREATE TABLE IF NOT EXISTS active_event (
+              id SERIAL PRIMARY KEY,
+              event_key TEXT NOT NULL,
+              started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              ends_at TIMESTAMPTZ NOT NULL,
+              triggered_by TEXT NOT NULL DEFAULT 'auto'
+            );
+            """)
+            cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
               msg_id TEXT PRIMARY KEY,
               msg_type TEXT,
@@ -2998,6 +3258,26 @@ async def eventsub_handler(request: Request):
 # =============================================================================
 # BONHEUR
 # =============================================================================
+
+@app.post("/internal/happiness/add_one")
+def happiness_add_one(payload: dict, x_api_key: str | None = Header(default=None)):
+    """Ajoute un bonus de bonheur à un viewer (utilisé par l'event Golden Hour)."""
+    require_internal_key(x_api_key)
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    amount = min(10, max(1, int(payload.get("amount", 1) or 1)))
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE creatures_v2
+                SET happiness = LEAST(100, GREATEST(0, COALESCE(happiness,50) + %s)),
+                    updated_at=now()
+                WHERE twitch_login=%s AND is_active=true;
+            """, (amount, login))
+        conn.commit()
+    return {"ok": True}
+
 
 @app.post("/internal/happiness/batch")
 def happiness_batch(payload: dict, x_api_key: str | None = Header(default=None)):
@@ -8239,6 +8519,13 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
     if amount <= 0 or amount > 10000:
         raise HTTPException(status_code=400, detail="Amount out of range")
 
+    # Vent d'Ouest : XP passif × 2 (seulement pour l'XP de chat, amount=1)
+    passive = bool(payload.get("passive", False))
+    if passive and amount == 1:
+        ev = get_active_event()
+        if ev and ev["key"] == "vent_ouest":
+            amount = 2
+
     evo_payload = None
     prev_stage = new_stage = new_xp_total = 0
     cm_assigned = None  # si tu veux le renvoyer au bot
@@ -9118,6 +9405,24 @@ def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(
     return {"ok": True, "drop_id": drop_id}
 
 
+@app.get("/admin/points/json")
+def admin_points_json(credentials: HTTPBasicCredentials = Depends(security)):
+    """Endpoint JSON pour la page Channel Points du SPA."""
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            keys = [
+                "cp_enabled", "cp_reward_drop_coop_id", "cp_reward_capsule_id",
+                "cp_reward_candy_id", "cp_reward_egg_id", "cp_capsule_item_key",
+                "cp_candy_item_key", "cp_egg_item_key", "cp_drop_pick_kind",
+                "cp_drop_duration_seconds", "cp_drop_target_hits", "cp_drop_ticket_qty",
+                "cp_drop_fallback_icon_url", "event_cp_reward_id",
+                "broadcaster_user_id",
+            ]
+            cfg = kv_get_many(cur, keys)
+    return {"ok": True, "config": cfg}
+
+
 @app.post("/admin/points/save")
 def admin_points_save(
     cp_enabled: str | None = Form(None),
@@ -9133,6 +9438,7 @@ def admin_points_save(
     cp_drop_target_hits: str | None = Form(None),
     cp_drop_ticket_qty: str | None = Form(None),
     cp_drop_fallback_icon_url: str | None = Form(None),
+    event_cp_reward_id: str | None = Form(None),
     credentials: HTTPBasicCredentials = Depends(security),
 ):
     require_admin(credentials)
@@ -9154,6 +9460,7 @@ def admin_points_save(
             kv_set(cur, "cp_drop_target_hits", str(int(cp_drop_target_hits or 10)))
             kv_set(cur, "cp_drop_ticket_qty", str(int(cp_drop_ticket_qty or 1)))
             kv_set(cur, "cp_drop_fallback_icon_url", (cp_drop_fallback_icon_url or "").strip())
+            kv_set(cur, "event_cp_reward_id", (event_cp_reward_id or "").strip())
         conn.commit()
 
     return RedirectResponse(url="/admin/points?msg=Sauvegardé", status_code=302)

@@ -47,6 +47,13 @@ _show_last = {"global": 0.0, "users": {}}   # cooldown overlay show
 _rp_cache = {"ts": 0.0, "rp": {}}           # cache RP (bundle)
 _last_drop_announce = {"sig": None}         # anti double annonce drops
 
+# Events
+API_EVENT_ACTIVE_URL  = "http://api:8000/internal/event/active"
+API_EVENT_START_URL   = "http://api:8000/internal/event/start"
+_current_event: dict | None = None          # cache RAM de l'event actif
+_golden_hour_gains: dict[str, float] = {}   # bonheur gagné par user pendant Golden Hour
+_event_drop_last: float = 0.0               # timestamp du dernier drop de "pluie_etoiles"
+
 
 # ============================================================================
 # HELPERS (texte / RP)
@@ -526,8 +533,12 @@ class Bot(commands.Bot):
         self.loop.create_task(self.auto_drop_loop())
         # Decay Happiness auto
         self.loop.create_task(self.happiness_decay_loop())
-        # Dropp coop
+        # Annonces bot
         self.loop.create_task(self.announcements_loop())
+        # Events
+        self.loop.create_task(self.event_loop())
+        self.loop.create_task(self.event_sync_loop())
+        self.loop.create_task(self.event_drop_loop())
 
     # ------------------------------------------------------------------------
     # Commande !drop
@@ -645,6 +656,23 @@ class Bot(commands.Bot):
         cooldown = int(os.environ.get("CHAT_XP_COOLDOWN_SECONDS", "20"))
         last = _last_xp_at.get(login, 0.0)
 
+        # Golden Hour : +1% bonheur par message, max 5% cumulé
+        global _current_event, _golden_hour_gains
+        if _current_event and _current_event.get("key") == "golden_hour":
+            gained = _golden_hour_gains.get(login, 0.0)
+            if gained < 5.0:
+                bonus_h = min(1.0, 5.0 - gained)
+                _golden_hour_gains[login] = gained + bonus_h
+                try:
+                    requests.post(
+                        "http://api:8000/internal/happiness/add_one",
+                        headers={"X-API-Key": API_KEY},
+                        json={"twitch_login": login, "amount": int(bonus_h)},
+                        timeout=2,
+                    )
+                except Exception:
+                    pass
+
         if now - last >= cooldown:
             _last_xp_at[login] = now
 
@@ -653,7 +681,7 @@ class Bot(commands.Bot):
                 resp = requests.post(
                     API_XP_URL,
                     headers={"X-API-Key": API_KEY},
-                    json={"twitch_login": login, "amount": 1},
+                    json={"twitch_login": login, "amount": 1, "passive": True},
                     timeout=2,
                 )
 
@@ -1160,7 +1188,209 @@ class Bot(commands.Bot):
                     print("[BOT] Presence API error:", e, flush=True)
 
     # ------------------------------------------------------------------------
-    # Drops announce loop (poll_result)
+    # ------------------------------------------------------------------------
+    # Event loop (timer 30min + chance)
+    # ------------------------------------------------------------------------
+    async def event_loop(self):
+        """Toutes les 30 min : chance de déclencher un event aléatoire."""
+        global _current_event, _golden_hour_gains, _event_drop_last
+        await asyncio.sleep(10)
+
+        while True:
+            await asyncio.sleep(1800)  # 30 minutes
+
+            try:
+                r = requests.get(API_LIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                if r.status_code != 200 or not r.json().get("is_live", False):
+                    continue
+            except Exception:
+                continue
+
+            # Vérifier si un event est déjà actif
+            try:
+                r = requests.get(API_EVENT_ACTIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                if r.ok and r.json().get("active"):
+                    continue  # event déjà en cours
+            except Exception:
+                continue
+
+            # Récupérer la chance configurée (défaut 30%)
+            chance_pct = 30
+            try:
+                import requests as _req
+                rc = _req.get(
+                    "http://api:8000/admin/events/json",
+                    auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                    timeout=2,
+                )
+                if rc.ok:
+                    chance_pct = int(rc.json().get("config", {}).get("event_chance_pct", 30) or 30)
+            except Exception:
+                pass
+
+            if random.randint(1, 100) > chance_pct:
+                continue  # pas de chance cette fois
+
+            # Choisir un event aléatoire
+            import random as _rand
+            event_keys = ["vent_ouest","pluie_etoiles","golden_hour","douce_chaleur","douce_brise","pluie_sucree"]
+            chosen = _rand.choice(event_keys)
+
+            try:
+                r = requests.post(
+                    API_EVENT_START_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json={"event_key": chosen, "triggered_by": "auto"},
+                    timeout=3,
+                )
+                if r.ok:
+                    data = r.json()
+                    # Si c'est un drop spécial, le lancer immédiatement
+                    await self._maybe_launch_event_drop(chosen)
+                    # Reset Golden Hour gains
+                    if chosen == "golden_hour":
+                        _golden_hour_gains = {}
+                    # Mettre à jour cache RAM
+                    _current_event = {"key": chosen}
+                    _event_drop_last = time.time()
+            except Exception as e:
+                print("[BOT] event_loop error:", e, flush=True)
+
+    async def event_sync_loop(self):
+        """Synchronise le cache RAM de l'event actif depuis l'API toutes les 30 secondes."""
+        global _current_event, _golden_hour_gains, _event_drop_last
+        await asyncio.sleep(5)
+        while True:
+            await asyncio.sleep(30)
+            try:
+                r = requests.get(API_EVENT_ACTIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                if r.ok:
+                    data = r.json()
+                    prev_key = (_current_event or {}).get("key")
+                    new_ev = data.get("event") if data.get("active") else None
+                    new_key = (new_ev or {}).get("key")
+
+                    # Reset Golden Hour si l'event a changé ou s'est terminé
+                    if prev_key == "golden_hour" and new_key != "golden_hour":
+                        _golden_hour_gains = {}
+
+                    # Nouveau drop event (pluie d'étoiles) → reset timer
+                    if prev_key != "pluie_etoiles" and new_key == "pluie_etoiles":
+                        _event_drop_last = time.time()
+                        await self._maybe_launch_event_drop("pluie_etoiles")
+
+                    _current_event = new_ev
+            except Exception:
+                pass
+
+    async def event_drop_loop(self):
+        """Gère la 'Pluie d'Étoiles Filantes' : un drop toutes les 3 minutes."""
+        global _current_event, _event_drop_last
+        await asyncio.sleep(15)
+        while True:
+            await asyncio.sleep(30)
+            try:
+                ev = _current_event
+                if not ev or ev.get("key") != "pluie_etoiles":
+                    continue
+                if time.time() - _event_drop_last < 180:  # 3 minutes
+                    continue
+                _event_drop_last = time.time()
+                await self._maybe_launch_event_drop("pluie_etoiles")
+            except Exception as e:
+                print("[BOT] event_drop_loop error:", e, flush=True)
+
+    async def _maybe_launch_event_drop(self, event_key: str):
+        """Lance un drop spécial selon le type d'event."""
+        special_events = {"douce_chaleur": "egg", "douce_brise": "double_xp", "pluie_sucree": "happiness"}
+
+        if event_key == "pluie_etoiles":
+            # Drop normal aléatoire
+            try:
+                pr = requests.get(
+                    f"http://api:8000/internal/items/pick?kind=any",
+                    headers={"X-API-Key": API_KEY}, timeout=2,
+                )
+                if pr.status_code != 200:
+                    return
+                picked = pr.json()
+                payload = {
+                    "mode": "random",
+                    "title": picked.get("item_name", "Étoile filante"),
+                    "media_url": picked.get("icon_url", ""),
+                    "duration_seconds": 60,
+                    "xp_bonus": 0,
+                    "ticket_key": picked.get("item_key", "ticket_basic"),
+                    "ticket_qty": 1,
+                }
+                if not payload["media_url"]:
+                    return
+                rr = requests.post(API_DROP_SPAWN_URL, headers={"X-API-Key": API_KEY}, json=payload, timeout=3)
+                if rr.ok:
+                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                    if chan:
+                        await chan.send(f"🌠 Pluie d'Étoiles Filantes — {picked.get('item_name','un objet')} à saisir ! !grab")
+            except Exception as e:
+                print("[BOT] pluie_etoiles drop error:", e, flush=True)
+
+        elif event_key in special_events:
+            drop_type = special_events[event_key]
+            names = {
+                "douce_chaleur": "🔥 Douce Chaleur",
+                "douce_brise":   "💨 Douce Brise",
+                "pluie_sucree":  "🍬 Pluie Sucrée",
+            }
+            # Durée configurable (défaut 60s)
+            duration = 60
+            target_hits = 10
+            try:
+                rc = requests.get(
+                    "http://api:8000/admin/events/json",
+                    auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                    timeout=2,
+                )
+                if rc.ok:
+                    cfg = rc.json().get("config", {})
+                    duration = int(cfg.get("event_special_drop_duration", 60) or 60)
+                    target_hits = int(cfg.get("event_special_drop_target_hits", 10) or 10)
+            except Exception:
+                pass
+            payload = {
+                "mode": "coop",
+                "title": names.get(event_key, event_key),
+                "media_url": "https://i.imgur.com/placeholder.png",
+                "duration_seconds": duration,
+                "xp_bonus": 0,
+                "ticket_key": f"__event_{drop_type}",  # clé spéciale détectée dans resolve_drop
+                "ticket_qty": 1,
+                "target_hits": target_hits,
+            }
+            try:
+                # Chercher une icône générique dans les items
+                pr = requests.get(
+                    f"http://api:8000/internal/items/pick?kind=any",
+                    headers={"X-API-Key": API_KEY}, timeout=2,
+                )
+                if pr.ok:
+                    payload["media_url"] = pr.json().get("icon_url", payload["media_url"]) or payload["media_url"]
+            except Exception:
+                pass
+
+            try:
+                rr = requests.post(API_DROP_SPAWN_URL, headers={"X-API-Key": API_KEY}, json=payload, timeout=3)
+                if rr.ok:
+                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                    if chan:
+                        descs = {
+                            "douce_chaleur": "tout le monde reçoit un œuf !",
+                            "douce_brise":   "XP doublé pour tous !",
+                            "pluie_sucree":  "+3 à 10 bonheur pour tous !",
+                        }
+                        await chan.send(f"{names.get(event_key,'Event')} — Drop COOP spécial ! {descs.get(event_key,'')} Tapez !grab !")
+            except Exception as e:
+                print(f"[BOT] {event_key} drop error:", e, flush=True)
+
+        # Drops announce loop (poll_result)
     # ------------------------------------------------------------------------
     async def drop_announce_loop(self):
         await asyncio.sleep(2)

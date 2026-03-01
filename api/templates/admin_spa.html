@@ -929,6 +929,9 @@
   <div class="nav-item" data-page="points" onclick="nav(this)">
     <span class="icon">◈</span> Channel Points
   </div>
+  <div class="nav-item" data-page="events" onclick="nav(this)">
+    <span class="icon">✨</span> Événements
+  </div>
 
   <div class="sidebar-footer">
     <label class="toggle-switch">
@@ -1767,9 +1770,84 @@
         <div class="card-title">◈ CHANNEL POINTS</div>
         <div class="muted mono" style="margin-bottom:16px">// Configuration des récompenses Twitch</div>
 
-        <div id="points_form_content">
-          <!-- Chargé dynamiquement depuis /admin/points -->
-          <div class="muted">Chargement…</div>
+        <div class="form-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="cp_enabled">
+            <div class="toggle-track"></div>
+            <span>Système Channel Points activé</span>
+          </label>
+        </div>
+
+        <div class="form-row" style="flex-wrap:wrap;gap:16px;margin-top:12px">
+          <div class="form-group" style="min-width:220px">
+            <div class="form-label">REWARD ID — DROP COOP</div>
+            <input type="text" id="cp_reward_drop_coop_id" placeholder="reward_id Twitch" style="width:100%">
+          </div>
+          <div class="form-group" style="min-width:220px">
+            <div class="form-label">REWARD ID — CAPSULE</div>
+            <input type="text" id="cp_reward_capsule_id" placeholder="reward_id Twitch" style="width:100%">
+          </div>
+          <div class="form-group" style="min-width:220px">
+            <div class="form-label">REWARD ID — BONBON</div>
+            <input type="text" id="cp_reward_candy_id" placeholder="reward_id Twitch" style="width:100%">
+          </div>
+          <div class="form-group" style="min-width:220px">
+            <div class="form-label">REWARD ID — ŒUF</div>
+            <input type="text" id="cp_reward_egg_id" placeholder="reward_id Twitch" style="width:100%">
+          </div>
+          <div class="form-group" style="min-width:220px">
+            <div class="form-label">REWARD ID — ÉVÉNEMENT ✨</div>
+            <input type="text" id="event_cp_reward_id" placeholder="reward_id Twitch" style="width:100%">
+          </div>
+        </div>
+
+        <div class="form-row" style="flex-wrap:wrap;gap:16px;margin-top:4px">
+          <div class="form-group">
+            <div class="form-label">ITEM CAPSULE</div>
+            <input type="text" id="cp_capsule_item_key" placeholder="grande_capsule" style="width:180px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">ITEM BONBON</div>
+            <input type="text" id="cp_candy_item_key" placeholder="bonbon_2" style="width:180px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">ITEM ŒUF FORCÉ</div>
+            <input type="text" id="cp_egg_item_key" placeholder="(aléatoire si vide)" style="width:180px">
+          </div>
+        </div>
+
+        <div class="form-row" style="flex-wrap:wrap;gap:16px;margin-top:4px">
+          <div class="form-group">
+            <div class="form-label">TYPE ITEM DROP COOP</div>
+            <select id="cp_drop_pick_kind" style="width:140px">
+              <option value="any">any</option>
+              <option value="xp">xp</option>
+              <option value="candy">candy</option>
+              <option value="egg">egg</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE DROP COOP (s)</div>
+            <input type="number" id="cp_drop_duration_seconds" min="5" max="120" value="20" style="width:110px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">TARGET HITS COOP</div>
+            <input type="number" id="cp_drop_target_hits" min="2" max="200" value="10" style="width:110px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">QTY TICKET COOP</div>
+            <input type="number" id="cp_drop_ticket_qty" min="1" max="50" value="1" style="width:110px">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top:8px;margin-bottom:16px">
+          <div class="form-label">FALLBACK IMAGE URL (DROP COOP)</div>
+          <input type="text" id="cp_drop_fallback_icon_url" placeholder="https://…" style="width:100%;max-width:600px">
+        </div>
+
+        <div class="row">
+          <button class="btn btn-cyan" onclick="savePoints()">✓ Enregistrer</button>
+          <div class="status-line" id="cp_status"></div>
         </div>
       </div>
 
@@ -1777,7 +1855,7 @@
         <div class="card-title">CONNEXION TWITCH OAuth</div>
         <div class="row">
           <a href="/admin/twitch/connect" class="btn btn-cyan">🔗 Se connecter avec Twitch</a>
-          <div class="muted">Broadcaster ID : <code id="broadcasterIdDisplay">{{ broadcaster_user_id or '—' }}</code></div>
+          <div class="muted">Broadcaster ID : <code id="broadcasterIdDisplay">—</code></div>
         </div>
       </div>
 
@@ -1791,6 +1869,64 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════════════════════
+         PAGE : ÉVÉNEMENTS
+    ════════════════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-events">
+
+      <!-- Événement actif -->
+      <div class="card accent-c" id="ev-active-card">
+        <div class="card-title">✨ ÉVÉNEMENT EN COURS</div>
+        <div id="ev-active-content" class="muted">Aucun événement actif</div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn btn-magenta" onclick="stopEvent()">⏹ Terminer l'événement</button>
+          <div class="status-line" id="ev-stop-status"></div>
+        </div>
+      </div>
+
+      <!-- Lancement manuel -->
+      <div class="card">
+        <div class="card-title">▶ LANCER UN ÉVÉNEMENT</div>
+        <div id="ev-catalog" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px">
+          <!-- Rempli par JS -->
+        </div>
+        <div class="row">
+          <div class="status-line" id="ev-start-status"></div>
+        </div>
+      </div>
+
+      <!-- Configuration auto -->
+      <div class="card accent-g">
+        <div class="card-title">⚙ CONFIGURATION</div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap">
+          <label class="toggle-switch">
+            <input type="checkbox" id="ev_auto_enabled">
+            <div class="toggle-track"></div>
+            <span>Événements automatiques (toutes les 30 min)</span>
+          </label>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:12px">
+          <div class="form-group">
+            <div class="form-label">CHANCE DÉCLENCHEMENT (%)</div>
+            <input type="number" id="ev_chance_pct" min="0" max="100" value="30" style="width:110px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE DROP SPÉCIAL (s)</div>
+            <input type="number" id="ev_drop_duration" min="10" max="300" value="60" style="width:110px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">TARGET HITS DROP SPÉCIAL</div>
+            <input type="number" id="ev_drop_target" min="2" max="200" value="10" style="width:110px">
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn btn-cyan" onclick="saveEventConfig()">✓ Enregistrer</button>
+          <div class="status-line" id="ev-cfg-status"></div>
+        </div>
+      </div>
+
+    </div><!-- /page-events -->
+
+        <!-- ══════════════════════════════════════════════════════════════════════
          PAGE : PLANNING
     ════════════════════════════════════════════════════════════════════════ -->
     <div class="page" id="page-planning">
@@ -2131,6 +2267,7 @@ const pageTitles = {
   drops:         '▽ DROPS',
   autodrop:      '⟳ AUTODROP',
   points:        '◈ CHANNEL POINTS',
+  events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
 };
@@ -2149,6 +2286,8 @@ function nav(el) {
   if (page === 'autodrop')      loadAutoDrop();
   if (page === 'planning')      initPlanning();
   if (page === 'preview')       _initPreviewStudio();
+  if (page === 'points')        loadPoints();
+  if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
 }
@@ -2349,6 +2488,130 @@ async function testAutoDrop(statusId) {
   if (!r.ok) { setStatus(statusId, `⛔ ${JSON.stringify(j)}`, false); return; }
   const p = j.picked || {};
   setStatus(statusId, `✓ Drop lancé : ${p.item_name || p.item_key || '?'}`, true);
+}
+
+/* ─── CHANNEL POINTS ────────────────────────────────────── */
+async function loadPoints() {
+  const r = await fetch('/admin/points/json').catch(() => null);
+  if (!r || !r.ok) return;
+  const j = await r.json().catch(() => ({}));
+  const c = j.config || {};
+  const g = id => document.getElementById(id);
+  if (g('cp_enabled'))                g('cp_enabled').checked           = c.cp_enabled === 'true';
+  if (g('cp_reward_drop_coop_id'))    g('cp_reward_drop_coop_id').value = c.cp_reward_drop_coop_id || '';
+  if (g('cp_reward_capsule_id'))      g('cp_reward_capsule_id').value   = c.cp_reward_capsule_id   || '';
+  if (g('cp_reward_candy_id'))        g('cp_reward_candy_id').value     = c.cp_reward_candy_id     || '';
+  if (g('cp_reward_egg_id'))          g('cp_reward_egg_id').value       = c.cp_reward_egg_id       || '';
+  if (g('event_cp_reward_id'))        g('event_cp_reward_id').value     = c.event_cp_reward_id     || '';
+  if (g('cp_capsule_item_key'))       g('cp_capsule_item_key').value    = c.cp_capsule_item_key    || 'grande_capsule';
+  if (g('cp_candy_item_key'))         g('cp_candy_item_key').value      = c.cp_candy_item_key      || 'bonbon_2';
+  if (g('cp_egg_item_key'))           g('cp_egg_item_key').value        = c.cp_egg_item_key        || '';
+  if (g('cp_drop_pick_kind'))         g('cp_drop_pick_kind').value      = c.cp_drop_pick_kind      || 'any';
+  if (g('cp_drop_duration_seconds'))  g('cp_drop_duration_seconds').value = c.cp_drop_duration_seconds || 20;
+  if (g('cp_drop_target_hits'))       g('cp_drop_target_hits').value    = c.cp_drop_target_hits    || 10;
+  if (g('cp_drop_ticket_qty'))        g('cp_drop_ticket_qty').value     = c.cp_drop_ticket_qty     || 1;
+  if (g('cp_drop_fallback_icon_url')) g('cp_drop_fallback_icon_url').value = c.cp_drop_fallback_icon_url || '';
+  if (g('broadcasterIdDisplay'))      g('broadcasterIdDisplay').textContent = c.broadcaster_user_id || '—';
+}
+
+async function savePoints() {
+  const g = id => document.getElementById(id);
+  const fd = new FormData();
+  fd.append('cp_enabled',               g('cp_enabled').checked ? 'true' : 'false');
+  fd.append('cp_reward_drop_coop_id',   g('cp_reward_drop_coop_id').value.trim());
+  fd.append('cp_reward_capsule_id',     g('cp_reward_capsule_id').value.trim());
+  fd.append('cp_reward_candy_id',       g('cp_reward_candy_id').value.trim());
+  fd.append('cp_reward_egg_id',         g('cp_reward_egg_id').value.trim());
+  fd.append('event_cp_reward_id',       g('event_cp_reward_id').value.trim());
+  fd.append('cp_capsule_item_key',      g('cp_capsule_item_key').value.trim());
+  fd.append('cp_candy_item_key',        g('cp_candy_item_key').value.trim());
+  fd.append('cp_egg_item_key',          g('cp_egg_item_key').value.trim());
+  fd.append('cp_drop_pick_kind',        g('cp_drop_pick_kind').value);
+  fd.append('cp_drop_duration_seconds', g('cp_drop_duration_seconds').value);
+  fd.append('cp_drop_target_hits',      g('cp_drop_target_hits').value);
+  fd.append('cp_drop_ticket_qty',       g('cp_drop_ticket_qty').value);
+  fd.append('cp_drop_fallback_icon_url',g('cp_drop_fallback_icon_url').value.trim());
+  setStatus('cp_status', '…');
+  const r = await fetch('/admin/points/save', { method: 'POST', body: fd });
+  // La route fait une redirect ; on recharge juste les données
+  await loadPoints();
+  setStatus('cp_status', r.ok || r.redirected ? '✓ Enregistré' : '⛔ Erreur', r.ok || r.redirected);
+}
+
+/* ─── ÉVÉNEMENTS ─────────────────────────────────────────── */
+async function loadEvents() {
+  const r = await fetch('/admin/events/json').catch(() => null);
+  if (!r || !r.ok) return;
+  const j = await r.json().catch(() => ({}));
+
+  // Event actif
+  const ev = j.active_event;
+  const content = document.getElementById('ev-active-content');
+  if (ev) {
+    const ends = new Date(ev.ends_at);
+    const remaining = Math.max(0, Math.round((ends - Date.now()) / 1000));
+    content.innerHTML = `<span style="font-size:1.4em">${ev.emoji} <strong>${ev.name}</strong></span>
+      <div class="muted" style="margin-top:4px">${ev.desc}</div>
+      <div class="muted" style="margin-top:4px">Déclenché par : <code>${ev.triggered_by}</code> · Reste ~${remaining}s</div>`;
+    content.style.color = 'var(--color-cyan)';
+  } else {
+    content.textContent = 'Aucun événement actif';
+    content.style.color = '';
+  }
+
+  // Catalogue
+  const catalog = j.catalog || [];
+  const grid = document.getElementById('ev-catalog');
+  grid.innerHTML = catalog.map(e => `
+    <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:14px">
+      <div style="font-size:1.2em;margin-bottom:4px">${e.emoji} <strong>${e.name}</strong></div>
+      <div class="muted" style="font-size:.85em;margin-bottom:10px">${e.desc}</div>
+      <button class="btn btn-cyan" style="font-size:.8em;padding:4px 10px" onclick="startEvent('${e.key}')">▶ Lancer</button>
+    </div>`).join('');
+
+  // Config
+  const cfg = j.config || {};
+  const g = id => document.getElementById(id);
+  if (g('ev_auto_enabled'))  g('ev_auto_enabled').checked = cfg.event_auto_enabled === 'true';
+  if (g('ev_chance_pct'))    g('ev_chance_pct').value     = cfg.event_chance_pct || 30;
+  if (g('ev_drop_duration')) g('ev_drop_duration').value  = cfg.event_special_drop_duration || 60;
+  if (g('ev_drop_target'))   g('ev_drop_target').value    = cfg.event_special_drop_target_hits || 10;
+}
+
+async function startEvent(key) {
+  setStatus('ev-start-status', '…');
+  const r = await fetch('/admin/events/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({event_key: key})
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('ev-start-status', r.ok ? `✓ ${j.name || key} démarré !` : `⛔ ${JSON.stringify(j)}`, r.ok);
+  if (r.ok) setTimeout(() => loadEvents(), 800);
+}
+
+async function stopEvent() {
+  setStatus('ev-stop-status', '…');
+  const r = await fetch('/admin/events/stop', { method: 'POST' });
+  setStatus('ev-stop-status', r.ok ? '✓ Événement terminé' : '⛔ Erreur', r.ok);
+  if (r.ok) setTimeout(() => loadEvents(), 500);
+}
+
+async function saveEventConfig() {
+  const g = id => document.getElementById(id);
+  setStatus('ev-cfg-status', '…');
+  const r = await fetch('/admin/events/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      event_auto_enabled:               g('ev_auto_enabled').checked,
+      event_chance_pct:                 parseInt(g('ev_chance_pct').value),
+      event_special_drop_duration:      parseInt(g('ev_drop_duration').value),
+      event_special_drop_target_hits:   parseInt(g('ev_drop_target').value),
+    })
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('ev-cfg-status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
 }
 
 /* ─── EVENTSUB ───────────────────────────────────────────── */
