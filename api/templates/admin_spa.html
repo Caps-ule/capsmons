@@ -920,6 +920,9 @@
   </div>
 
   <div class="nav-section">// GAMEPLAY</div>
+  <div class="nav-item" data-page="items" onclick="nav(this)">
+    <span class="icon">◈</span> Items
+  </div>
   <div class="nav-item" data-page="drops" onclick="nav(this)">
     <span class="icon">▽</span> Drops
   </div>
@@ -1871,6 +1874,100 @@
     <!-- ══════════════════════════════════════════════════════════════════════
          PAGE : ÉVÉNEMENTS
     ════════════════════════════════════════════════════════════════════════ -->
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         PAGE : ITEMS
+         Gestion de la table items : key, name, icon_url, drop_weight, xp_gain, happiness_gain
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-items">
+
+      <!-- Tableau des items existants -->
+      <div class="card">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>◈ LISTE DES ITEMS</span>
+          <button class="btn btn-cyan btn-sm" onclick="openItemForm()">+ Ajouter</button>
+        </div>
+        <input type="text" id="items-filter" placeholder="Filtrer…" oninput="filterItemsTable(this.value)"
+               style="margin-bottom:10px;width:100%;max-width:320px">
+        <div style="overflow-x:auto">
+          <table class="data-table" id="items-table">
+            <thead>
+              <tr>
+                <th onclick="sortItemsTable(0)" style="cursor:pointer">KEY ↕</th>
+                <th onclick="sortItemsTable(1)" style="cursor:pointer">NOM ↕</th>
+                <th onclick="sortItemsTable(2)" style="cursor:pointer;text-align:center">DROP WEIGHT ↕</th>
+                <th style="text-align:center">XP</th>
+                <th style="text-align:center">BONHEUR</th>
+                <th style="text-align:center">ICÔNE</th>
+                <th style="text-align:center">EFFET</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="items-tbody">
+              <tr><td colspan="8" class="muted mono" style="text-align:center;padding:16px">Chargement…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Formulaire add/edit -->
+      <div class="card accent-c" id="item-form-card" style="display:none">
+        <div class="card-title" id="item-form-title">+ NOUVEL ITEM</div>
+
+        <!-- Rappel des effets -->
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+          <div class="muted mono" style="font-size:11px;margin-bottom:6px">// COMMENT FONCTIONNE UN ITEM</div>
+          <div style="font-size:12px;line-height:1.8">
+            <span class="badge badge-warn">egg_*</span> key commençant par <code>egg_</code> + lignée (ex: <code>egg_biolab</code>) → crée un œuf de cette lignée<br>
+            <span class="badge badge-info">xp_gain &gt; 0</span> ajoute de l'XP au CM actif via <code>!use</code><br>
+            <span class="badge badge-ok">happiness_gain &gt; 0</span> ajoute du bonheur au CM actif via <code>!use</code><br>
+            <span class="badge badge-dim">drop_weight</span> poids dans le tirage aléatoire des drops (0 = jamais tiré)
+          </div>
+        </div>
+
+        <div class="form-row" style="gap:16px;flex-wrap:wrap">
+          <div class="form-group">
+            <div class="form-label">KEY <span class="muted">(a-z, 0-9, _)</span></div>
+            <input type="text" id="item-key" placeholder="grande_capsule" style="min-width:200px" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,''">
+          </div>
+          <div class="form-group">
+            <div class="form-label">NOM AFFICHÉ</div>
+            <input type="text" id="item-name" placeholder="Grande Capsule" style="min-width:220px">
+          </div>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
+          <div class="form-group">
+            <div class="form-label">DROP WEIGHT <span class="muted">(0 = jamais tiré)</span></div>
+            <input type="number" id="item-drop-weight" min="0" max="9999" value="100" style="width:120px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">XP GAIN <span class="muted">(0 = pas d'effet)</span></div>
+            <input type="number" id="item-xp-gain" min="0" max="9999" value="0" style="width:120px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">HAPPINESS GAIN <span class="muted">(0 = pas d'effet)</span></div>
+            <input type="number" id="item-happiness-gain" min="0" max="100" value="0" style="width:120px">
+          </div>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
+          <div class="form-group" style="flex:1">
+            <div class="form-label">ICON URL <span class="muted">(pour l'overlay drop)</span></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="item-icon-url" placeholder="https://…" style="flex:1" oninput="previewItemIcon(this.value)">
+              <img id="item-icon-preview" src="" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:var(--bg3);border:1px solid var(--border);display:none">
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px;gap:8px">
+          <button class="btn btn-cyan" onclick="saveItem()">✓ Enregistrer</button>
+          <button class="btn btn-dim" onclick="closeItemForm()">Annuler</button>
+          <div class="status-line" id="item-save-status"></div>
+        </div>
+      </div>
+
+    </div><!-- /page-items -->
+
     <div class="page" id="page-events">
 
       <!-- Événement actif -->
@@ -2267,10 +2364,218 @@ const pageTitles = {
   drops:         '▽ DROPS',
   autodrop:      '⟳ AUTODROP',
   points:        '◈ CHANNEL POINTS',
+  items:         '◈ ITEMS',
   events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
 };
+
+/* ─── ITEMS ─────────────────────────────────────────────────── */
+
+let _itemsList    = [];   // cache local pour filtrage/tri
+let _itemsSortCol = 0;    // colonne de tri courante
+let _itemsSortAsc = true; // direction de tri
+
+// ── Chargement ─────────────────────────────────────────────────────────────
+async function loadItems() {
+  const r = await fetch('/admin/items/json').catch(() => null);
+  if (!r || !r.ok) {
+    document.getElementById('items-tbody').innerHTML =
+      '<tr><td colspan="8" class="muted mono" style="color:var(--magenta);text-align:center">Erreur chargement</td></tr>';
+    return;
+  }
+  const j = await r.json().catch(() => ({}));
+  _itemsList = j.items || [];
+  renderItemsTable(_itemsList);
+}
+
+// ── Rendu tableau ──────────────────────────────────────────────────────────
+function renderItemsTable(list) {
+  const tbody = document.getElementById('items-tbody');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted mono" style="text-align:center;padding:20px">Aucun item enregistré</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list.map(it => {
+    // Badge effet principal (résumé de ce que fait le !use)
+    let effet = '<span class="badge badge-dim">—</span>';
+    if ((it.key || '').startsWith('egg_')) {
+      const lineage = it.key.replace('egg_', '');
+      effet = `<span class="badge badge-warn">🥚 ${lineage}</span>`;
+    } else if (it.xp_gain > 0 && it.happiness_gain > 0) {
+      effet = '<span class="badge badge-info">XP + ❤️</span>';
+    } else if (it.xp_gain > 0) {
+      effet = `<span class="badge badge-info">+${it.xp_gain} XP</span>`;
+    } else if (it.happiness_gain > 0) {
+      effet = `<span class="badge badge-ok">+${it.happiness_gain} ❤️</span>`;
+    }
+
+    const icon = it.icon_url
+      ? `<img src="${_esc(it.icon_url)}" alt="" style="width:28px;height:28px;object-fit:contain;border-radius:4px;background:var(--bg3)">
+         <a href="${_esc(it.icon_url)}" target="_blank" class="muted" style="font-size:10px;margin-left:4px">↗</a>`
+      : '<span class="muted mono" style="font-size:11px">—</span>';
+
+    const wBadge = it.drop_weight > 0
+      ? `<span class="badge badge-ok">${it.drop_weight}</span>`
+      : '<span class="badge badge-dim">0</span>';
+
+    // JSON sérialisé pour editItem — on échappe les quotes simples
+    const itJson = JSON.stringify(it).replace(/'/g, "\\'");
+
+    return `
+      <tr>
+        <td class="mono" style="font-size:12px">${_esc(it.key)}</td>
+        <td>${_esc(it.name)}</td>
+        <td style="text-align:center">${wBadge}</td>
+        <td style="text-align:center" class="mono">${it.xp_gain || 0}</td>
+        <td style="text-align:center" class="mono">${it.happiness_gain || 0}</td>
+        <td style="text-align:center">${icon}</td>
+        <td style="text-align:center">${effet}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-dim btn-sm" onclick='editItem(${itJson})'>✎</button>
+          <button class="btn btn-sm" style="background:rgba(255,45,120,.15);border:1px solid rgba(255,45,120,.3);color:#ff2d78"
+                  onclick="deleteItem('${_esc(it.key)}')">✕</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function _esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Filtrage ───────────────────────────────────────────────────────────────
+function filterItemsTable(q) {
+  const low = (q || '').toLowerCase();
+  const filtered = low
+    ? _itemsList.filter(it =>
+        it.key.includes(low) || it.name.toLowerCase().includes(low))
+    : _itemsList;
+  renderItemsTable(filtered);
+}
+
+// ── Tri colonne ────────────────────────────────────────────────────────────
+function sortItemsTable(col) {
+  if (_itemsSortCol === col) _itemsSortAsc = !_itemsSortAsc;
+  else { _itemsSortCol = col; _itemsSortAsc = true; }
+  const colKeys = ['key', 'name', 'drop_weight'];
+  const k = colKeys[col];
+  const sorted = [..._itemsList].sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (typeof av === 'number') return _itemsSortAsc ? av - bv : bv - av;
+    return _itemsSortAsc
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av));
+  });
+  renderItemsTable(sorted);
+}
+
+// ── Formulaire add / edit ──────────────────────────────────────────────────
+function openItemForm() {
+  document.getElementById('item-form-title').textContent    = '+ NOUVEL ITEM';
+  document.getElementById('item-key').value                 = '';
+  document.getElementById('item-key').disabled              = false;
+  document.getElementById('item-name').value                = '';
+  document.getElementById('item-drop-weight').value         = '100';
+  document.getElementById('item-xp-gain').value             = '0';
+  document.getElementById('item-happiness-gain').value      = '0';
+  document.getElementById('item-icon-url').value            = '';
+  previewItemIcon('');
+  document.getElementById('item-save-status').textContent   = '';
+  const card = document.getElementById('item-form-card');
+  card.style.display = '';
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function editItem(it) {
+  document.getElementById('item-form-title').textContent    = `✎ MODIFIER — ${it.key}`;
+  document.getElementById('item-key').value                 = it.key;
+  document.getElementById('item-key').disabled              = true;  // key non modifiable
+  document.getElementById('item-name').value                = it.name;
+  document.getElementById('item-drop-weight').value         = it.drop_weight;
+  document.getElementById('item-xp-gain').value             = it.xp_gain;
+  document.getElementById('item-happiness-gain').value      = it.happiness_gain;
+  document.getElementById('item-icon-url').value            = it.icon_url || '';
+  previewItemIcon(it.icon_url || '');
+  document.getElementById('item-save-status').textContent   = '';
+  const card = document.getElementById('item-form-card');
+  card.style.display = '';
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeItemForm() {
+  document.getElementById('item-form-card').style.display = 'none';
+  document.getElementById('item-key').disabled = false;
+}
+
+function previewItemIcon(url) {
+  const img = document.getElementById('item-icon-preview');
+  if (url && url.startsWith('http')) {
+    img.src          = url;
+    img.style.display = '';
+    img.onerror      = () => { img.style.display = 'none'; };
+  } else {
+    img.style.display = 'none';
+    img.src           = '';
+  }
+}
+
+// ── Enregistrer (create/update) ────────────────────────────────────────────
+async function saveItem() {
+  const key  = document.getElementById('item-key').value.trim();
+  const name = document.getElementById('item-name').value.trim();
+  if (!key || !name) {
+    setStatus('item-save-status', '⛔ Key et nom requis', false);
+    return;
+  }
+  setStatus('item-save-status', '…');
+  const body = {
+    key,
+    name,
+    icon_url:       document.getElementById('item-icon-url').value.trim(),
+    drop_weight:    parseInt(document.getElementById('item-drop-weight').value)    || 0,
+    xp_gain:        parseInt(document.getElementById('item-xp-gain').value)        || 0,
+    happiness_gain: parseInt(document.getElementById('item-happiness-gain').value) || 0,
+  };
+  try {
+    const r = await fetch('/admin/items/save', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      setStatus('item-save-status', '✓ Enregistré', true);
+      closeItemForm();
+      loadItems();
+    } else {
+      setStatus('item-save-status', `⛔ ${j.detail || JSON.stringify(j)}`, false);
+    }
+  } catch (e) {
+    setStatus('item-save-status', '⛔ Erreur réseau', false);
+  }
+}
+
+// ── Supprimer ──────────────────────────────────────────────────────────────
+async function deleteItem(key) {
+  if (!confirm(`Supprimer l'item "${key}" ?\n\nLes inventaires existants ne seront pas effacés.`)) return;
+  try {
+    const r = await fetch('/admin/items/delete', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ key }),
+    });
+    if (r.ok) {
+      loadItems();
+    } else {
+      const j = await r.json().catch(() => ({}));
+      alert(`Erreur : ${j.detail || r.status}`);
+    }
+  } catch (e) {
+    alert('Erreur réseau');
+  }
+}
 
 function nav(el) {
   const page = el.dataset.page;
@@ -2287,6 +2592,7 @@ function nav(el) {
   if (page === 'planning')      initPlanning();
   if (page === 'preview')       _initPreviewStudio();
   if (page === 'points')        loadPoints();
+  if (page === 'items')         loadItems();
   if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();

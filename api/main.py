@@ -9812,11 +9812,136 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
     return ctx
 
 
+# =============================================================================
+# §  GESTION DES ITEMS — CRUD admin
+# =============================================================================
+# Colonnes de la table items (créée manuellement en DB) :
+#   key TEXT PRIMARY KEY       — identifiant unique, ex. "grande_capsule", "egg_biolab"
+#   name TEXT NOT NULL         — nom affiché en chat / overlay
+#   icon_url TEXT              — URL de l'image pour l'overlay drop
+#   drop_weight INT DEFAULT 0  — poids dans le tirage aléatoire (0 = ne tombe jamais)
+#   xp_gain INT DEFAULT 0      — XP accordé au !use (0 = aucun effet XP)
+#   happiness_gain INT DEFAULT 0 — bonheur accordé au !use (0 = aucun effet)
+#
+# Logique des effets au !use (internal_use_item) :
+#   - key LIKE 'egg_%'       → crée un œuf de la lignée correspondante dans creatures_v2
+#   - xp_gain > 0            → ajoute XP au CM actif
+#   - happiness_gain > 0     → ajoute bonheur au CM actif
+#   - Priorité : egg > xp > happiness
+# -----------------------------------------------------------------------------
+
+@app.get("/admin/items/json")
+def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
+    """Retourne la liste complète des items avec toutes leurs colonnes."""
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT key, name, COALESCE(icon_url,''), drop_weight,
+                       COALESCE(xp_gain,0), COALESCE(happiness_gain,0)
+                FROM items
+                ORDER BY key ASC;
+            """)
+            rows = cur.fetchall()
+    items = [
+        {
+            "key":            r[0],
+            "name":           r[1],
+            "icon_url":       r[2],
+            "drop_weight":    int(r[3] or 0),
+            "xp_gain":        int(r[4] or 0),
+            "happiness_gain": int(r[5] or 0),
+        }
+        for r in rows
+    ]
+    return {"ok": True, "items": items}
+
+
+@app.post("/admin/items/save")
+def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    """Crée ou met à jour un item (upsert sur la clé).
+    Champs attendus : key, name, icon_url?, drop_weight?, xp_gain?, happiness_gain?
+    """
+    require_admin(credentials)
+
+    key           = str(payload.get("key", "")).strip().lower()
+    name          = str(payload.get("name", "")).strip()
+    icon_url      = str(payload.get("icon_url", "")).strip()
+    drop_weight   = max(0, int(payload.get("drop_weight", 0) or 0))
+    xp_gain       = max(0, int(payload.get("xp_gain", 0) or 0))
+    happiness_gain = max(0, int(payload.get("happiness_gain", 0) or 0))
+
+    if not key:
+        raise HTTPException(status_code=400, detail="key requis")
+    if not name:
+        raise HTTPException(status_code=400, detail="name requis")
+
+    # Valider que la key ne contient que des caractères alphanumériques et underscores
+    import re as _re
+    if not _re.match(r'^[a-z0-9_]+$', key):
+        raise HTTPException(status_code=400, detail="key : lettres minuscules, chiffres et _ uniquement")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Vérifier si la table items a bien les colonnes xp_gain et happiness_gain
+            # (au cas où la table a été créée sans ces colonnes)
+            has_xp  = column_exists(cur, "items", "xp_gain")
+            has_hap = column_exists(cur, "items", "happiness_gain")
+
+            if has_xp and has_hap:
+                cur.execute("""
+                    INSERT INTO items (key, name, icon_url, drop_weight, xp_gain, happiness_gain)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (key) DO UPDATE
+                      SET name           = EXCLUDED.name,
+                          icon_url       = EXCLUDED.icon_url,
+                          drop_weight    = EXCLUDED.drop_weight,
+                          xp_gain        = EXCLUDED.xp_gain,
+                          happiness_gain = EXCLUDED.happiness_gain;
+                """, (key, name, icon_url or None, drop_weight, xp_gain, happiness_gain))
+            else:
+                # Fallback : colonnes minimales
+                cur.execute("""
+                    INSERT INTO items (key, name, icon_url, drop_weight)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (key) DO UPDATE
+                      SET name        = EXCLUDED.name,
+                          icon_url    = EXCLUDED.icon_url,
+                          drop_weight = EXCLUDED.drop_weight;
+                """, (key, name, icon_url or None, drop_weight))
+        conn.commit()
+
+    return {"ok": True, "key": key}
+
+
+@app.post("/admin/items/delete")
+def admin_items_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    """Supprime un item par sa clé.
+    ⚠️  Ne supprime pas les entrées inventory existantes (orphelins tolérés).
+    """
+    require_admin(credentials)
+
+    key = str(payload.get("key", "")).strip().lower()
+    if not key:
+        raise HTTPException(status_code=400, detail="key requis")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM items WHERE key=%s RETURNING key;", (key,))
+            deleted = cur.fetchone()
+        conn.commit()
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item introuvable")
+    return {"ok": True, "deleted": key}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTE PRINCIPALE — remplace toutes les routes GET admin qui renvoient le SPA
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/items", response_class=HTMLResponse)
 @app.get("/admin/stats", response_class=HTMLResponse)
 @app.get("/admin/cms", response_class=HTMLResponse)
 @app.get("/admin/rp", response_class=HTMLResponse)
