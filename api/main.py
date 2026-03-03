@@ -9416,22 +9416,17 @@ def internal_trade_execute(payload: dict, x_api_key: str | None = Header(default
                 raise HTTPException(status_code=404,
                     detail=f"Creature {tgt_cid} n'appartient pas à {tgt_login}")
 
-            # 2) Swap atomique via login temporaire (évite les collisions de PK)
-            tmp = f"__trade_tmp_{ini_cid}_{tgt_cid}"
-
+            # 2) Swap direct — les deux logins existent déjà dans users,
+            # pas besoin de login temporaire. Les UPDATE sont sur des IDs distincts.
             cur.execute(
                 "UPDATE creatures_v2 SET twitch_login=%s, is_active=FALSE WHERE id=%s;",
-                (tmp, ini_cid)
+                (tgt_login, ini_cid)
             )
             cur.execute(
                 "UPDATE creatures_v2 SET twitch_login=%s WHERE id=%s;",
                 (ini_login, tgt_cid)
             )
-            cur.execute(
-                "UPDATE creatures_v2 SET twitch_login=%s WHERE twitch_login=%s;",
-                (tgt_login, tmp)
-            )
-
+            
             # 3) Garantir exactement 1 CM actif par viewer après le swap
             for login, got_cid in [(ini_login, tgt_cid), (tgt_login, ini_cid)]:
                 cur.execute(
