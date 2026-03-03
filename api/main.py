@@ -385,6 +385,18 @@ def _render_homepage() -> str:
         <div class="cmd-desc">Affiche le planning des streams de la semaine en cours</div>
       </div>
       <div class="cmd-row">
+        <div class="cmd-name">!trade @pseudo &lt;n°&gt;</div>
+        <div class="cmd-desc">Propose un échange de CapsMöns à un autre viewer — ex : <code style="font-family:inherit;color:var(--cyan)">!trade @pseudo 2</code> pour offrir ton CapsMön n°2</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!answer &lt;n°&gt;</div>
+        <div class="cmd-desc">Répond à une proposition d'échange en désignant le CapsMön que tu mets dans la balance — ex : <code style="font-family:inherit;color:var(--cyan)">!answer 1</code></div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-name">!tyes &nbsp;/&nbsp; !tno</div>
+        <div class="cmd-desc">Confirme ou annule un échange en cours — les deux parties doivent faire <code style="font-family:inherit;color:var(--cyan)">!tyes</code> pour que l'échange ait lieu</div>
+      </div>
+      <div class="cmd-row">
         <div class="cmd-name">!commands</div>
         <div class="cmd-desc">Rappelle la liste des commandes disponibles directement dans le chat</div>
       </div>
@@ -9351,6 +9363,106 @@ def internal_collection_add(payload: dict, x_api_key: str | None = Header(defaul
 
     return {"ok": True, "twitch_login": login, "cm_key": cm_key, "acquired_from": acquired_from}
 
+
+# ==============================================================================
+# TRADE — échange atomique de deux companions entre deux viewers
+# ==============================================================================
+# La négociation (étapes, timeouts, confirmations !tyes/!tno) est gérée en RAM
+# dans le bot via _pending_trades. Cet endpoint ne fait que le swap en base.
+# ==============================================================================
+
+@app.post("/internal/trade/execute")
+def internal_trade_execute(payload: dict, x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+
+    ini_login = str(payload.get("initiator_login", "")).strip().lower()
+    ini_cid   = payload.get("initiator_creature_id")
+    tgt_login = str(payload.get("target_login", "")).strip().lower()
+    tgt_cid   = payload.get("target_creature_id")
+
+    if not ini_login or not tgt_login:
+        raise HTTPException(status_code=400, detail="Missing login(s)")
+    if ini_cid is None or tgt_cid is None:
+        raise HTTPException(status_code=400, detail="Missing creature_id(s)")
+    if ini_login == tgt_login:
+        raise HTTPException(status_code=400, detail="Cannot trade with yourself")
+
+    ini_cid = int(ini_cid)
+    tgt_cid = int(tgt_cid)
+    if ini_cid == tgt_cid:
+        raise HTTPException(status_code=400, detail="Cannot trade a creature with itself")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+
+            # 1) Vérifier l'appartenance des deux créatures
+            cur.execute("""
+                SELECT id, cm_key, COALESCE(lineage_key,''), stage, xp_total, is_active
+                FROM creatures_v2
+                WHERE id = %s AND twitch_login = %s;
+            """, (ini_cid, ini_login))
+            ini_row = cur.fetchone()
+            if not ini_row:
+                raise HTTPException(status_code=404,
+                    detail=f"Creature {ini_cid} n'appartient pas à {ini_login}")
+
+            cur.execute("""
+                SELECT id, cm_key, COALESCE(lineage_key,''), stage, xp_total, is_active
+                FROM creatures_v2
+                WHERE id = %s AND twitch_login = %s;
+            """, (tgt_cid, tgt_login))
+            tgt_row = cur.fetchone()
+            if not tgt_row:
+                raise HTTPException(status_code=404,
+                    detail=f"Creature {tgt_cid} n'appartient pas à {tgt_login}")
+
+            # 2) Swap atomique via login temporaire (évite les collisions de PK)
+            tmp = f"__trade_tmp_{ini_cid}_{tgt_cid}"
+
+            cur.execute(
+                "UPDATE creatures_v2 SET twitch_login=%s, is_active=FALSE WHERE id=%s;",
+                (tmp, ini_cid)
+            )
+            cur.execute(
+                "UPDATE creatures_v2 SET twitch_login=%s WHERE id=%s;",
+                (ini_login, tgt_cid)
+            )
+            cur.execute(
+                "UPDATE creatures_v2 SET twitch_login=%s WHERE twitch_login=%s;",
+                (tgt_login, tmp)
+            )
+
+            # 3) Garantir exactement 1 CM actif par viewer après le swap
+            for login, got_cid in [(ini_login, tgt_cid), (tgt_login, ini_cid)]:
+                cur.execute(
+                    "SELECT COUNT(*) FROM creatures_v2 WHERE twitch_login=%s AND is_active=TRUE;",
+                    (login,)
+                )
+                count = int(cur.fetchone()[0])
+                if count == 0:
+                    # Activer le CM reçu
+                    cur.execute(
+                        "UPDATE creatures_v2 SET is_active=TRUE WHERE id=%s;",
+                        (got_cid,)
+                    )
+                elif count > 1:
+                    # Garder le plus ancien actif, désactiver le reste
+                    cur.execute("""
+                        UPDATE creatures_v2 SET is_active=FALSE
+                        WHERE twitch_login=%s AND is_active=TRUE AND id != (
+                            SELECT id FROM creatures_v2
+                            WHERE twitch_login=%s AND is_active=TRUE
+                            ORDER BY id ASC LIMIT 1
+                        );
+                    """, (login, login))
+
+        conn.commit()
+
+    return {
+        "ok":        True,
+        "initiator": {"login": ini_login, "gave_id": ini_cid,  "gave_cm": ini_row[1], "received_id": tgt_cid},
+        "target":    {"login": tgt_login, "gave_id": tgt_cid,  "gave_cm": tgt_row[1], "received_id": ini_cid},
+    }
 
 # =============================================================================
 # ADMIN: lancer un drop manuel (page + endpoint)

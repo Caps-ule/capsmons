@@ -31,6 +31,7 @@ API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
 API_COMPANION_SET_BY_ID_URL = "http://api:8000/internal/companions/set_active"
 API_AUTODROP_SETTINGS_URL = "http://api:8000/internal/settings/autodrop"
+API_TRADE_EXECUTE_URL = "http://api:8000/internal/trade/execute"
 API_ANNOUNCEMENTS_URL = "http://api:8000/internal/announcements/poll"
 _autodrop_cache = {"ts": 0.0, "cfg": {}}
 
@@ -43,6 +44,7 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://capsmons.devlooping
 _last_xp_at: dict[str, float] = {}          # cooldown XP chat par user
 _active_until: dict[str, float] = {}        # fenêtre présence (user actif jusqu'à timestamp)
 _show_last = {"global": 0.0, "users": {}}   # cooldown overlay show
+_pending_trades: dict[str, dict] = {}
 
 _rp_cache = {"ts": 0.0, "rp": {}}           # cache RP (bundle)
 _last_drop_announce = {"sig": None}         # anti double annonce drops
@@ -53,6 +55,8 @@ API_EVENT_START_URL   = "http://api:8000/internal/event/start"
 _current_event: dict | None = None          # cache RAM de l'event actif
 _golden_hour_gains: dict[str, float] = {}   # bonheur gagné par user pendant Golden Hour
 _event_drop_last: float = 0.0               # timestamp du dernier drop de "pluie_etoiles"
+# Durée max d'un trade avant expiration automatique (secondes)
+TRADE_TIMEOUT = 120
 
 
 # ============================================================================
@@ -283,6 +287,286 @@ class Bot(commands.Bot):
         except Exception:
             s = 0
         return f"S{s}"
+
+        # ------------------------------------------------------------------------
+    # Helper : résoudre un numéro de CM -> (creature_id, label)
+    # ------------------------------------------------------------------------
+    async def _resolve_cm_number(self, login: str, num: int):
+        """Retourne (creature_id, label) pour le numéro num (1-based) dans
+        la collection de login, ou None si introuvable."""
+        try:
+            r = requests.get(
+                f"{API_COLLECTION_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=3,
+            )
+            if r.status_code != 200:
+                return None
+            items = (r.json() or {}).get("items", []) or []
+            if num < 1 or num > len(items):
+                return None
+            it = items[num - 1]
+            cid = int(it.get("id", 0))
+            cm_key = (it.get("cm_key") or "").strip().lower()
+            if cm_key == "egg":
+                lk = self._lineage_label(it.get("lineage_key"))
+                label = f"Oeuf {lk}"
+            else:
+                label = (it.get("cm_name") or cm_key).strip()
+            stage = self._short_stage(it.get("stage", 0))
+            xp = int(it.get("xp_total", 0) or 0)
+            return cid, f"{label} {stage} {xp}xp"
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------------
+    # Helper : nettoyer les trades expirés
+    # ------------------------------------------------------------------------
+    def _cleanup_trades(self):
+        now = time.time()
+        expired = [k for k, v in _pending_trades.items() if v["expires_at"] < now]
+        for k in expired:
+            del _pending_trades[k]
+
+    # ------------------------------------------------------------------------
+    # Commande : !trade @cible <numéro>
+    # ------------------------------------------------------------------------
+    @commands.command(name="trade")
+    async def trade_cmd(self, ctx: commands.Context):
+        """Initie une proposition d'échange de CapsMöns."""
+        self._cleanup_trades()
+        login = ctx.author.name.lower()
+        parts = (ctx.message.content or "").strip().split()
+
+        # Usage : !trade @pseudo numéro
+        if len(parts) < 3:
+            await ctx.send(
+                f"@{ctx.author.name} ℹ️ Usage: !trade @pseudo <n°>  "
+                f"(ex: !trade @bob 2 pour proposer ton CapsMön n°2)"
+            )
+            return
+
+        target_login = parts[1].lstrip("@").strip().lower()
+        if target_login == login:
+            await ctx.send(f"@{ctx.author.name} ⛔ Tu ne peux pas t'échanger avec toi-même.")
+            return
+
+        try:
+            num = int(parts[2])
+        except ValueError:
+            await ctx.send(f"@{ctx.author.name} ⛔ Le numéro doit être un entier. Ex: !trade @bob 2")
+            return
+
+        # Vérifier si l'initiateur a déjà un trade en cours
+        if login in _pending_trades:
+            await ctx.send(
+                f"@{ctx.author.name} ⛔ Tu as déjà un échange en cours. "
+                f"Fais !tno pour l'annuler."
+            )
+            return
+
+        # Vérifier si la cible est déjà impliquée dans un trade
+        for t in _pending_trades.values():
+            if t["target_login"] == target_login or t["initiator_login"] == target_login:
+                await ctx.send(
+                    f"@{ctx.author.name} ⛔ @{target_login} est déjà dans un échange en cours."
+                )
+                return
+
+        # Résoudre le numéro vers un creature_id
+        result = await self._resolve_cm_number(login, num)
+        if result is None:
+            await ctx.send(
+                f"@{ctx.author.name} ⛔ CapsMön n°{num} introuvable dans ta collection. "
+                f"Fais !companion pour voir ta liste."
+            )
+            return
+        cid, label = result
+
+        # Enregistrer le trade en attente
+        _pending_trades[login] = {
+            "step":            "waiting_answer",
+            "initiator_login": login,
+            "initiator_cid":   cid,
+            "initiator_cm":    label,
+            "target_login":    target_login,
+            "target_cid":      None,
+            "target_cm":       None,
+            "ini_confirmed":   False,
+            "tgt_confirmed":   False,
+            "expires_at":      time.time() + TRADE_TIMEOUT,
+        }
+
+        await ctx.send(
+            f"@{target_login} 🔀 @{ctx.author.name} te propose d'échanger son "
+            f"[{label}] contre un de tes CapsMöns ! "
+            f"Réponds avec !answer <n°> pour choisir lequel proposer. "
+            f"(Vous avez {TRADE_TIMEOUT}s)"
+        )
+
+    # ------------------------------------------------------------------------
+    # Commande : !answer <numéro>  (réponse de la cible)
+    # ------------------------------------------------------------------------
+    @commands.command(name="answer")
+    async def answer_cmd(self, ctx: commands.Context):
+        """La cible désigne son CapsMön pour l'échange."""
+        self._cleanup_trades()
+        login = ctx.author.name.lower()
+        parts = (ctx.message.content or "").strip().split()
+
+        # Trouver le trade qui attend une réponse de ce viewer
+        trade = None
+        ini_login = None
+        for k, t in _pending_trades.items():
+            if t["target_login"] == login and t["step"] == "waiting_answer":
+                trade = t
+                ini_login = k
+                break
+
+        if trade is None:
+            await ctx.send(f"@{ctx.author.name} ℹ️ Aucune proposition d'échange en attente pour toi.")
+            return
+
+        if len(parts) < 2:
+            await ctx.send(
+                f"@{ctx.author.name} ℹ️ Usage: !answer <n°>  "
+                f"(ex: !answer 1 pour proposer ton CapsMön n°1)"
+            )
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            await ctx.send(f"@{ctx.author.name} ⛔ Le numéro doit être un entier. Ex: !answer 1")
+            return
+
+        result = await self._resolve_cm_number(login, num)
+        if result is None:
+            await ctx.send(
+                f"@{ctx.author.name} ⛔ CapsMön n°{num} introuvable dans ta collection. "
+                f"Fais !companion pour voir ta liste."
+            )
+            return
+        cid, label = result
+
+        # Mettre à jour le trade
+        trade["target_cid"] = cid
+        trade["target_cm"]  = label
+        trade["step"]       = "waiting_confirm"
+
+        await ctx.send(
+            f"@{ctx.author.name} propose [{label}] en échange de "
+            f"[{trade['initiator_cm']}] de @{trade['initiator_login']} ! "
+            f"@{trade['initiator_login']} @{ctx.author.name} "
+            f"Faites !tyes pour accepter ou !tno pour annuler. "
+            f"Il faut les deux !tyes pour que l'échange se fasse."
+        )
+
+    # ------------------------------------------------------------------------
+    # Commande : !tyes  — confirmer l'échange
+    # ------------------------------------------------------------------------
+    @commands.command(name="tyes")
+    async def tyes_cmd(self, ctx: commands.Context):
+        """Confirme l'échange en cours."""
+        self._cleanup_trades()
+        login = ctx.author.name.lower()
+
+        # Trouver le trade en phase waiting_confirm qui concerne ce viewer
+        trade = None
+        ini_login = None
+        for k, t in _pending_trades.items():
+            if t["step"] == "waiting_confirm":
+                if t["initiator_login"] == login or t["target_login"] == login:
+                    trade = t
+                    ini_login = k
+                    break
+
+        if trade is None:
+            await ctx.send(f"@{ctx.author.name} ℹ️ Aucun échange en attente de confirmation pour toi.")
+            return
+
+        # Enregistrer la confirmation
+        if login == trade["initiator_login"]:
+            trade["ini_confirmed"] = True
+        else:
+            trade["tgt_confirmed"] = True
+
+        # Si les deux ont confirmé : exécuter le swap
+        if trade["ini_confirmed"] and trade["tgt_confirmed"]:
+            del _pending_trades[ini_login]
+            try:
+                r = requests.post(
+                    API_TRADE_EXECUTE_URL,
+                    headers={"X-API-Key": API_KEY},
+                    json={
+                        "initiator_login":       trade["initiator_login"],
+                        "initiator_creature_id": trade["initiator_cid"],
+                        "target_login":          trade["target_login"],
+                        "target_creature_id":    trade["target_cid"],
+                    },
+                    timeout=5,
+                )
+                if r.status_code == 200:
+                    await ctx.send(
+                        f"✅ Échange réalisé ! "
+                        f"@{trade['initiator_login']} reçoit [{trade['target_cm']}] "
+                        f"et @{trade['target_login']} reçoit [{trade['initiator_cm']}]. "
+                        f"Faites !companion pour voir votre nouvelle collection !"
+                    )
+                else:
+                    detail = ""
+                    try:
+                        detail = r.json().get("detail", "")
+                    except Exception:
+                        pass
+                    await ctx.send(
+                        f"⛔ L'échange a échoué : {detail or r.status_code}. "
+                        f"Réessayez avec !trade."
+                    )
+            except Exception as e:
+                print(f"[BOT] trade execute error: {e}", flush=True)
+                await ctx.send(f"⛔ Erreur réseau lors de l'échange. Réessayez.")
+            return
+
+        # Un seul a confirmé pour l'instant
+        other = trade["target_login"] if login == trade["initiator_login"] else trade["initiator_login"]
+        await ctx.send(
+            f"@{ctx.author.name} ✅ Confirmation enregistrée. "
+            f"En attente de @{other}…  (!tyes pour accepter / !tno pour annuler)"
+        )
+
+    # ------------------------------------------------------------------------
+    # Commande : !tno  — annuler l'échange
+    # ------------------------------------------------------------------------
+    @commands.command(name="tno")
+    async def tno_cmd(self, ctx: commands.Context):
+        """Annule l'échange en cours."""
+        self._cleanup_trades()
+        login = ctx.author.name.lower()
+
+        # Chercher tout trade (quelle que soit l'étape) impliquant ce viewer
+        trade = None
+        ini_login = None
+        for k, t in _pending_trades.items():
+            if t["initiator_login"] == login or t["target_login"] == login:
+                trade = t
+                ini_login = k
+                break
+
+        if trade is None:
+            await ctx.send(f"@{ctx.author.name} ℹ️ Aucun échange en cours pour toi.")
+            return
+
+        del _pending_trades[ini_login]
+        other = (
+            trade["target_login"]
+            if login == trade["initiator_login"]
+            else trade["initiator_login"]
+        )
+        await ctx.send(
+            f"🚫 @{ctx.author.name} a annulé l'échange. "
+            f"@{other} L'échange est annulé, vous pouvez en relancer un avec !trade."
+        )
 
     # ------------------------------------------------------------------------
     # Collection (helper interne) -> affiche une liste numérotée 1..N
@@ -1665,6 +1949,7 @@ class Bot(commands.Bot):
             f"@{ctx.author.name} 📜 Commandes viewers: "
             "!creature | !inv | !use <item_key> | "
             "!companion (liste) / !companion <numéro> | "
+            "!trade @pseudo <n°> | !answer <n°> | !tyes / !tno | "
             "!show | !grab"
         )
         await ctx.send(msg)
