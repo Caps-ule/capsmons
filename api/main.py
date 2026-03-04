@@ -9162,6 +9162,410 @@ def overlay_drop_state():
 
 
 # =============================================================================
+# OVERLAY PARADE — barre défilante des CMs des viewers présents
+# =============================================================================
+# Endpoint de données : GET /overlay/parade_state
+#   Retourne la liste des viewers actifs avec leur CM actif (image, nom, pseudo).
+#   "Actifs" = viewers dont le login figure dans _active_until du bot, transmis
+#   via un paramètre logins= (query string CSV), OU bien on lit les chatters
+#   directement depuis la DB (stream_participants de la session courante).
+#   On utilise la session courante pour avoir les présents récents (~5 min).
+#
+# Page overlay  : GET /overlay/parade
+#   HTML autonome, fond transparent, hauteur 160px.
+#   Chaque viewer est représenté par son sprite CM qui saute en marchant.
+# =============================================================================
+
+@app.get("/overlay/parade_state")
+def overlay_parade_state():
+    """Retourne jusqu'à 30 viewers avec leur CM actif pour la parade.
+
+    Source : participants de la session live courante vus dans les 15 dernières
+    minutes (présence fraîche), jointure avec creatures_v2 + cm_forms pour
+    l'image et le nom du CM.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Session live courante
+            cur.execute("SELECT value FROM kv WHERE key='current_session_id';")
+            row = cur.fetchone()
+            session_id = int(row[0]) if row and row[0] else None
+
+            if not session_id:
+                return {"walkers": []}
+
+            # Viewers vus dans les 15 dernières minutes (présence fraîche)
+            cur.execute("""
+                SELECT DISTINCT sp.twitch_login
+                FROM stream_participants sp
+                WHERE sp.session_id = %s
+                LIMIT 60;
+            """, (session_id,))
+            logins = [r[0] for r in cur.fetchall()]
+
+            if not logins:
+                return {"walkers": []}
+
+            # Pour chaque viewer : CM actif + image selon stage
+            cur.execute("""
+                SELECT
+                    cv.twitch_login,
+                    cv.cm_key,
+                    cv.stage,
+                    COALESCE(cf.image_url, cms.media_url, '') AS img,
+                    COALESCE(cf.name, cms.name, cv.cm_key)    AS cm_name
+                FROM creatures_v2 cv
+                JOIN cms ON cms.key = cv.cm_key
+                LEFT JOIN cm_forms cf ON cf.cm_key = cv.cm_key AND cf.stage = cv.stage
+                WHERE cv.twitch_login = ANY(%s)
+                  AND cv.is_active = TRUE
+                ORDER BY cv.twitch_login ASC
+                LIMIT 30;
+            """, (logins,))
+            rows = cur.fetchall()
+
+    walkers = []
+    for login, cm_key, stage, img, cm_name in rows:
+        # Les oeufs n'ont pas de cm_forms — fallback emoji
+        walkers.append({
+            "login":   login,
+            "cm_key":  cm_key,
+            "stage":   int(stage or 0),
+            "img":     img or "",
+            "cm_name": cm_name or cm_key,
+        })
+
+    return {"walkers": walkers}
+
+
+@app.get("/overlay/parade", response_class=HTMLResponse)
+def overlay_parade_page():
+    """Overlay barre défilante — CMs des viewers présents qui se baladent."""
+    return HTMLResponse(r"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width:  1920px;
+  height: 160px;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* ── Piste de marche ── */
+#stage {
+  position: relative;
+  width:  1920px;
+  height: 160px;
+  overflow: hidden;
+}
+
+/* ── Un walker ── */
+.walker {
+  position: absolute;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* La translation X est pilotée par JS via --x */
+  transform: translateX(var(--x, 0px));
+  /* pas de transition ici : le JS anime frame par frame */
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* Pseudo en Police Pixel */
+.walker-name {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 9px;
+  color: #00e5ff;
+  text-shadow:
+    0 0 6px rgba(0,229,255,0.9),
+    1px 1px 0 #000,
+   -1px 1px 0 #000,
+    1px -1px 0 #000,
+   -1px -1px 0 #000;
+  white-space: nowrap;
+  margin-bottom: 4px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+}
+
+/* Image sprite — les deux coins bas = "pieds" */
+.walker-sprite {
+  width:  80px;
+  height: 80px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  transform-origin: bottom center;
+  /* L'animation de saut est appliquée via la classe .jumping */
+}
+
+/* Oeuf fallback */
+.walker-egg {
+  width:  80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 52px;
+  transform-origin: bottom center;
+}
+
+/* ── Animation saut ──
+   Principe : les "pieds" (coins bas du PNG) restent au sol.
+   La sprite monte (translateY négatif) puis redescend — deux petits pas.
+   On combine translateY et une légère rotation pour un effet naturel.
+*/
+@keyframes hop {
+  0%   { transform: translateY(0)     rotate(0deg);   }
+  20%  { transform: translateY(-22px) rotate(-4deg);  }
+  40%  { transform: translateY(0)     rotate(0deg);   }
+  60%  { transform: translateY(-14px) rotate(3deg);   }
+  80%  { transform: translateY(0)     rotate(0deg);   }
+  100% { transform: translateY(0)     rotate(0deg);   }
+}
+
+.walker-sprite.jumping,
+.walker-egg.jumping {
+  animation: hop var(--hop-dur, 0.55s) ease-in-out infinite;
+}
+
+/* Flip horizontal quand le walker va vers la gauche */
+.walker.flip .walker-sprite,
+.walker.flip .walker-egg {
+  transform-origin: bottom center;
+  scale: -1 1;
+}
+/* Flip + saut simultanés */
+.walker.flip .walker-sprite.jumping,
+.walker.flip .walker-egg.jumping {
+  animation: hop var(--hop-dur, 0.55s) ease-in-out infinite;
+  scale: -1 1;
+}
+
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const POLL_INTERVAL   = 15000;  // rafraîchir la liste toutes les 15s
+const SPEED_MIN       = 60;     // px/s minimum
+const SPEED_MAX       = 110;    // px/s maximum
+const STAGE_W         = 1920;
+const STAGE_H         = 160;
+const SPRITE_W        = 80;
+const HOP_DUR_MIN     = 0.42;   // secondes (marche rapide)
+const HOP_DUR_MAX     = 0.65;   // secondes (marche lente)
+
+// ============================================================
+// ÉTAT
+// ============================================================
+const walkers = new Map();   // login -> walker state
+let   lastPoll = 0;
+
+// ============================================================
+// DOM helpers
+// ============================================================
+function createWalkerEl(w) {
+  const el = document.createElement('div');
+  el.className = 'walker';
+  el.dataset.login = w.login;
+
+  // Pseudo
+  const name = document.createElement('div');
+  name.className = 'walker-name';
+  name.textContent = w.login;
+  el.appendChild(name);
+
+  // Sprite ou oeuf
+  if (w.img) {
+    const img = document.createElement('img');
+    img.className = 'walker-sprite jumping';
+    img.src = w.img;
+    img.alt = w.cm_name;
+    img.style.setProperty('--hop-dur', w.hopDur + 's');
+    // Si l'image ne charge pas, on fallback sur l'emoji
+    img.onerror = () => {
+      const egg = document.createElement('div');
+      egg.className = 'walker-egg jumping';
+      egg.textContent = '🥚';
+      egg.style.setProperty('--hop-dur', w.hopDur + 's');
+      el.replaceChild(egg, img);
+    };
+    el.appendChild(img);
+  } else {
+    const egg = document.createElement('div');
+    egg.className = 'walker-egg jumping';
+    egg.textContent = '🥚';
+    egg.style.setProperty('--hop-dur', w.hopDur + 's');
+    el.appendChild(egg);
+  }
+
+  document.getElementById('stage').appendChild(el);
+  return el;
+}
+
+function removeWalkerEl(login) {
+  const el = document.querySelector(`.walker[data-login="${CSS.escape(login)}"]`);
+  if (el) el.remove();
+}
+
+// ============================================================
+// LOGIQUE WALKER
+// ============================================================
+function makeWalkerState(data, existingState) {
+  // Si le walker existe déjà, on garde sa position et direction
+  const x        = existingState ? existingState.x        : randomEntry();
+  const dir      = existingState ? existingState.dir      : (Math.random() < 0.5 ? 1 : -1);
+  const speed    = existingState ? existingState.speed     : randFloat(SPEED_MIN, SPEED_MAX);
+  const hopDur   = existingState ? existingState.hopDur    : randFloat(HOP_DUR_MIN, HOP_DUR_MAX);
+
+  return {
+    login:   data.login,
+    img:     data.img,
+    cm_name: data.cm_name,
+    cm_key:  data.cm_key,
+    x,
+    dir,    // 1 = droite, -1 = gauche
+    speed,
+    hopDur,
+    el: null,  // sera rempli après création DOM
+  };
+}
+
+function randomEntry() {
+  // Position de départ aléatoire hors écran
+  return Math.random() < 0.5
+    ? -SPRITE_W - 20
+    : STAGE_W + 20;
+}
+
+function randFloat(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+// Met à jour la position DOM d'un walker
+function applyPosition(w) {
+  if (!w.el) return;
+  w.el.style.setProperty('--x', w.x + 'px');
+
+  // Flip selon direction
+  if (w.dir < 0) {
+    w.el.classList.add('flip');
+  } else {
+    w.el.classList.remove('flip');
+  }
+}
+
+// ============================================================
+// BOUCLE D'ANIMATION (requestAnimationFrame)
+// ============================================================
+let lastTs = null;
+
+function tick(ts) {
+  if (lastTs === null) lastTs = ts;
+  const dt = Math.min((ts - lastTs) / 1000, 0.1); // secondes, max 100ms
+  lastTs = ts;
+
+  walkers.forEach(w => {
+    if (!w.el) return;
+
+    // Avancer
+    w.x += w.dir * w.speed * dt;
+
+    // Rebondir sur les bords (dépasser un peu avant de revenir)
+    const margin = SPRITE_W + 30;
+    if (w.x > STAGE_W + margin) {
+      w.dir = -1;
+      w.x   = STAGE_W + margin;
+    } else if (w.x < -margin) {
+      w.dir = 1;
+      w.x   = -margin;
+    }
+
+    applyPosition(w);
+  });
+
+  // Poll périodique
+  if (ts - lastPoll > POLL_INTERVAL) {
+    lastPoll = ts;
+    fetchWalkers();
+  }
+
+  requestAnimationFrame(tick);
+}
+
+// ============================================================
+// FETCH & RÉCONCILIATION
+// ============================================================
+async function fetchWalkers() {
+  let data;
+  try {
+    const r = await fetch('/overlay/parade_state');
+    if (!r.ok) return;
+    data = await r.json();
+  } catch(e) {
+    return;
+  }
+
+  const incoming = data.walkers || [];
+  const incomingSet = new Set(incoming.map(w => w.login));
+
+  // Ajouter / mettre à jour
+  for (const wdata of incoming) {
+    const existing = walkers.get(wdata.login);
+    if (existing) {
+      // Met à jour img si changé (évolution)
+      if (existing.img !== wdata.img) {
+        existing.img = wdata.img;
+        const sprite = existing.el && existing.el.querySelector('.walker-sprite, .walker-egg');
+        if (sprite && sprite.tagName === 'IMG') {
+          sprite.src = wdata.img || '';
+        }
+      }
+    } else {
+      // Nouveau walker
+      const state = makeWalkerState(wdata, null);
+      state.el = createWalkerEl(state);
+      walkers.set(wdata.login, state);
+    }
+  }
+
+  // Supprimer les absents
+  for (const [login] of walkers) {
+    if (!incomingSet.has(login)) {
+      removeWalkerEl(login);
+      walkers.delete(login);
+    }
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+async function init() {
+  await fetchWalkers();
+  lastPoll = performance.now();
+  requestAnimationFrame(tick);
+}
+
+init();
+</script>
+</body>
+</html>""")
+
+
+# =============================================================================
 # PRESENCES
 # =============================================================================
 
