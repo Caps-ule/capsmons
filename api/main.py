@@ -9359,11 +9359,11 @@ html, body {
 // CONFIG
 // ============================================================
 const POLL_INTERVAL   = 15000;  // rafraîchir la liste toutes les 15s
-const SPEED_MIN       = 60;     // px/s minimum
-const SPEED_MAX       = 110;    // px/s maximum
+const SPEED_MIN       = 30;     // px/s minimum
+const SPEED_MAX       = 100;    // px/s maximum
 const STAGE_W         = 1920;
-const STAGE_H         = 160;
-const SPRITE_W        = 80;
+const STAGE_H         = 320;
+const SPRITE_W        = 240;
 const HOP_DUR_MIN     = 0.42;   // secondes (marche rapide)
 const HOP_DUR_MAX     = 0.65;   // secondes (marche lente)
 
