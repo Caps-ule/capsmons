@@ -11117,13 +11117,7 @@ async function useItem(key) {{
     if (btn) btn.disabled = false;
   }}
 }}
-```
-
----
-
-## 7. `.env` ou docker-compose — Variable à ajouter
-```
-USER_REDIRECT_URI=https://capsmons.devlooping.fr/auth/twitch/callback</script>
+</script>
 </body></html>"""
 @app.post("/u/use_item")
 async def user_use_item(request: Request):
