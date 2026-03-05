@@ -450,6 +450,8 @@ input.focus();
 
 MOD_REDIRECT_URI = os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/twitch/callback")
 _mod_oauth_states: dict = {}   # state → timestamp (nettoyé après usage)
+USER_REDIRECT_URI  = os.environ.get("USER_REDIRECT_URI", f"{PUBLIC_BASE_URL}/auth/twitch/callback")
+_user_oauth_states: dict = {}   # state → timestamp
 
 def _get_broadcaster_token(cur) -> str | None:
     """Retourne le user access token du broadcaster (pour /helix/moderation/moderators)."""
@@ -547,6 +549,35 @@ def _verify_mod_cookie(request: Request) -> dict | None:
         return None
     return {"login": lparts[0], "user_id": lparts[1]}
 
+def _user_session_cookie(response, login: str, user_id: str):
+    """Pose un cookie de session viewer signé (7 jours)."""
+    import hashlib, hmac as _hmac
+    secret  = os.environ.get("INTERNAL_API_KEY", "secret")
+    payload = f"{login}:{user_id}"
+    sig     = _hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+    response.set_cookie(
+        "user_session", f"{payload}:{sig}",
+        httponly=True, samesite="lax", max_age=86400 * 7
+    )
+
+def _verify_user_cookie(request: Request) -> dict | None:
+    """Vérifie le cookie user_session. Retourne {login, user_id} ou None."""
+    import hashlib, hmac as _hmac
+    val = request.cookies.get("user_session", "")
+    if not val:
+        return None
+    parts = val.rsplit(":", 1)
+    if len(parts) != 2:
+        return None
+    payload, sig = parts
+    secret   = os.environ.get("INTERNAL_API_KEY", "secret")
+    expected = _hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+    if not secrets.compare_digest(sig, expected):
+        return None
+    lparts = payload.split(":", 1)
+    if len(lparts) != 2:
+        return None
+    return {"login": lparts[0], "user_id": lparts[1]}
 
 @app.get("/mod", response_class=HTMLResponse)
 async def mod_panel(request: Request):
@@ -706,6 +737,103 @@ async def mod_callback(
 def mod_logout():
     resp = RedirectResponse("/mod/login", status_code=302)
     resp.delete_cookie("mod_session")
+    return resp
+
+# ==============================================================================
+# AUTH VIEWER — connexion Twitch pour les viewers (page /u/{login})
+# ==============================================================================
+
+@app.get("/auth/twitch")
+def user_auth(next: str | None = None):
+    """Démarre le flow OAuth Twitch pour un viewer."""
+    state = secrets.token_urlsafe(16)
+    _user_oauth_states[state] = {"ts": time.time(), "next": next or ""}
+    # Nettoyer les vieux states
+    old = [k for k, v in _user_oauth_states.items() if time.time() - v["ts"] > 600]
+    for k in old:
+        del _user_oauth_states[k]
+
+    params = {
+        "client_id":     TWITCH_CLIENT_ID,
+        "redirect_uri":  USER_REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "user:read:email",
+        "state":         state,
+        "force_verify":  "false",
+    }
+    return RedirectResponse("https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params))
+
+
+@app.get("/auth/twitch/callback")
+async def user_auth_callback(
+    code:  str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    """Callback OAuth Twitch — pose le cookie et redirige vers /u/{login}."""
+    if error or not code or not state:
+        return RedirectResponse("/?error=oauth_fail")
+
+    if state not in _user_oauth_states:
+        return RedirectResponse("/?error=bad_state")
+
+    state_data = _user_oauth_states.pop(state)
+    next_url   = state_data.get("next", "")
+
+    # Échanger le code contre un token
+    async with httpx.AsyncClient(timeout=15) as client:
+        tr = await client.post("https://id.twitch.tv/oauth2/token", data={
+            "client_id":     TWITCH_CLIENT_ID,
+            "client_secret": TWITCH_CLIENT_SECRET,
+            "code":          code,
+            "grant_type":    "authorization_code",
+            "redirect_uri":  USER_REDIRECT_URI,
+        })
+    if tr.status_code != 200:
+        return RedirectResponse("/?error=oauth_fail")
+
+    access_token = tr.json().get("access_token", "")
+    if not access_token:
+        return RedirectResponse("/?error=oauth_fail")
+
+    # Récupérer l'identité
+    async with httpx.AsyncClient(timeout=10) as client:
+        vr = await client.get(
+            "https://id.twitch.tv/oauth2/validate",
+            headers={"Authorization": f"OAuth {access_token}"},
+        )
+    if vr.status_code != 200:
+        return RedirectResponse("/?error=oauth_fail")
+
+    vj      = vr.json()
+    user_id = vj.get("user_id", "")
+    login   = vj.get("login",    "").lower()
+    if not user_id or not login:
+        return RedirectResponse("/?error=oauth_fail")
+
+    # S'assurer que le viewer existe en base
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
+                (login,)
+            )
+        conn.commit()
+
+    # Poser le cookie et rediriger
+    dest = next_url if next_url.startswith("/u/") else f"/u/{login}"
+    resp = RedirectResponse(dest, status_code=302)
+    _user_session_cookie(resp, login, user_id)
+    return resp
+
+
+@app.get("/auth/logout")
+def user_logout(request: Request):
+    """Déconnexion viewer — supprime le cookie et redirige vers la page profil."""
+    session = _verify_user_cookie(request)
+    login   = session["login"] if session else ""
+    resp    = RedirectResponse(f"/u/{login}" if login else "/", status_code=302)
+    resp.delete_cookie("user_session")
     return resp
 
 
@@ -10615,7 +10743,7 @@ def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
 def _stage_roman(n):
     return {0: "Œuf", 1: "I", 2: "II", 3: "III"}.get(n, str(n))
 
-def _render_user_page(login: str, d: dict) -> str:
+def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
     active    = d["active_cm"]
     quests    = d["quests"]
     badges    = d["badges"]
@@ -10748,23 +10876,36 @@ def _render_user_page(login: str, d: dict) -> str:
     if inventory:
         inv_items_html = ""
         for it in inventory:
-            key    = it["item_key"]
-            name   = it["name"] or key
+            key      = it["item_key"]
+            name     = it["name"] or key
             icon_url = it["icon_url"]
-            qty    = it["qty"]
+            qty      = it["qty"]
             if icon_url:
                 icon_html = f'<img src="{icon_url}" class="inv-icon" alt="{name}">'
             else:
                 emoji, _ = item_icons.get(key, ("📦", name))
                 icon_html = f'<div class="inv-icon-ph">{emoji}</div>'
+
+            # Bouton utiliser — uniquement si c'est le propriétaire connecté
+            if is_owner:
+                use_btn = (
+                    f'<button class="inv-use-btn" '
+                    f'onclick="useItem(\'{key}\')" '
+                    f'{"disabled" if qty <= 0 else ""}>'
+                    f'Utiliser</button>'
+                )
+            else:
+                use_btn = ""
+
             inv_items_html += f"""
-        <div class="inv-item">
+        <div class="inv-item" id="inv-{key}">
           {icon_html}
           <div class="inv-info">
             <div class="inv-name">{name}</div>
             <div class="inv-key">{key}</div>
           </div>
-          <div class="inv-qty">×{qty}</div>
+          <div class="inv-qty" id="qty-{key}">×{qty}</div>
+          {use_btn}
         </div>"""
         inv_html = f'<div class="inv-grid">{inv_items_html}</div>'
     else:
@@ -10780,6 +10921,10 @@ def _render_user_page(login: str, d: dict) -> str:
         for sec in sections for c in sec["cms"] if c["owned"]
     )
     album_pct = int((owned_forms_real / max(1, total_forms_real)) * 100)
+    if is_owner:
+        auth_html = '<a href="/auth/logout" class="btn-logout">Déconnexion</a>'
+    else:
+        auth_html = f'<a href="/auth/twitch?next=/u/{login}" class="btn-connect">🔗 Se connecter avec Twitch</a>'
 
     return f"""<!doctype html>
 <html lang="fr"><head>
@@ -10880,14 +11025,24 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .inv-info{{display:flex;flex-direction:column;gap:1px;min-width:0}}
 .inv-name{{font-family:var(--font-ui);font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .inv-key{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
+.inv-use-btn{{font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--cyan);background:rgba(0,229,255,.08);color:var(--cyan);cursor:pointer;margin-top:6px;transition:background .2s}}
+.inv-use-btn:hover{{background:rgba(0,229,255,.18)}}
+.inv-use-btn:disabled{{opacity:.35;cursor:not-allowed}}
+.use-feedback{{font-family:var(--font-mono);font-size:11px;margin-top:6px;min-height:16px}}
+.use-ok{{color:var(--green)}}.use-err{{color:var(--magenta)}}
+.top-bar-auth{{display:flex;align-items:center;gap:10px}}
+.btn-connect{{font-family:var(--font-head);font-size:9px;letter-spacing:.1em;padding:7px 14px;border-radius:8px;border:1px solid var(--cyan);background:rgba(0,229,255,.08);color:var(--cyan);cursor:pointer;text-decoration:none;transition:background .2s}}
+.btn-connect:hover{{background:rgba(0,229,255,.18)}}
+.btn-logout{{font-family:var(--font-mono);font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,45,120,.3);background:rgba(255,45,120,.06);color:#ff2d78;text-decoration:none}}
 .inv-qty{{font-family:var(--font-head);font-size:16px;font-weight:900;color:var(--amber);text-shadow:0 0 12px rgba(255,209,102,.3);margin-left:auto;flex-shrink:0;padding-left:8px}}
 </style></head>
 <body>
 <div class="wrap">
   <div class="top-bar">
-    <div><div class="site-brand">CAPSMONS</div><div class="page-title">@{login}</div></div>
-    <div class="week-badge">Semaine du {week_str}</div>
-  </div>
+  <div class="site-brand">CAPSMONS</div>
+  <div class="page-title">@{login}</div>
+  <div class="top-bar-auth">{auth_html}</div>
+</div>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-val c">{stats['xp_total']:,}</div><div class="kpi-lbl">XP TOTAL</div></div>
     <div class="kpi-card"><div class="kpi-val g">{stats['drops_total']}</div><div class="kpi-lbl">DROPS</div></div>
@@ -10914,12 +11069,88 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
     {album_html}
   </div>
 </div>
-<script>setInterval(()=>location.reload(),60000);</script>
-</body></html>"""
+<script>setInterval(()=>location.reload(),60000);
+// ── Utiliser un objet ──────────────────────────────────────────────────────
+async function useItem(key) {{
+  const btn = document.querySelector(`#inv-${{key}} .inv-use-btn`);
+  if (btn) btn.disabled = true;
 
+  // Zone de feedback (on la crée à la volée si elle n'existe pas)
+  let fb = document.getElementById(`fb-${{key}}`);
+  if (!fb) {{
+    fb = document.createElement('div');
+    fb.id = `fb-${{key}}`;
+    fb.className = 'use-feedback';
+    const item = document.getElementById(`inv-${{key}}`);
+    if (item) item.appendChild(fb);
+  }}
+  fb.textContent = '…';
+  fb.className = 'use-feedback';
+
+  try {{
+    const r = await fetch('/u/use_item', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{ item_key: key }}),
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      fb.textContent = '✓ Utilisé !';
+      fb.className = 'use-feedback use-ok';
+      // Mettre à jour la quantité affichée
+      const qtyEl = document.getElementById(`qty-${{key}}`);
+      if (qtyEl) {{
+        const cur = parseInt(qtyEl.textContent.replace('×','')) - 1;
+        qtyEl.textContent = `×${{cur}}`;
+        if (cur <= 0 && btn) btn.disabled = true;
+      }}
+      // Recharger la page après 2s pour refléter les effets (XP, stage, etc.)
+      setTimeout(() => location.reload(), 2000);
+    }} else {{
+      fb.textContent = `⛔ ${{j.error || 'Erreur'}}`;
+      fb.className = 'use-feedback use-err';
+      if (btn) btn.disabled = false;
+    }}
+  }} catch(e) {{
+    fb.textContent = '⛔ Erreur réseau';
+    fb.className = 'use-feedback use-err';
+    if (btn) btn.disabled = false;
+  }}
+}}
+```
+
+---
+
+## 7. `.env` ou docker-compose — Variable à ajouter
+```
+USER_REDIRECT_URI=https://capsmons.devlooping.fr/auth/twitch/callback</script>
+</body></html>"""
+@app.post("/u/use_item")
+async def user_use_item(request: Request):
+    """Permet à un viewer connecté d'utiliser un objet de son inventaire."""
+    session = _verify_user_cookie(request)
+    if not session:
+        return JSONResponse({"ok": False, "error": "Non connecté"}, status_code=401)
+
+    body     = await request.json()
+    item_key = str(body.get("item_key", "")).strip().lower()
+    if not item_key:
+        return JSONResponse({"ok": False, "error": "item_key manquant"}, status_code=400)
+
+    login = session["login"]
+
+    # Réutiliser la logique interne directement
+    try:
+        result = internal_use_item(
+            payload={"twitch_login": login, "item_key": item_key},
+            x_api_key=os.environ.get("INTERNAL_API_KEY"),
+        )
+        return JSONResponse({"ok": True, "result": result})
+    except HTTPException as e:
+        return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status_code)
 
 @app.get("/u/{login}", response_class=HTMLResponse)
-def user_profile_page(login: str):
+def user_profile_page(login: str, request: Request):
     login = login.strip().lower()
     week  = _current_week_start()
 
@@ -11030,7 +11261,9 @@ def user_profile_page(login: str):
         "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
         "inventory": inventory,
     }
-    return HTMLResponse(_render_user_page(login, page_data))
+    viewer_session = _verify_user_cookie(request)
+    is_owner = viewer_session is not None and viewer_session["login"] == login
+    return HTMLResponse(_render_user_page(login, page_data, is_owner=is_owner))
 
 
 @app.get("/u/{login}/quests.json")
