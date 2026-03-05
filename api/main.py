@@ -42,7 +42,7 @@ import psycopg
 import httpx
 
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
