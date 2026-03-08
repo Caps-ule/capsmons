@@ -935,7 +935,9 @@
   <div class="nav-item" data-page="events" onclick="nav(this)">
     <span class="icon">✨</span> Événements
   </div>
-  <div class="nav-item" onclick="nav('settings')">⚙ Réglages</div>
+<div class="nav-item" data-page="settings" onclick="nav(this)">
+  <span class="icon">⚙</span> Réglages
+</div>
 
   <div class="sidebar-footer">
     <label class="toggle-switch">
@@ -2425,7 +2427,7 @@ const pageTitles = {
   events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
-  settings: '⚙ RÉGLAGES',
+  settings:      '⚙ RÉGLAGES',
 };
 
 /* ─── ITEMS ─────────────────────────────────────────────────── */
@@ -2692,7 +2694,7 @@ function nav(el) {
   if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
-  if (p === 'settings') loadSettings();
+  if (page === 'settings')      loadSettings();
 }
 
 // restore from hash
