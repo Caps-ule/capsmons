@@ -2351,55 +2351,68 @@
 </div>
 </div>
 
-
 <div id="page-settings" class="page">
-  <div class="card" style="max-width:700px">
-    <div class="card-title">// DROPS AUTOMATIQUES</div>
+
+  <div class="card" style="max-width:680px">
+    <div class="card-title">// DROP AUTOMATIQUE</div>
     <div class="form-grid">
       <label>Activés</label>
       <input type="checkbox" id="s_drop_enabled">
 
       <label>Intervalle min (s)</label>
-      <input type="number" id="s_drop_min" min="60" max="7200">
+      <input type="number" id="s_drop_min" min="60" max="7200" placeholder="900">
 
       <label>Intervalle max (s)</label>
-      <input type="number" id="s_drop_max" min="60" max="7200">
+      <input type="number" id="s_drop_max" min="60" max="7200" placeholder="1500">
 
-      <label>Durée drop min (s)</label>
-      <input type="number" id="s_dur_min" min="5" max="300">
+      <label>Durée min (s)</label>
+      <input type="number" id="s_dur_min" min="5" max="300" placeholder="20">
 
-      <label>Durée drop max (s)</label>
-      <input type="number" id="s_dur_max" min="5" max="300">
+      <label>Durée max (s)</label>
+      <input type="number" id="s_dur_max" min="5" max="300" placeholder="40">
 
       <label>Type d'objet</label>
       <select id="s_kind">
-        <option value="any">Tous</option>
+        <option value="any">Tous (any)</option>
         <option value="ticket">Tickets</option>
         <option value="egg">Œufs</option>
       </select>
 
       <label>Mode</label>
       <select id="s_mode">
-        <option value="random">Solo (random)</option>
-        <option value="coop">COOP</option>
+        <option value="first">First (premier arrivé)</option>
+        <option value="random">Random (tirage au sort)</option>
+        <option value="coop">COOP (tout le monde)</option>
       </select>
-
-      <label>Quantité ticket</label>
-      <input type="number" id="s_qty" min="1" max="10">
     </div>
   </div>
 
-  <div class="card" style="max-width:700px;margin-top:14px">
-    <div class="card-title">// DROPS COOP</div>
+  <div class="card" style="max-width:680px;margin-top:14px">
+    <div class="card-title">// DROP COOP</div>
     <div class="form-grid">
-      <label>XP par hit COOP</label>
-      <input type="number" id="s_coop_xp" min="1" max="500">
+      <label>Durée du drop (s)</label>
+      <input type="number" id="s_coop_dur" min="10" max="300" placeholder="60">
 
-      <label>Durée drops d'event (s)</label>
-      <input type="number" id="s_ev_dur" min="10" max="300">
+      <label>Intervalle entre drops (s)</label>
+      <input type="number" id="s_coop_interval" min="30" max="3600" placeholder="180">
+    </div>
 
-      <label>Hits requis (COOP event)</label>
-      <input type="number" id="s_ev_hits" min="2" max="500">
+    <div class="card-title" style="margin-top:16px">// XP PAR TRANCHE DE PARTICIPANTS</div>
+    <div class="form-grid">
+      <label>1 participant</label>
+      <input type="number" id="s_xp_t1" min="1" max="1000" placeholder="25">
+
+      <label>2–3 participants</label>
+      <input type="number" id="s_xp_t2" min="1" max="1000" placeholder="40">
+
+      <label>4–6 participants</label>
+      <input type="number" id="s_xp_t3" min="1" max="1000" placeholder="65">
+
+      <label>7+ participants</label>
+      <input type="number" id="s_xp_t4" min="1" max="1000" placeholder="100">
+    </div>
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:8px">
+      ±15% de variance appliquée aléatoirement sur chaque valeur
     </div>
   </div>
 
@@ -2537,17 +2550,21 @@ async function loadSettings() {
   const j = await fetch('/admin/settings/json').then(r => r.json()).catch(() => ({}));
   const b = v => String(v) === 'true';
   const n = (v, d) => v != null ? v : d;
-  g('s_drop_enabled').checked = b(j.auto_drop_enabled);
-  g('s_drop_min').value  = n(j.auto_drop_min_seconds, 900);
-  g('s_drop_max').value  = n(j.auto_drop_max_seconds, 1500);
-  g('s_dur_min').value   = n(j.auto_drop_duration_min_seconds, 20);
-  g('s_dur_max').value   = n(j.auto_drop_duration_max_seconds, 40);
-  g('s_kind').value      = n(j.auto_drop_pick_kind, 'any');
-  g('s_mode').value      = n(j.auto_drop_mode, 'random');
-  g('s_qty').value       = n(j.auto_drop_ticket_qty, 1);
-  g('s_coop_xp').value   = n(j.coop_xp_per_hit, 50);
-  g('s_ev_dur').value    = n(j.event_special_drop_duration, 60);
-  g('s_ev_hits').value   = n(j.event_special_drop_target_hits, 10);
+
+  g('s_drop_enabled').checked  = b(j.auto_drop_enabled);
+  g('s_drop_min').value        = n(j.auto_drop_min_seconds, 900);
+  g('s_drop_max').value        = n(j.auto_drop_max_seconds, 1500);
+  g('s_dur_min').value         = n(j.auto_drop_duration_min_seconds, 20);
+  g('s_dur_max').value         = n(j.auto_drop_duration_max_seconds, 40);
+  g('s_kind').value            = n(j.auto_drop_pick_kind, 'any');
+  g('s_mode').value            = n(j.auto_drop_mode, 'random');
+
+  g('s_coop_dur').value        = n(j.coop_drop_duration_seconds, 60);
+  g('s_coop_interval').value   = n(j.coop_drop_interval_seconds, 180);
+  g('s_xp_t1').value           = n(j.coop_xp_t1, 25);
+  g('s_xp_t2').value           = n(j.coop_xp_t2, 40);
+  g('s_xp_t3').value           = n(j.coop_xp_t3, 65);
+  g('s_xp_t4').value           = n(j.coop_xp_t4, 100);
 }
 
 async function saveSettings() {
@@ -2562,10 +2579,12 @@ async function saveSettings() {
     auto_drop_duration_max_seconds: parseInt(g('s_dur_max').value),
     auto_drop_pick_kind:            g('s_kind').value,
     auto_drop_mode:                 g('s_mode').value,
-    auto_drop_ticket_qty:           parseInt(g('s_qty').value),
-    coop_xp_per_hit:                parseInt(g('s_coop_xp').value),
-    event_special_drop_duration:    parseInt(g('s_ev_dur').value),
-    event_special_drop_target_hits: parseInt(g('s_ev_hits').value),
+    coop_drop_duration_seconds:     parseInt(g('s_coop_dur').value),
+    coop_drop_interval_seconds:     parseInt(g('s_coop_interval').value),
+    coop_xp_t1:                     parseInt(g('s_xp_t1').value),
+    coop_xp_t2:                     parseInt(g('s_xp_t2').value),
+    coop_xp_t3:                     parseInt(g('s_xp_t3').value),
+    coop_xp_t4:                     parseInt(g('s_xp_t4').value),
   };
   const r = await fetch('/admin/settings/save', {
     method: 'POST',
@@ -2575,7 +2594,6 @@ async function saveSettings() {
   st.textContent = r.ok ? '✓ Sauvegardé' : '⛔ Erreur';
   st.style.color = r.ok ? 'var(--green)' : 'var(--magenta)';
 }
-
 // ── Formulaire add / edit ──────────────────────────────────────────────────
 function openItemForm() {
   document.getElementById('item-form-title').textContent    = '+ NOUVEL ITEM';

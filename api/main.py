@@ -2497,20 +2497,27 @@ def get_active_drop(cur):
     return cur.fetchone()
 
 def coop_xp_for_count(count: int) -> int:
-    """Retourne un montant d'XP selon le nombre de participants (configurable via kv coop_xp_per_hit)."""
-    base = 50
+    """XP COOP selon tranches configurables (kv: coop_xp_t1/t2/t3/t4)."""
     try:
         with get_db() as _conn:
             with _conn.cursor() as _cur:
-                _cur.execute("SELECT value FROM kv WHERE key='coop_xp_per_hit';")
-                row = _cur.fetchone()
-                if row and row[0]:
-                    base = int(row[0])
+                _cur.execute(
+                    "SELECT key, value FROM kv WHERE key IN ('coop_xp_t1','coop_xp_t2','coop_xp_t3','coop_xp_t4');"
+                )
+                kv = {r[0]: int(r[1]) for r in _cur.fetchall() if r[1]}
     except Exception:
-        pass
-    # Légère variance ±20% pour ne pas être trop prévisible
-    low  = max(1, int(base * 0.8))
-    high = max(low + 1, int(base * 1.2))
+        kv = {}
+    # Tranches : t1=1 participant, t2=2-3, t3=4-6, t4=7+
+    if count <= 1:
+        base = kv.get("coop_xp_t1", 25)
+    elif count <= 3:
+        base = kv.get("coop_xp_t2", 40)
+    elif count <= 6:
+        base = kv.get("coop_xp_t3", 65)
+    else:
+        base = kv.get("coop_xp_t4", 100)
+    low  = max(1, int(base * 0.85))
+    high = max(low + 1, int(base * 1.15))
     return random.randint(low, high)
 # =============================================================================
 # SYSTÈME D'ÉVÉNEMENTS
@@ -2623,37 +2630,36 @@ def start_event(event_key: str, triggered_by: str = "auto") -> dict:
 @app.get("/admin/settings/json")
 def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
+    keys = [
+        "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
+        "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
+        "auto_drop_pick_kind", "auto_drop_mode",
+        "coop_drop_duration_seconds", "coop_drop_interval_seconds",
+        "coop_xp_t1", "coop_xp_t2", "coop_xp_t3", "coop_xp_t4",
+    ]
     with get_db() as conn:
         with conn.cursor() as cur:
-            keys = [
-                "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
-                "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
-                "auto_drop_pick_kind", "auto_drop_mode", "auto_drop_ticket_qty",
-                "coop_xp_per_hit", "event_special_drop_duration",
-                "event_special_drop_target_hits",
-            ]
-            result = {}
-            for k in keys:
-                cur.execute("SELECT value FROM kv WHERE key=%s;", (k,))
-                row = cur.fetchone()
-                result[k] = row[0] if row else None
+            cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
+            result = {r[0]: r[1] for r in cur.fetchall()}
     return result
 
 @app.post("/admin/settings/save")
 def admin_settings_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     allowed = {
-        "auto_drop_enabled":               lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
-        "auto_drop_min_seconds":           lambda v: str(max(60,  min(7200, int(v)))),
-        "auto_drop_max_seconds":           lambda v: str(max(60,  min(7200, int(v)))),
-        "auto_drop_duration_min_seconds":  lambda v: str(max(5,   min(300,  int(v)))),
-        "auto_drop_duration_max_seconds":  lambda v: str(max(5,   min(300,  int(v)))),
-        "auto_drop_pick_kind":             lambda v: v if v in ("any","ticket","egg") else "any",
-        "auto_drop_mode":                  lambda v: v if v in ("random","coop") else "random",
-        "auto_drop_ticket_qty":            lambda v: str(max(1, min(10, int(v)))),
-        "coop_xp_per_hit":                 lambda v: str(max(1, min(500, int(v)))),
-        "event_special_drop_duration":     lambda v: str(max(10, min(300, int(v)))),
-        "event_special_drop_target_hits":  lambda v: str(max(2,  min(500, int(v)))),
+        "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
+        "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
+        "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
+        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
+        "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
+        "coop_drop_duration_seconds":     lambda v: str(max(10,   min(300,  int(v)))),
+        "coop_drop_interval_seconds":     lambda v: str(max(30,   min(3600, int(v)))),
+        "coop_xp_t1":                     lambda v: str(max(1,    min(1000, int(v)))),
+        "coop_xp_t2":                     lambda v: str(max(1,    min(1000, int(v)))),
+        "coop_xp_t3":                     lambda v: str(max(1,    min(1000, int(v)))),
+        "coop_xp_t4":                     lambda v: str(max(1,    min(1000, int(v)))),
     }
     with get_db() as conn:
         with conn.cursor() as cur:

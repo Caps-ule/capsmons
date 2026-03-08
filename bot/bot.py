@@ -1585,7 +1585,18 @@ class Bot(commands.Bot):
                 ev = _current_event
                 if not ev or ev.get("key") != "pluie_etoiles":
                     continue
-                if time.time() - _event_drop_last < 180:  # 3 minutes
+                interval = 180
+                try:
+                    rc = requests.get(
+                        "http://api:8000/admin/settings/json",
+                        auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                        timeout=2,
+                    )
+                    if rc.ok:
+                        interval = int(rc.json().get("coop_drop_interval_seconds", 180) or 180)
+                except Exception:
+                    pass
+                if time.time() - _event_drop_last < interval:
                     continue
                 _event_drop_last = time.time()
                 await self._maybe_launch_event_drop("pluie_etoiles")
@@ -1637,13 +1648,13 @@ class Bot(commands.Bot):
             target_hits = 10
             try:
                 rc = requests.get(
-                    "http://api:8000/admin/events/json",
+                    "http://api:8000/admin/settings/json",
                     auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
                     timeout=2,
                 )
                 if rc.ok:
-                    cfg = rc.json().get("config", {})
-                    duration = int(cfg.get("event_special_drop_duration", 60) or 60)
+                    cfg = rc.json()
+                    duration    = int(cfg.get("coop_drop_duration_seconds", 60) or 60)
                     target_hits = int(cfg.get("event_special_drop_target_hits", 10) or 10)
             except Exception:
                 pass
