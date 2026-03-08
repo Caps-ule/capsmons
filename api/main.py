@@ -2614,6 +2614,51 @@ def start_event(event_key: str, triggered_by: str = "auto") -> dict:
 
 
 # ── Endpoints events ─────────────────────────────────────────────────────────
+@app.get("/admin/settings/json")
+def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            keys = [
+                "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
+                "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
+                "auto_drop_pick_kind", "auto_drop_mode", "auto_drop_ticket_qty",
+                "coop_xp_per_hit", "event_special_drop_duration",
+                "event_special_drop_target_hits",
+            ]
+            result = {}
+            for k in keys:
+                cur.execute("SELECT value FROM kv WHERE key=%s;", (k,))
+                row = cur.fetchone()
+                result[k] = row[0] if row else None
+    return result
+
+@app.post("/admin/settings/save")
+def admin_settings_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    allowed = {
+        "auto_drop_enabled":               lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
+        "auto_drop_min_seconds":           lambda v: str(max(60,  min(7200, int(v)))),
+        "auto_drop_max_seconds":           lambda v: str(max(60,  min(7200, int(v)))),
+        "auto_drop_duration_min_seconds":  lambda v: str(max(5,   min(300,  int(v)))),
+        "auto_drop_duration_max_seconds":  lambda v: str(max(5,   min(300,  int(v)))),
+        "auto_drop_pick_kind":             lambda v: v if v in ("any","ticket","egg") else "any",
+        "auto_drop_mode":                  lambda v: v if v in ("random","coop") else "random",
+        "auto_drop_ticket_qty":            lambda v: str(max(1, min(10, int(v)))),
+        "coop_xp_per_hit":                 lambda v: str(max(1, min(500, int(v)))),
+        "event_special_drop_duration":     lambda v: str(max(10, min(300, int(v)))),
+        "event_special_drop_target_hits":  lambda v: str(max(2,  min(500, int(v)))),
+    }
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for k, sanitize in allowed.items():
+                if k in payload:
+                    try:
+                        kv_set(cur, k, sanitize(payload[k]))
+                    except Exception:
+                        pass
+        conn.commit()
+    return {"ok": True}
 
 @app.get("/internal/event/active")
 def internal_event_active(x_api_key: str | None = Header(default=None)):
