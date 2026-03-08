@@ -11382,7 +11382,7 @@ def user_profile_page(login: str, request: Request):
     album_by_lineage = defaultdict(list)
     for r in all_cms:
         cm_key = r[0]
-                entry = {
+        entry = {
             "key": cm_key, "name": r[1], "lineage_key": r[2], "lineage_name": r[3], "media_url": r[4],
             "forms": [{"stage":1,"name":r[5] or "","image_url":r[6] or ""},{"stage":2,"name":r[7] or "","image_url":r[8] or ""},{"stage":3,"name":r[9] or "","image_url":r[10] or ""}],
             "owned": cm_key in owned_cms,
