@@ -3333,11 +3333,10 @@ def init_db():
             );
             """)
 
-            with get_db() as conn:
-              with conn.cursor() as cur:
-                  if not column_exists(cur, "active_event", "drop_launched"):
-                      cur.execute("ALTER TABLE active_event ADD COLUMN drop_launched BOOLEAN DEFAULT FALSE;")
-              conn.commit()
+            if not column_exists(cur, "active_event", "drop_launched"):
+                cur.execute(
+                    "ALTER TABLE active_event ADD COLUMN drop_launched BOOLEAN DEFAULT FALSE;"
+                )
             cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
               msg_id TEXT PRIMARY KEY,
