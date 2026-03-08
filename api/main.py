@@ -2497,15 +2497,21 @@ def get_active_drop(cur):
     return cur.fetchone()
 
 def coop_xp_for_count(count: int) -> int:
-    """Retourne un montant d'XP aléatoire selon le nombre de participants."""
-    if count <= 1:
-        return random.randint(20, 30)
-    elif count <= 3:
-        return random.randint(30, 50)
-    elif count <= 5:
-        return random.randint(50, 75)
-    else:
-        return random.randint(100, 250)
+    """Retourne un montant d'XP selon le nombre de participants (configurable via kv coop_xp_per_hit)."""
+    base = 50
+    try:
+        with get_db() as _conn:
+            with _conn.cursor() as _cur:
+                _cur.execute("SELECT value FROM kv WHERE key='coop_xp_per_hit';")
+                row = _cur.fetchone()
+                if row and row[0]:
+                    base = int(row[0])
+    except Exception:
+        pass
+    # Légère variance ±20% pour ne pas être trop prévisible
+    low  = max(1, int(base * 0.8))
+    high = max(low + 1, int(base * 1.2))
+    return random.randint(low, high)
 # =============================================================================
 # SYSTÈME D'ÉVÉNEMENTS
 # =============================================================================

@@ -2532,7 +2532,7 @@ function sortItemsTable(col) {
 }
 
 async function loadSettings() {
-  const j = await apiFetch('/admin/settings/json');
+  const j = await fetch('/admin/settings/json').then(r => r.json()).catch(() => ({}));
   const b = v => String(v) === 'true';
   const n = (v, d) => v != null ? v : d;
   el('s_drop_enabled').checked = b(j.auto_drop_enabled);
@@ -2564,7 +2564,11 @@ async function saveSettings() {
     event_special_drop_duration:    parseInt(el('s_ev_dur').value),
     event_special_drop_target_hits: parseInt(el('s_ev_hits').value),
   };
-  const r = await apiFetch('/admin/settings/save', { method:'POST', body: JSON.stringify(payload) });
+  const r = await fetch('/admin/settings/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(r => r.json()).catch(() => ({}));
   st.textContent = r.ok ? '✓ Sauvegardé' : '⛔ Erreur';
   st.style.color = r.ok ? 'var(--green)' : 'var(--magenta)';
 }
