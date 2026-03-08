@@ -9181,22 +9181,22 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
 
             # Bonheur (piloté par items.happiness_gain)
             # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
-          if happiness_gain > 0:
-              _ensure_quests(cur, login)
-              _quest_progress(cur, login, 'candy', 1)
-          new_happiness = max(0, min(100, active_h + happiness_gain))
+        if happiness_gain > 0:
+           _ensure_quests(cur, login)
+           _quest_progress(cur, login, 'candy', 1)
+        new_happiness = max(0, min(100, active_h + happiness_gain))
 
-          cur.execute(
-              """
-              UPDATE creatures_v2
-              SET happiness=%s, updated_at=now()
-              WHERE twitch_login=%s AND cm_key=%s;
-              """,
-              (new_happiness, login, active_cm_key),
-          )
+        cur.execute(
+           """
+           UPDATE creatures_v2
+           SET happiness=%s, updated_at=now()
+           WHERE twitch_login=%s AND cm_key=%s;
+           """,
+           (new_happiness, login, active_cm_key),
+        )
 
-          new_xp_total = active_xp
-          stage_after = stage_before
+        new_xp_total = active_xp
+        stage_after = stage_before
 
         conn.commit()
 
