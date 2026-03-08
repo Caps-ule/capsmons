@@ -2599,12 +2599,12 @@ def start_event(event_key: str, triggered_by: str = "auto") -> dict:
             # Invalider les events encore actifs
             cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
             cur.execute("""
-                INSERT INTO active_event (event_key, triggered_by, ends_at)
-                VALUES (%s, %s, now() + (%s || ' seconds')::interval)
+                INSERT INTO active_event (event_key, triggered_by, ends_at, drop_launched)
+                VALUES (%s, %s, now() + (%s || ' seconds')::interval, FALSE)
                 RETURNING id, started_at, ends_at;
             """, (event_key, triggered_by, duration))
-            row = cur.fetchone()
-        conn.commit()
+                        row = cur.fetchone()
+                    conn.commit()
     _id, started_at, ends_at = row
     _announce(f"{ev['emoji']} ÉVÉNEMENT : {ev['name']} — {ev['desc']} !")
     return {
@@ -2638,6 +2638,27 @@ def internal_event_stop(x_api_key: str | None = Header(default=None)):
             cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
         conn.commit()
     return {"ok": True}
+
+@app.get("/internal/event/active_and_drop_needed")
+def internal_event_active_and_drop_needed(x_api_key: str | None = Header(default=None)):
+    """Retourne l'event actif + si un drop immédiat est à lancer (consomme le flag)."""
+    require_internal_key(x_api_key)
+    ev = get_active_event()
+    drop_needed = False
+    if ev:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT drop_launched FROM active_event
+                    WHERE ends_at > now()
+                    ORDER BY started_at DESC LIMIT 1;
+                """)
+                row = cur.fetchone()
+                if row and not row[0]:
+                    drop_needed = True
+                    cur.execute("UPDATE active_event SET drop_launched=TRUE WHERE ends_at > now();")
+            conn.commit()
+    return {"active": ev is not None, "event": ev, "drop_needed": drop_needed}
 
 
 @app.get("/admin/events/json")
@@ -3266,6 +3287,12 @@ def init_db():
               triggered_by TEXT NOT NULL DEFAULT 'auto'
             );
             """)
+
+            with get_db() as conn:
+              with conn.cursor() as cur:
+                  if not column_exists(cur, "active_event", "drop_launched"):
+                      cur.execute("ALTER TABLE active_event ADD COLUMN drop_launched BOOLEAN DEFAULT FALSE;")
+              conn.commit()
             cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
               msg_id TEXT PRIMARY KEY,
@@ -9054,34 +9081,58 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 new_xp_total = int(cur.fetchone()[0])
 
                 stage_after = int(stage_from_xp(new_xp_total))
+                evo_payload = None
                 if stage_after != stage_before:
                     cur.execute(
                         """
                         UPDATE creatures_v2
                         SET stage=%s, updated_at=now()
-                        WHERE twitch_login=%s AND cm_key=%s;
+                        WHERE twitch_login=%s AND is_active=TRUE;
                         """,
-                        (stage_after, login, active_cm_key),
+                        (stage_after, login),
                     )
+                    # Hatch (0→1) : attribuer lignée et cm_key si encore "egg"
+                    if stage_before == 0 and stage_after >= 1:
+                        if not active_cm_key or active_cm_key == "egg":
+                            lineage_key = pick_random_lineage(conn)
+                            if lineage_key:
+                                cur.execute("UPDATE creatures_v2 SET lineage_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (lineage_key, login))
+                                picked = pick_cm_for_lineage(conn, lineage_key)
+                                if picked:
+                                    active_cm_key = picked
+                                    cur.execute("UPDATE creatures_v2 SET cm_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (active_cm_key, login))
+                    # Préparer overlay évolution
+                    cur.execute("SELECT name, image_url, sound_url FROM cm_forms WHERE cm_key=%s AND stage=%s;", (active_cm_key, stage_after))
+                    f = cur.fetchone()
+                    if f:
+                        evo_payload = {
+                            "twitch_login": login, "cm_key": active_cm_key,
+                            "stage": stage_after, "name": f[0],
+                            "image_url": f[1], "sound_url": f[2],
+                        }
                 else:
                     stage_after = stage_before
 
                 new_happiness = active_h
-
                 conn.commit()
-                return {
-                    "ok": True,
-                    "twitch_login": login,
-                    "cm_key": str(active_cm_key),
-                    "item_key": item_key,
-                    "item_name": item_name,
-                    "effect": "xp",
-                    "xp_gain": int(xp_gain),
-                    "xp_total": int(new_xp_total or 0),
-                    "stage_before": int(stage_before or 0),
-                    "stage_after": int(stage_after or 0),
-                    "happiness_after": int(new_happiness or 0),
-                }
+
+        # Déclencher l'overlay hors transaction
+        if evo_payload:
+            trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
+
+        return {
+            "ok": True,
+            "twitch_login": login,
+            "cm_key": str(active_cm_key),
+            "item_key": item_key,
+            "item_name": item_name,
+            "effect": "xp",
+            "xp_gain": int(xp_gain),
+            "xp_total": int(new_xp_total or 0),
+            "stage_before": int(stage_before or 0),
+            "stage_after": int(stage_after or 0),
+            "happiness_after": int(new_happiness or 0),
+        }
 
             # Bonheur (piloté par items.happiness_gain)
             # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
@@ -10836,12 +10887,21 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                     section_owned_forms += 1
                     active_cls = "active" if c["is_active"] and form["stage"] == c["max_stage"] else ""
                     img_tag = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
+                    activate_btn = ""
+                    if is_owner and not c["is_active"]:
+                      creature_id = c["creature_id"]
+                      activate_btn = (
+                          f'<button class="album-activate-btn" '
+                          f'onclick="setActiveCm({creature_id})">⚡ Activer</button>'
+                      )
+                    
                     cms_grid += f"""
-            <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
-              <div class="album-img-wrap">{img_tag}</div>
-              <div class="album-name">{form['name']}</div>
-              <div class="album-stage-lbl">Stage {stage_lbl}</div>
-            </div>"""
+                      <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
+                        <div class="album-img-wrap">{img_tag}</div>
+                        <div class="album-name">{form['name']}</div>
+                        <div class="album-stage-lbl">Stage {stage_lbl}</div>
+                        {activate_btn}
+                      </div>"""
                 else:
                     # Forme non encore atteinte ou CM non possédé
                     cms_grid += f"""
@@ -11028,6 +11088,9 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .inv-use-btn{{font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--cyan);background:rgba(0,229,255,.08);color:var(--cyan);cursor:pointer;margin-top:6px;transition:background .2s}}
 .inv-use-btn:hover{{background:rgba(0,229,255,.18)}}
 .inv-use-btn:disabled{{opacity:.35;cursor:not-allowed}}
+.album-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:3px 8px;border-radius:5px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;margin-top:5px;width:100%;transition:background .2s}}
+.album-activate-btn:hover{{background:rgba(255,209,102,.2)}}
+.album-card.active{{border:1px solid var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.2)}}
 .use-feedback{{font-family:var(--font-mono);font-size:11px;margin-top:6px;min-height:16px}}
 .use-ok{{color:var(--green)}}.use-err{{color:var(--magenta)}}
 .top-bar-auth{{display:flex;align-items:center;gap:10px}}
@@ -11117,8 +11180,54 @@ async function useItem(key) {{
     if (btn) btn.disabled = false;
   }}
 }}
+
+async function setActiveCm(creatureId) {{
+  try {{
+    const r = await fetch('/u/set_active_cm', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{ creature_id: creatureId }}),
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      setTimeout(() => location.reload(), 300);
+    }} else {{
+      alert('Erreur : ' + (j.error || 'inconnue'));
+    }}
+  }} catch(e) {{
+    alert('Erreur réseau');
+  }}
+}}
 </script>
 </body></html>"""
+
+
+
+
+@app.post("/u/set_active_cm")
+async def user_set_active_cm(request: Request):
+    """Permet à un viewer connecté de changer son CM actif."""
+    session = _verify_user_cookie(request)
+    if not session:
+        return JSONResponse({"ok": False, "error": "Non connecté"}, status_code=401)
+
+    body = await request.json()
+    creature_id = body.get("creature_id")
+    if not creature_id:
+        return JSONResponse({"ok": False, "error": "creature_id manquant"}, status_code=400)
+
+    login = session["login"]
+    try:
+        result = companions_set_active(
+            payload={"twitch_login": login, "creature_id": int(creature_id)},
+            x_api_key=os.environ.get("INTERNAL_API_KEY"),
+        )
+        return JSONResponse({"ok": True, "result": result})
+    except HTTPException as e:
+        return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status_code)
+
+
+
 @app.post("/u/use_item")
 async def user_use_item(request: Request):
     """Permet à un viewer connecté d'utiliser un objet de son inventaire."""
@@ -11173,14 +11282,13 @@ def user_profile_page(login: str, request: Request):
             owned_cms = {r[0] for r in cur.fetchall()}
 
             cur.execute("""
-                SELECT c.cm_key, c.lineage_key, c.stage, c.xp_total, c.is_active,
+                SELECT c.id, c.cm_key, c.lineage_key, c.stage, c.xp_total, c.is_active,
                        COALESCE(f.name, c.cm_key), COALESCE(f.image_url,'')
                 FROM creatures_v2 c
                 LEFT JOIN cm_forms f ON f.cm_key=c.cm_key AND f.stage=c.stage
                 WHERE c.twitch_login=%s ORDER BY c.is_active DESC, c.xp_total DESC;
             """, (login,))
-            owned_list = [{"cm_key":r[0],"lineage_key":r[1],"stage":int(r[2] or 0),"xp_total":int(r[3] or 0),"is_active":bool(r[4]),"name":r[5],"image_url":r[6]} for r in cur.fetchall()]
-
+            owned_list = [{"creature_id":r[0],"cm_key":r[1],"lineage_key":r[2],"stage":int(r[3] or 0),"xp_total":int(r[4] or 0),"is_active":bool(r[5]),"name":r[6],"image_url":r[7]} for r in cur.fetchall()]
             cur.execute("""
                 SELECT c.key, c.name, c.lineage_key, l.name,
                        COALESCE(c.media_url,''),

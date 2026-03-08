@@ -1545,27 +1545,35 @@ class Bot(commands.Bot):
         global _current_event, _golden_hour_gains, _event_drop_last
         await asyncio.sleep(5)
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(5)
             try:
-                r = requests.get(API_EVENT_ACTIVE_URL, headers={"X-API-Key": API_KEY}, timeout=2)
+                r = requests.get(
+                    "http://api:8000/internal/event/active_and_drop_needed",
+                    headers={"X-API-Key": API_KEY}, timeout=2
+                )
                 if r.ok:
                     data = r.json()
                     prev_key = (_current_event or {}).get("key")
                     new_ev = data.get("event") if data.get("active") else None
                     new_key = (new_ev or {}).get("key")
-
-                    # Reset Golden Hour si l'event a changé ou s'est terminé
+                
                     if prev_key == "golden_hour" and new_key != "golden_hour":
                         _golden_hour_gains = {}
-
-                    # Nouveau drop event (pluie d'étoiles) → reset timer
-                    if prev_key != "pluie_etoiles" and new_key == "pluie_etoiles":
-                        _event_drop_last = time.time()
-                        await self._maybe_launch_event_drop("pluie_etoiles")
-
+                
                     _current_event = new_ev
-            except Exception:
-                pass
+                
+                    # Nouveau event détecté ou drop immédiat requis
+                    if new_key and (prev_key != new_key or data.get("drop_needed")):
+                        if new_key == "pluie_etoiles":
+                            _event_drop_last = time.time()
+                            await self._maybe_launch_event_drop("pluie_etoiles")
+                        elif new_key in ("douce_chaleur", "douce_brise", "pluie_sucree"):
+                            if data.get("drop_needed"):
+                                await self._maybe_launch_event_drop(new_key)
+                        elif new_key == "golden_hour":
+                            _golden_hour_gains = {}
+                            except Exception:
+                                pass
 
     async def event_drop_loop(self):
         """Gère la 'Pluie d'Étoiles Filantes' : un drop toutes les 3 minutes."""

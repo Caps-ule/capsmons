@@ -935,6 +935,7 @@
   <div class="nav-item" data-page="events" onclick="nav(this)">
     <span class="icon">✨</span> Événements
   </div>
+  <div class="nav-item" onclick="nav('settings')">⚙ Réglages</div>
 
   <div class="sidebar-footer">
     <label class="toggle-switch">
@@ -2347,6 +2348,62 @@
   </div>
 </div>
 
+
+<div id="page-settings" class="page" style="display:none">
+  <div class="card" style="max-width:700px">
+    <div class="card-title">// DROPS AUTOMATIQUES</div>
+    <div class="form-grid">
+      <label>Activés</label>
+      <input type="checkbox" id="s_drop_enabled">
+
+      <label>Intervalle min (s)</label>
+      <input type="number" id="s_drop_min" min="60" max="7200">
+
+      <label>Intervalle max (s)</label>
+      <input type="number" id="s_drop_max" min="60" max="7200">
+
+      <label>Durée drop min (s)</label>
+      <input type="number" id="s_dur_min" min="5" max="300">
+
+      <label>Durée drop max (s)</label>
+      <input type="number" id="s_dur_max" min="5" max="300">
+
+      <label>Type d'objet</label>
+      <select id="s_kind">
+        <option value="any">Tous</option>
+        <option value="ticket">Tickets</option>
+        <option value="egg">Œufs</option>
+      </select>
+
+      <label>Mode</label>
+      <select id="s_mode">
+        <option value="random">Solo (random)</option>
+        <option value="coop">COOP</option>
+      </select>
+
+      <label>Quantité ticket</label>
+      <input type="number" id="s_qty" min="1" max="10">
+    </div>
+  </div>
+
+  <div class="card" style="max-width:700px;margin-top:14px">
+    <div class="card-title">// DROPS COOP</div>
+    <div class="form-grid">
+      <label>XP par hit COOP</label>
+      <input type="number" id="s_coop_xp" min="1" max="500">
+
+      <label>Durée drops d'event (s)</label>
+      <input type="number" id="s_ev_dur" min="10" max="300">
+
+      <label>Hits requis (COOP event)</label>
+      <input type="number" id="s_ev_hits" min="2" max="500">
+    </div>
+  </div>
+
+  <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:16px">💾 Enregistrer</button>
+  <div id="settings-status" style="margin-top:8px;font-family:var(--font-mono);font-size:12px"></div>
+</div>
+
 <script>
 
 // ══ NAVIGATION ══
@@ -2368,6 +2425,7 @@ const pageTitles = {
   events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
+  settings: '⚙ RÉGLAGES',
 };
 
 /* ─── ITEMS ─────────────────────────────────────────────────── */
@@ -2596,6 +2654,7 @@ function nav(el) {
   if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
+  if (p === 'settings') loadSettings();
 }
 
 // restore from hash
