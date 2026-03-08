@@ -317,7 +317,7 @@ def _render_homepage() -> str:
     text-transform: uppercase;
   }
   .img-logo{
-    width=60%;
+    width:60%;
   }
 </style>
 </head>
