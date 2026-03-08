@@ -9119,9 +9119,10 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             )
 
             # XP item (piloté par items.xp_gain)
-
+            # XP item (piloté par items.xp_gain)
             evo_payload = None
-            if xp_gain > 0:                cur.execute(
+            if xp_gain > 0:
+                cur.execute(
                     "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
                     (login, xp_gain),
                 )
