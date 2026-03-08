@@ -320,7 +320,7 @@ def _render_homepage() -> str:
 </head>
 <body>
 <div class="container">
-  <div class="logo">CAPSMÖNS</div>
+  <div class="logo"><img src="/static/uploads/ChatGPT Image 8 mars 2026, 16_49_21 (1)_b185cab0.png"></div>
   <div class="logo-sub">// Twitch Creature Companion System</div>
 
   <div class="search-card">
