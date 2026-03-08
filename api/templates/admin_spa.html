@@ -2529,6 +2529,44 @@ function sortItemsTable(col) {
   renderItemsTable(sorted);
 }
 
+async function loadSettings() {
+  const j = await apiFetch('/admin/settings/json');
+  const b = v => String(v) === 'true';
+  const n = (v, d) => v != null ? v : d;
+  el('s_drop_enabled').checked = b(j.auto_drop_enabled);
+  el('s_drop_min').value  = n(j.auto_drop_min_seconds, 900);
+  el('s_drop_max').value  = n(j.auto_drop_max_seconds, 1500);
+  el('s_dur_min').value   = n(j.auto_drop_duration_min_seconds, 20);
+  el('s_dur_max').value   = n(j.auto_drop_duration_max_seconds, 40);
+  el('s_kind').value      = n(j.auto_drop_pick_kind, 'any');
+  el('s_mode').value      = n(j.auto_drop_mode, 'random');
+  el('s_qty').value       = n(j.auto_drop_ticket_qty, 1);
+  el('s_coop_xp').value   = n(j.coop_xp_per_hit, 50);
+  el('s_ev_dur').value    = n(j.event_special_drop_duration, 60);
+  el('s_ev_hits').value   = n(j.event_special_drop_target_hits, 10);
+}
+
+async function saveSettings() {
+  const st = el('settings-status');
+  st.textContent = '…';
+  const payload = {
+    auto_drop_enabled:              el('s_drop_enabled').checked,
+    auto_drop_min_seconds:          parseInt(el('s_drop_min').value),
+    auto_drop_max_seconds:          parseInt(el('s_drop_max').value),
+    auto_drop_duration_min_seconds: parseInt(el('s_dur_min').value),
+    auto_drop_duration_max_seconds: parseInt(el('s_dur_max').value),
+    auto_drop_pick_kind:            el('s_kind').value,
+    auto_drop_mode:                 el('s_mode').value,
+    auto_drop_ticket_qty:           parseInt(el('s_qty').value),
+    coop_xp_per_hit:                parseInt(el('s_coop_xp').value),
+    event_special_drop_duration:    parseInt(el('s_ev_dur').value),
+    event_special_drop_target_hits: parseInt(el('s_ev_hits').value),
+  };
+  const r = await apiFetch('/admin/settings/save', { method:'POST', body: JSON.stringify(payload) });
+  st.textContent = r.ok ? '✓ Sauvegardé' : '⛔ Erreur';
+  st.style.color = r.ok ? 'var(--green)' : 'var(--magenta)';
+}
+
 // ── Formulaire add / edit ──────────────────────────────────────────────────
 function openItemForm() {
   document.getElementById('item-form-title').textContent    = '+ NOUVEL ITEM';
