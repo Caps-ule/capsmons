@@ -1572,8 +1572,8 @@ class Bot(commands.Bot):
                                 await self._maybe_launch_event_drop(new_key)
                         elif new_key == "golden_hour":
                             _golden_hour_gains = {}
-                            except Exception:
-                                pass
+            except Exception:
+                pass
 
     async def event_drop_loop(self):
         """Gère la 'Pluie d'Étoiles Filantes' : un drop toutes les 3 minutes."""
