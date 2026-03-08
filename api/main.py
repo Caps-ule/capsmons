@@ -2603,8 +2603,8 @@ def start_event(event_key: str, triggered_by: str = "auto") -> dict:
                 VALUES (%s, %s, now() + (%s || ' seconds')::interval, FALSE)
                 RETURNING id, started_at, ends_at;
             """, (event_key, triggered_by, duration))
-                    row = cur.fetchone()
-                    conn.commit()
+            row = cur.fetchone()
+            conn.commit()
     _id, started_at, ends_at = row
     _announce(f"{ev['emoji']} ÉVÉNEMENT : {ev['name']} — {ev['desc']} !")
     return {
