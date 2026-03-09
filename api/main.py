@@ -9102,16 +9102,26 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                     "activated": (not has_active),
                 }
 
-            # Si pas d’œuf : on a besoin d’un CM actif pour appliquer XP/bonheur
+            # Si pas d'œuf : on a besoin d'un CM actif pour appliquer XP/bonheur
             if not arow:
                 raise HTTPException(status_code=400, detail="No active CM")
 
             active_cm_key, active_stage, active_xp, active_h = arow
             stage_before = int(active_stage or 0)
-            active_xp = int(active_xp or 0)
-            active_h = int(active_h or 0)
+            active_xp    = int(active_xp or 0)
+            active_h     = int(active_h or 0)
 
-            # 4) consommer 1 item (non-œuf) UNE SEULE FOIS
+            # Récupérer l'id du CM actif pour cibler précisément les UPDATE
+            cur.execute(
+                "SELECT id FROM creatures_v2 WHERE twitch_login=%s AND is_active=TRUE LIMIT 1;",
+                (login,),
+            )
+            active_id_row = cur.fetchone()
+            if not active_id_row:
+                raise HTTPException(status_code=400, detail="No active CM id")
+            active_id = active_id_row[0]
+
+            # 4) consommer 1 item (non-œuf)
             cur.execute(
                 """
                 UPDATE inventory
@@ -9121,49 +9131,58 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 (login, item_key),
             )
 
-            # XP item (piloté par items.xp_gain)
-            # XP item (piloté par items.xp_gain)
-            evo_payload = None
+            evo_payload   = None
+            new_xp_total  = active_xp
+            new_happiness = active_h
+            stage_after   = stage_before
+
+            # XP item
             if xp_gain > 0:
                 cur.execute(
                     "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
                     (login, xp_gain),
                 )
-
                 cur.execute(
                     """
                     UPDATE creatures_v2
                     SET xp_total = xp_total + %s, updated_at = now()
-                    WHERE twitch_login=%s AND cm_key=%s
+                    WHERE id=%s
                     RETURNING xp_total;
                     """,
-                    (xp_gain, login, active_cm_key),
+                    (xp_gain, active_id),
                 )
-                new_xp_total = int(cur.fetchone()[0])
+                row_xp = cur.fetchone()
+                if not row_xp:
+                    raise HTTPException(status_code=500, detail="XP update failed")
+                new_xp_total = int(row_xp[0])
+                stage_after  = int(stage_from_xp(new_xp_total))
 
-                stage_after = int(stage_from_xp(new_xp_total))
-                evo_payload = None
                 if stage_after != stage_before:
                     cur.execute(
-                        """
-                        UPDATE creatures_v2
-                        SET stage=%s, updated_at=now()
-                        WHERE twitch_login=%s AND is_active=TRUE;
-                        """,
-                        (stage_after, login),
+                        "UPDATE creatures_v2 SET stage=%s, updated_at=now() WHERE id=%s;",
+                        (stage_after, active_id),
                     )
                     # Hatch (0→1) : attribuer lignée et cm_key si encore "egg"
                     if stage_before == 0 and stage_after >= 1:
                         if not active_cm_key or active_cm_key == "egg":
                             lineage_key = pick_random_lineage(conn)
                             if lineage_key:
-                                cur.execute("UPDATE creatures_v2 SET lineage_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (lineage_key, login))
+                                cur.execute(
+                                    "UPDATE creatures_v2 SET lineage_key=%s, updated_at=now() WHERE id=%s;",
+                                    (lineage_key, active_id),
+                                )
                                 picked = pick_cm_for_lineage(conn, lineage_key)
                                 if picked:
                                     active_cm_key = picked
-                                    cur.execute("UPDATE creatures_v2 SET cm_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (active_cm_key, login))
+                                    cur.execute(
+                                        "UPDATE creatures_v2 SET cm_key=%s, updated_at=now() WHERE id=%s;",
+                                        (active_cm_key, active_id),
+                                    )
                     # Préparer overlay évolution
-                    cur.execute("SELECT name, image_url, sound_url FROM cm_forms WHERE cm_key=%s AND stage=%s;", (active_cm_key, stage_after))
+                    cur.execute(
+                        "SELECT name, image_url, sound_url FROM cm_forms WHERE cm_key=%s AND stage=%s;",
+                        (active_cm_key, stage_after),
+                    )
                     f = cur.fetchone()
                     if f:
                         evo_payload = {
@@ -9171,15 +9190,41 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                             "stage": stage_after, "name": f[0],
                             "image_url": f[1], "sound_url": f[2],
                         }
-                else:
-                    stage_after = stage_before
 
-                new_happiness = active_h
+                conn.commit()
+
+            # Bonheur item
+            elif happiness_gain > 0:
+                _ensure_quests(cur, login)
+                _quest_progress(cur, login, "candy", 1)
+                new_happiness = max(0, min(100, active_h + happiness_gain))
+                cur.execute(
+                    "UPDATE creatures_v2 SET happiness=%s, updated_at=now() WHERE id=%s;",
+                    (new_happiness, active_id),
+                )
+                conn.commit()
+
+            else:
                 conn.commit()
 
         # Déclencher l'overlay hors transaction
         if evo_payload:
             trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
+
+        if xp_gain > 0:
+            return {
+                "ok": True,
+                "twitch_login": login,
+                "cm_key": str(active_cm_key),
+                "item_key": item_key,
+                "item_name": item_name,
+                "effect": "xp",
+                "xp_gain": int(xp_gain),
+                "xp_total": int(new_xp_total),
+                "stage_before": int(stage_before),
+                "stage_after": int(stage_after),
+                "happiness_after": int(new_happiness),
+            }
 
         return {
             "ok": True,
@@ -9187,45 +9232,10 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             "cm_key": str(active_cm_key),
             "item_key": item_key,
             "item_name": item_name,
-            "effect": "xp",
-            "xp_gain": int(xp_gain),
-            "xp_total": int(new_xp_total or 0),
-            "stage_before": int(stage_before or 0),
-            "stage_after": int(stage_after or 0),
-            "happiness_after": int(new_happiness or 0),
+            "effect": "happiness",
+            "happiness_gain": int(happiness_gain),
+            "happiness_after": int(new_happiness),
         }
-
-            # Bonheur (piloté par items.happiness_gain)
-            # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
-        if happiness_gain > 0:
-           _ensure_quests(cur, login)
-           _quest_progress(cur, login, 'candy', 1)
-        new_happiness = max(0, min(100, active_h + happiness_gain))
-
-        cur.execute(
-           """
-           UPDATE creatures_v2
-           SET happiness=%s, updated_at=now()
-           WHERE twitch_login=%s AND cm_key=%s;
-           """,
-           (new_happiness, login, active_cm_key),
-        )
-
-        new_xp_total = active_xp
-        stage_after = stage_before
-
-        conn.commit()
-
-    return {
-        "ok": True,
-        "twitch_login": login,
-        "cm_key": str(active_cm_key),
-        "item_key": item_key,
-        "item_name": item_name,
-        "effect": "happiness",
-        "happiness_gain": int(happiness_gain),
-        "happiness_after": int(new_happiness or 0),
-    }
 
 # =============================================================================
 # Overlay: Commande !show (CM actif uniquement)
