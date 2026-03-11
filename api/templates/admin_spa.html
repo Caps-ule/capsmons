@@ -865,6 +865,36 @@
 #page-preview .evo-name { font-family:'Orbitron',monospace; font-size:20px; font-weight:900; color:#e8f4ff; letter-spacing:.06em; z-index:1; text-align:center; }
 #page-preview .evo-vwr { font-family:'Share Tech Mono',monospace; font-size:11px; color:#6a8aaa; letter-spacing:.1em; z-index:1; }
 
+
+/* ─── ONGLETS SETTINGS (stabs) ───────────────────────────────── */
+.stabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
+.stab {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  padding: 7px 16px; border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2); color: var(--muted);
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+  letter-spacing: .04em;
+}
+.stab:hover { background: var(--bg3); color: var(--text); }
+.stab.active {
+  background: rgba(0,229,255,.1); border-color: var(--cyan);
+  color: var(--cyan); box-shadow: 0 0 10px rgba(0,229,255,.12);
+}
+.stab-panel { display: none; }
+.stab-panel.active { display: block; }
+
+/* ─── SEUILS XP ─────────────────────────────────────────────── */
+.xp-input-wrap { display:flex; align-items:center; gap:6px; }
+.xp-unit { font-family:var(--mono); font-size:11px; color:var(--muted); }
+.xp-hint { font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:4px; }
+.xp-arrow { font-family:var(--mono); font-size:22px; color:var(--muted); padding-bottom:18px; flex-shrink:0; }
+.xp-diagram-wrap { display:flex; align-items:flex-end; gap:0; width:100%; height:56px; position:relative; margin-bottom:8px; }
+.xp-seg { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; position:relative; }
+.xp-seg-bar { border-radius:6px 6px 0 0; width:100%; transition:width .4s,background .3s; }
+.xp-seg-label { font-family:var(--mono); font-size:9px; white-space:nowrap; margin-top:5px; }
+.xp-seg-val { font-family:var(--mono); font-size:10px; font-weight:700; margin-top:2px; }
+.xp-track { width:100%; height:14px; background:rgba(255,255,255,.05); border-radius:7px; overflow:hidden; display:flex; gap:2px; padding:2px; }
 </style>
 </head>
 
@@ -3021,35 +3051,6 @@ async function saveBossConfig() {
 
 
 
-/* ─── ONGLETS SETTINGS (stabs) ───────────────────────────────── */
-.stabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
-.stab {
-  font-family: var(--mono); font-size: 11px; font-weight: 600;
-  padding: 7px 16px; border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg2); color: var(--muted);
-  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
-  letter-spacing: .04em;
-}
-.stab:hover { background: var(--bg3); color: var(--text); }
-.stab.active {
-  background: rgba(0,229,255,.1); border-color: var(--cyan);
-  color: var(--cyan); box-shadow: 0 0 10px rgba(0,229,255,.12);
-}
-.stab-panel { display: none; }
-.stab-panel.active { display: block; }
-
-/* ─── SEUILS XP ─────────────────────────────────────────────── */
-.xp-input-wrap { display:flex; align-items:center; gap:6px; }
-.xp-unit { font-family:var(--mono); font-size:11px; color:var(--muted); }
-.xp-hint { font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:4px; }
-.xp-arrow { font-family:var(--mono); font-size:22px; color:var(--muted); padding-bottom:18px; flex-shrink:0; }
-.xp-diagram-wrap { display:flex; align-items:flex-end; gap:0; width:100%; height:56px; position:relative; margin-bottom:8px; }
-.xp-seg { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; position:relative; }
-.xp-seg-bar { border-radius:6px 6px 0 0; width:100%; transition:width .4s,background .3s; }
-.xp-seg-label { font-family:var(--mono); font-size:9px; white-space:nowrap; margin-top:5px; }
-.xp-seg-val { font-family:var(--mono); font-size:10px; font-weight:700; margin-top:2px; }
-.xp-track { width:100%; height:14px; background:rgba(255,255,255,.05); border-radius:7px; overflow:hidden; display:flex; gap:2px; padding:2px; }
 .xp-track-seg { height:100%; border-radius:5px; transition:flex .5s cubic-bezier(.22,1,.36,1); }
 
 
