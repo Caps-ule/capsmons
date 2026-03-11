@@ -12051,12 +12051,12 @@ def _stage_roman(n):
     return {0: "Œuf", 1: "I", 2: "II", 3: "III"}.get(n, str(n))
 
 def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
-    active    = d["active_cm"]
-    quests    = d["quests"]
-    badges    = d["badges"]
-    sections  = d["album_sections"]
-    stats     = d["stats"]
-    inventory = d.get("inventory", [])
+    active     = d["active_cm"]
+    quests     = d["quests"]
+    badges     = d["badges"]
+    sections   = d["album_sections"]
+    stats      = d["stats"]
+    inventory  = d.get("inventory", [])
     owned_list = d.get("owned_list", [])
 
     if active and active.get("image_url"):
@@ -12239,19 +12239,40 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
     if is_owner and owned_list:
         comp_cards = ""
         for o in owned_list:
-            is_act   = o["is_active"]
-            act_cls  = "comp-active" if is_act else ""
-            act_lbl  = '<span class="comp-act-badge">ACTIF</span>' if is_act else ""
-            stage_lbl= {1:"I", 2:"II", 3:"III"}.get(o["stage"], str(o["stage"]))
-            img_html = (f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy">'
-                        if o.get("image_url") else '<div class="comp-img-ph">?</div>')
-            xp_pct = min(100, int((o["xp_total"] % 500) / 5))
+            is_act    = o["is_active"]
+            is_egg    = (o["cm_key"] == "egg" or o["stage"] == 0)
+            act_cls   = "comp-active" if is_act else ""
+            act_lbl   = '<span class="comp-act-badge">ACTIF</span>' if is_act else ""
+            stage_lbl = {1:"I", 2:"II", 3:"III"}.get(o["stage"], str(o["stage"]))
+
+            if is_egg:
+                # Œuf — affichage spécial emoji + barre XP vers éclosion
+                img_html  = '<div class="comp-img-egg">🥚</div>'
+                name_disp = "Œuf"
+                meta_html = '<span class="badge-pill egg-pill">EN INCUBATION</span>'
+                hatch_pct = min(100, int((o["xp_total"] / 600) * 100)) if o["xp_total"] else 0
+                xp_bar    = f'''<div class="comp-xp-row">
+                  <div class="comp-xp-track"><div class="comp-xp-fill egg-fill" style="width:{hatch_pct}%"></div></div>
+                  <span class="comp-xp-val">{o["xp_total"]} / 600 XP</span>
+                </div>'''
+            else:
+                img_html  = (f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy">'
+                             if o.get("image_url") else '<div class="comp-img-ph">?</div>')
+                name_disp = o["name"]
+                meta_html = f'''<span class="badge-pill c">{(o["lineage_key"] or "").upper()}</span>
+                  <span class="badge-pill g">S{stage_lbl}</span>'''
+                xp_pct    = min(100, int((o["xp_total"] % 500) / 5))
+                xp_bar    = f'''<div class="comp-xp-row">
+                  <div class="comp-xp-track"><div class="comp-xp-fill" style="width:{xp_pct}%"></div></div>
+                  <span class="comp-xp-val">{o["xp_total"]} XP</span>
+                </div>'''
+
             if is_act:
                 act_btn = '<div class="comp-act-state">✓ Actif</div>'
             else:
                 act_btn = (
                     f'<button class="comp-activate-btn" '
-                    f'onclick="setActiveCm({o['creature_id']})">⚡ Activer</button>'
+                    f'onclick="setActiveCm({o["creature_id"]})">⚡ Activer</button>'
                 )
             comp_cards += f"""
             <div class="comp-card {act_cls}">
@@ -12260,15 +12281,11 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 {act_lbl}
               </div>
               <div class="comp-info">
-                <div class="comp-name">{o['name']}</div>
+                <div class="comp-name">{name_disp}</div>
                 <div class="comp-meta">
-                  <span class="badge-pill c">{(o['lineage_key'] or '').upper()}</span>
-                  <span class="badge-pill g">S{stage_lbl}</span>
+                  {meta_html}
                 </div>
-                <div class="comp-xp-row">
-                  <div class="comp-xp-track"><div class="comp-xp-fill" style="width:{xp_pct}%"></div></div>
-                  <span class="comp-xp-val">{o['xp_total']} XP</span>
-                </div>
+                {xp_bar}
                 {act_btn}
               </div>
             </div>"""
@@ -12431,6 +12448,9 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .comp-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;transition:background .2s;width:100%}}
 .comp-activate-btn:hover{{background:rgba(255,209,102,.2)}}
 .comp-act-state{{font-family:var(--font-mono);font-size:10px;color:var(--green);padding:4px 0;text-align:center;letter-spacing:.06em}}
+.comp-img-egg{{width:64px;height:64px;border-radius:10px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.06);display:flex;align-items:center;justify-content:center;font-size:32px}}
+.badge-pill.egg-pill{{color:var(--amber);border-color:rgba(255,209,102,.35);background:rgba(255,209,102,.07);font-size:8px}}
+.comp-xp-fill.egg-fill{{background:linear-gradient(90deg,#ff9d2d,var(--amber))}}
 </style></head>
 <body>
 <div class="wrap">
@@ -12693,18 +12713,9 @@ def user_profile_page(login: str, request: Request):
             inventory = [{"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3]} for r in cur.fetchall()]
 
     page_data = {
-        "login": login,
-        "active_cm": active_cm,
-        "quests": quests,
-        "badges": badges,
-        "album_sections": album_sections,
-        "total_cms": total_cms,
-        "owned_total": owned_total,
-        "stats": {
-            "xp_total": xp_total_all,
-            "drops_total": drops_total,
-            "xp_rank": xp_rank,
-        },
+        "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
+        "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
+        "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
         "inventory": inventory,
         "owned_list": owned_list,
     }
