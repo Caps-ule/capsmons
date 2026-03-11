@@ -1341,11 +1341,12 @@ def require_admin(creds: HTTPBasicCredentials):
 # XP / stages
 # =============================================================================
 def thresholds():
-    hatch = int(os.environ["XP_HATCH"])
-    evo1 = int(os.environ["XP_EVOLVE_1"])
-    evo2 = int(os.environ["XP_EVOLVE_2"])
+    """Lit les seuils XP depuis KV (priorité) puis env vars (fallback)."""
+    hatch = int(kv_get("xp_hatch")     or os.environ.get("XP_HATCH",     "600"))
+    evo1  = int(kv_get("xp_evolve_1")  or os.environ.get("XP_EVOLVE_1", "2000"))
+    evo2  = int(kv_get("xp_evolve_2")  or os.environ.get("XP_EVOLVE_2", "5000"))
     if not (0 < hatch < evo1 < evo2):
-        raise RuntimeError("Invalid thresholds")
+        raise RuntimeError(f"Seuils XP invalides : hatch={hatch} evo1={evo1} evo2={evo2}")
     return hatch, evo1, evo2
 
 
@@ -2697,6 +2698,40 @@ def internal_event_start(payload: dict, x_api_key: str | None = Header(default=N
 
 def _boss_damage_for_stage(stage: int) -> int:
     return {1: 1, 2: 3, 3: 6}.get(stage, 0)
+
+# =============================================================================
+# §  SEUILS XP — lecture et sauvegarde
+# =============================================================================
+
+@app.get("/admin/xp_thresholds/json")
+def admin_xp_thresholds_get(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    hatch, evo1, evo2 = thresholds()
+    return {"xp_hatch": hatch, "xp_evolve_1": evo1, "xp_evolve_2": evo2}
+
+
+@app.post("/admin/xp_thresholds/save")
+def admin_xp_thresholds_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    try:
+        hatch = int(payload["xp_hatch"])
+        evo1  = int(payload["xp_evolve_1"])
+        evo2  = int(payload["xp_evolve_2"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "Valeurs invalides")
+    if not (0 < hatch < evo1 < evo2):
+        raise HTTPException(400, f"Ordre invalide : éclosion ({hatch}) < évo1 ({evo1}) < évo2 ({evo2}) requis")
+    hatch = max(1,    min(99999, hatch))
+    evo1  = max(hatch+1, min(99999, evo1))
+    evo2  = max(evo1+1,  min(99999, evo2))
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            kv_set(cur, "xp_hatch",    str(hatch))
+            kv_set(cur, "xp_evolve_1", str(evo1))
+            kv_set(cur, "xp_evolve_2", str(evo2))
+        conn.commit()
+    return {"ok": True, "xp_hatch": hatch, "xp_evolve_1": evo1, "xp_evolve_2": evo2}
+
 
 @app.post("/admin/boss/start")
 def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):

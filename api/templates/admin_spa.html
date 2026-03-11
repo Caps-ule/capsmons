@@ -938,6 +938,9 @@
   <div class="nav-item" data-page="boss" onclick="nav(this)">
     <span class="icon">⚔️</span> Boss Raid
   </div>
+  <div class="nav-item" data-page="xp" onclick="nav(this)">
+    <span class="icon">⚡</span> Seuils XP
+  </div>
 <div class="nav-item" data-page="settings" onclick="nav(this)">
   <span class="icon">⚙</span> Réglages
 </div>
@@ -2446,6 +2449,72 @@
 
 </div><!-- /page-boss -->
 
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     PAGE : SEUILS XP
+════════════════════════════════════════════════════════════════════════ -->
+<div id="page-xp" class="page">
+
+  <div class="card">
+    <div class="card-title">⚡ SEUILS D'ÉVOLUTION XP</div>
+
+    <!-- Diagramme visuel des stades -->
+    <div id="xp-diagram" style="margin-bottom:24px;user-select:none">
+      <!-- Rempli par JS -->
+    </div>
+
+    <!-- Formulaire -->
+    <div class="form-row" style="gap:24px;flex-wrap:wrap;align-items:flex-end">
+
+      <div class="form-group">
+        <div class="form-label" style="color:#ffd166">🥚 ÉCLOSION</div>
+        <div class="xp-input-wrap">
+          <input type="number" id="xp_hatch" min="1" max="99999" step="50" style="width:130px">
+          <span class="xp-unit">XP</span>
+        </div>
+        <div class="xp-hint">Stade 0 → 1</div>
+      </div>
+
+      <div class="xp-arrow">→</div>
+
+      <div class="form-group">
+        <div class="form-label" style="color:#00e5ff">✨ ÉVOLUTION I</div>
+        <div class="xp-input-wrap">
+          <input type="number" id="xp_evolve_1" min="1" max="99999" step="100" style="width:130px">
+          <span class="xp-unit">XP</span>
+        </div>
+        <div class="xp-hint">Stade 1 → 2</div>
+      </div>
+
+      <div class="xp-arrow">→</div>
+
+      <div class="form-group">
+        <div class="form-label" style="color:#e040fb">✨✨ ÉVOLUTION II</div>
+        <div class="xp-input-wrap">
+          <input type="number" id="xp_evolve_2" min="1" max="99999" step="100" style="width:130px">
+          <span class="xp-unit">XP</span>
+        </div>
+        <div class="xp-hint">Stade 2 → 3</div>
+      </div>
+
+    </div>
+
+    <div class="row" style="margin-top:20px;align-items:center;gap:16px">
+      <button class="btn btn-cyan" onclick="saveXpThresholds()">💾 Enregistrer</button>
+      <div class="status-line" id="xp-status"></div>
+    </div>
+
+    <div class="card accent-g" style="margin-top:20px;padding:14px 16px">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.8">
+        ⚠️ Ces valeurs s'appliquent immédiatement à tous les nouveaux calculs.<br>
+        Les CMs déjà à un stade supérieur ne régressent pas.<br>
+        Les CMs qui ont déjà dépassé un seuil évolueront au prochain gain d'XP.
+      </div>
+    </div>
+  </div>
+
+</div><!-- /page-xp -->
+
 <div id="page-settings" class="page">
 
   <div class="card" style="max-width:680px">
@@ -2537,6 +2606,7 @@ const pageTitles = {
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
   boss:          '⚔️ BOSS RAID',
+  xp:            '⚡ SEUILS XP',
   settings:      '⚙ RÉGLAGES',
 };
 
@@ -2816,6 +2886,7 @@ function nav(el) {
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
   if (page === 'boss')          loadBossPage();
+  if (page === 'xp')            loadXpThresholds();
   if (page === 'settings')      loadSettings();
 }
 
@@ -2937,6 +3008,101 @@ async function saveBossConfig() {
   });
   const j = await r.json().catch(() => ({}));
   setStatus('boss-cfg-status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
+
+
+/* ─── SEUILS XP ─────────────────────────────────────────────── */
+.xp-input-wrap { display:flex; align-items:center; gap:6px; }
+.xp-unit { font-family:var(--mono); font-size:11px; color:var(--muted); }
+.xp-hint { font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:4px; }
+.xp-arrow { font-family:var(--mono); font-size:22px; color:var(--muted); padding-bottom:18px; flex-shrink:0; }
+.xp-diagram-wrap { display:flex; align-items:flex-end; gap:0; width:100%; height:56px; position:relative; margin-bottom:8px; }
+.xp-seg { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; position:relative; }
+.xp-seg-bar { border-radius:6px 6px 0 0; width:100%; transition:width .4s,background .3s; }
+.xp-seg-label { font-family:var(--mono); font-size:9px; white-space:nowrap; margin-top:5px; }
+.xp-seg-val { font-family:var(--mono); font-size:10px; font-weight:700; margin-top:2px; }
+.xp-track { width:100%; height:14px; background:rgba(255,255,255,.05); border-radius:7px; overflow:hidden; display:flex; gap:2px; padding:2px; }
+.xp-track-seg { height:100%; border-radius:5px; transition:flex .5s cubic-bezier(.22,1,.36,1); }
+
+
+/* ─── SEUILS XP ─────────────────────────────────────────────── */
+
+async function loadXpThresholds() {
+  try {
+    const r = await fetch('/admin/xp_thresholds/json');
+    if (!r.ok) return;
+    const c = await r.json();
+    document.getElementById('xp_hatch').value    = c.xp_hatch;
+    document.getElementById('xp_evolve_1').value = c.xp_evolve_1;
+    document.getElementById('xp_evolve_2').value = c.xp_evolve_2;
+    renderXpDiagram(c.xp_hatch, c.xp_evolve_1, c.xp_evolve_2);
+    // Mise à jour live du diagramme au changement
+    ['xp_hatch','xp_evolve_1','xp_evolve_2'].forEach(id => {
+      document.getElementById(id).addEventListener('input', () => {
+        const h  = parseInt(document.getElementById('xp_hatch').value)    || 0;
+        const e1 = parseInt(document.getElementById('xp_evolve_1').value) || 0;
+        const e2 = parseInt(document.getElementById('xp_evolve_2').value) || 0;
+        renderXpDiagram(h, e1, e2);
+      });
+    });
+  } catch(e) { console.warn('loadXpThresholds error', e); }
+}
+
+function renderXpDiagram(hatch, evo1, evo2) {
+  const el = document.getElementById('xp-diagram');
+  if (!el) return;
+  if (!hatch || !evo1 || !evo2 || !(hatch < evo1) || !(evo1 < evo2)) {
+    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:#ff2d78">⚠️ Ordre invalide : Éclosion &lt; Évo I &lt; Évo II</div>';
+    return;
+  }
+  // Proportions des segments sur la barre totale
+  const total = evo2;
+  const pHatch = (hatch / total * 100).toFixed(1);
+  const pEvo1  = ((evo1 - hatch) / total * 100).toFixed(1);
+  const pEvo2  = ((evo2 - evo1) / total * 100).toFixed(1);
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;font-family:var(--mono);font-size:11px;flex-wrap:wrap">
+      <span style="color:#ffd166">🥚 Éclosion : <strong>${hatch.toLocaleString()} XP</strong></span>
+      <span style="color:var(--muted)">·</span>
+      <span style="color:#00e5ff">✨ Évo I : <strong>${evo1.toLocaleString()} XP</strong></span>
+      <span style="color:var(--muted)">·</span>
+      <span style="color:#e040fb">✨✨ Évo II : <strong>${evo2.toLocaleString()} XP</strong></span>
+    </div>
+    <div class="xp-track">
+      <div class="xp-track-seg" style="flex:${pHatch};background:linear-gradient(90deg,#7a5c00,#ffd166)" title="Stade 0→1 : 0–${hatch} XP"></div>
+      <div class="xp-track-seg" style="flex:${pEvo1};background:linear-gradient(90deg,#007a8a,#00e5ff)"  title="Stade 1→2 : ${hatch}–${evo1} XP"></div>
+      <div class="xp-track-seg" style="flex:${pEvo2};background:linear-gradient(90deg,#6a00a8,#e040fb)" title="Stade 2→3 : ${evo1}–${evo2} XP"></div>
+    </div>
+    <div style="display:flex;gap:0;margin-top:4px;font-family:var(--mono);font-size:9px;color:var(--muted)">
+      <div style="flex:${pHatch};text-align:center;overflow:hidden">Stade 0→1<br>${pHatch}%</div>
+      <div style="flex:${pEvo1};text-align:center;overflow:hidden">Stade 1→2<br>${pEvo1}%</div>
+      <div style="flex:${pEvo2};text-align:center;overflow:hidden">Stade 2→3<br>${pEvo2}%</div>
+    </div>`;
+}
+
+async function saveXpThresholds() {
+  const g = id => document.getElementById(id);
+  const hatch = parseInt(g('xp_hatch').value);
+  const evo1  = parseInt(g('xp_evolve_1').value);
+  const evo2  = parseInt(g('xp_evolve_2').value);
+  if (!(hatch > 0 && evo1 > hatch && evo2 > evo1)) {
+    setStatus('xp-status', '⛔ Ordre invalide : Éclosion < Évo I < Évo II', false);
+    return;
+  }
+  setStatus('xp-status', '…');
+  const r = await fetch('/admin/xp_thresholds/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ xp_hatch: hatch, xp_evolve_1: evo1, xp_evolve_2: evo2 }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.ok) {
+    setStatus('xp-status', `✓ Enregistré — Éclosion ${j.xp_hatch} · Évo I ${j.xp_evolve_1} · Évo II ${j.xp_evolve_2}`, true);
+    renderXpDiagram(j.xp_hatch, j.xp_evolve_1, j.xp_evolve_2);
+  } else {
+    setStatus('xp-status', `⛔ ${j.detail || JSON.stringify(j)}`, false);
+  }
 }
 
 /* ─── THEME ──────────────────────────────────────────────── */
