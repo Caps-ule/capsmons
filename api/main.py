@@ -2868,6 +2868,17 @@ def internal_boss_hit(payload: dict, x_api_key: str | None = Header(default=None
                 (boss_id, login, damage)
             )
 
+            # Récupérer l'image du CM du viewer pour l'animation overlay
+            cur.execute("""
+                SELECT COALESCE(f.image_url, ''), COALESCE(f.name, cv.cm_key, '')
+                FROM creatures_v2 cv
+                LEFT JOIN cm_forms f ON f.cm_key = cv.cm_key AND f.stage = cv.stage
+                WHERE cv.twitch_login=%s AND cv.is_active=TRUE LIMIT 1;
+            """, (login,))
+            viewer_form = cur.fetchone()
+            viewer_img  = viewer_form[0] if viewer_form else ''
+            viewer_name = viewer_form[1] if viewer_form else login
+
             # Déduire les PV
             new_hp = max(0, hp_current - damage)
             defeated = new_hp <= 0
@@ -2879,6 +2890,19 @@ def internal_boss_hit(payload: dict, x_api_key: str | None = Header(default=None
                 """, (boss_id,))
             else:
                 cur.execute("UPDATE boss_raids SET hp_current=%s WHERE id=%s;", (new_hp, boss_id))
+
+            # Compter participants pour reward display
+            cur.execute("SELECT COUNT(*) FROM boss_hits WHERE boss_id=%s;", (boss_id,))
+            nb_participants = int(cur.fetchone()[0])
+
+            # Écrire l'événement overlay
+            cur.execute("""
+                INSERT INTO boss_hit_events
+                  (boss_id, twitch_login, damage, viewer_cm_image, viewer_cm_name,
+                   defeated, reward_type, reward_value, reward_item_key, participants)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+            """, (boss_id, login, damage, viewer_img, viewer_name,
+                  defeated, r_type, r_val, r_item, nb_participants))
 
             conn.commit()
 
@@ -3646,6 +3670,28 @@ def init_db():
               hit_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
               PRIMARY KEY (boss_id, twitch_login)
             );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS boss_hit_events (
+              id           BIGSERIAL PRIMARY KEY,
+              boss_id      INT NOT NULL,
+              twitch_login TEXT NOT NULL,
+              damage       INT NOT NULL DEFAULT 1,
+              viewer_cm_image TEXT NOT NULL DEFAULT '',
+              viewer_cm_name  TEXT NOT NULL DEFAULT '',
+              defeated     BOOLEAN NOT NULL DEFAULT FALSE,
+              reward_type  TEXT,
+              reward_value INT,
+              reward_item_key TEXT,
+              participants INT NOT NULL DEFAULT 0,
+              created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """)
+            if not column_exists(cur, "boss_hit_events", "id"):
+                pass  # table créée ci-dessus
+            # Nettoyage automatique : garder seulement les 500 derniers événements
+            cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_boss_hit_events_boss ON boss_hit_events(boss_id, created_at DESC);
             """)
 
             cur.execute("""
@@ -9726,6 +9772,845 @@ def overlay_drop_state():
 #   Chaque viewer est représenté par son sprite CM qui saute en marchant.
 # =============================================================================
 
+# =============================================================================
+# OVERLAY BOSS RAID
+# =============================================================================
+
+@app.get("/overlay/boss_state")
+def overlay_boss_state(since: int = 0):
+    """
+    Retourne l'état courant du boss + les nouveaux hits depuis ?since=<unix_ms>.
+    L'overlay poll cet endpoint toutes les ~800ms.
+    """
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Boss le plus récent (actif, defeated ou expired depuis <30s)
+            cur.execute("""
+                SELECT id, cm_key, cm_name, cm_image_url, hp_max, hp_current,
+                       reward_type, reward_value, reward_item_key, status, ends_at,
+                       EXTRACT(EPOCH FROM ends_at)::bigint
+                FROM boss_raids
+                WHERE status IN ('active','defeated')
+                   OR (status='expired' AND ends_at > now() - interval '30 seconds')
+                ORDER BY started_at DESC LIMIT 1;
+            """)
+            boss_row = cur.fetchone()
+            if not boss_row:
+                return {"show": False}
+
+            (bid, cm_key, cm_name, cm_img, hp_max, hp_current,
+             r_type, r_val, r_item, status, ends_at, ends_epoch) = boss_row
+
+            # Nouveaux hit-events depuis le timestamp `since`
+            cur.execute("""
+                SELECT id, twitch_login, damage, viewer_cm_image, viewer_cm_name,
+                       defeated, reward_type, reward_value, reward_item_key, participants,
+                       EXTRACT(EPOCH FROM created_at)::bigint * 1000
+                FROM boss_hit_events
+                WHERE boss_id=%s
+                  AND (EXTRACT(EPOCH FROM created_at) * 1000)::bigint > %s
+                ORDER BY created_at ASC
+                LIMIT 20;
+            """, (bid, since))
+            events = []
+            for r in cur.fetchall():
+                events.append({
+                    "id":             int(r[0]),
+                    "login":          r[1],
+                    "damage":         int(r[2]),
+                    "viewer_img":     r[3],
+                    "viewer_name":    r[4],
+                    "defeated":       bool(r[5]),
+                    "reward_type":    r[6],
+                    "reward_value":   int(r[7]) if r[7] else 0,
+                    "reward_item":    r[8],
+                    "participants":   int(r[9]),
+                    "ts":             int(r[10]),
+                })
+
+            # Remaining
+            cur.execute("SELECT GREATEST(0, EXTRACT(EPOCH FROM (ends_at - now()))::int) FROM boss_raids WHERE id=%s;", (bid,))
+            remaining = int(cur.fetchone()[0])
+
+    return {
+        "show":    True,
+        "status":  status,
+        "boss": {
+            "id":            int(bid),
+            "cm_key":        cm_key,
+            "cm_name":       cm_name,
+            "cm_image_url":  cm_img,
+            "hp_max":        int(hp_max),
+            "hp_current":    int(hp_current),
+            "reward_type":   r_type,
+            "reward_value":  int(r_val) if r_val else 0,
+            "reward_item":   r_item,
+            "remaining":     remaining,
+        },
+        "events": events,
+    }
+
+
+@app.get("/overlay/boss", response_class=HTMLResponse)
+def overlay_boss_page():
+    return HTMLResponse(r"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+
+body {
+  background: transparent;
+  overflow: hidden;
+  width: 1920px; height: 300px;
+  font-family: 'Rajdhani', sans-serif;
+}
+
+/* ── CONTENEUR PRINCIPAL ── centré, glisse depuis la droite ── */
+#boss-panel {
+  position: absolute;
+  right: 0; top: 50%;
+  transform: translateY(-50%) translateX(860px);
+  transition: transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+  width: 840px;
+  will-change: transform;
+}
+#boss-panel.visible {
+  transform: translateY(-50%) translateX(0);
+}
+
+/* ── CARD ── */
+.bcard {
+  background: linear-gradient(145deg, #060d1b 0%, #091528 60%, #05090f 100%);
+  border-radius: 20px 0 0 20px;
+  border-left:   2px solid rgba(255,45,120,.5);
+  border-top:    1px solid rgba(255,45,120,.2);
+  border-bottom: 1px solid rgba(255,45,120,.1);
+  padding: 20px 24px 18px 24px;
+  position: relative;
+  overflow: hidden;
+}
+/* scanlines */
+.bcard::after {
+  content:'';
+  position:absolute; inset:0;
+  background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(255,45,120,.012) 3px,rgba(255,45,120,.012) 4px);
+  pointer-events:none;
+}
+/* Trait néon gauche rouge */
+.bcard::before {
+  content:'';
+  position:absolute;
+  left:0; top:8%; bottom:8%;
+  width:3px;
+  background: linear-gradient(180deg,transparent,#ff2d78,#ff6b35,transparent);
+  animation: bpulse 2s ease-in-out infinite;
+}
+@keyframes bpulse { 0%,100%{opacity:.7} 50%{opacity:1;box-shadow:0 0 16px #ff2d78} }
+
+/* ── HEADER ROW ── */
+.header-row {
+  display:flex;
+  align-items:center;
+  gap:16px;
+  margin-bottom:14px;
+}
+
+/* Badge BOSS */
+.boss-badge {
+  font-family:'Orbitron',monospace;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.15em;
+  padding:3px 10px;
+  border-radius:999px;
+  color:#ff2d78;
+  border:1px solid rgba(255,45,120,.5);
+  background:rgba(255,45,120,.1);
+  flex-shrink:0;
+}
+.boss-badge .dot {
+  display:inline-block;
+  width:5px;height:5px;
+  border-radius:50%;
+  background:#ff2d78;
+  box-shadow:0 0 6px #ff2d78;
+  margin-right:5px;
+  animation:modeDot 1.2s ease-in-out infinite;
+  vertical-align:middle;
+}
+@keyframes modeDot { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+#boss-title {
+  font-family:'Orbitron',monospace;
+  font-size:18px;
+  font-weight:900;
+  color:#fff;
+  text-shadow:0 0 20px rgba(255,45,120,.6);
+  letter-spacing:.06em;
+  flex:1;
+}
+#boss-cmd {
+  font-family:'Rajdhani',sans-serif;
+  font-size:14px;
+  color:rgba(255,255,255,.5);
+  flex-shrink:0;
+}
+#boss-cmd code {
+  color:#ff9d2d;
+  font-size:15px;
+  font-weight:700;
+}
+
+/* ── BODY ROW ── */
+.body-row {
+  display:flex;
+  align-items:center;
+  gap:20px;
+}
+
+/* ── IMAGE BOSS ── */
+.boss-img-wrap {
+  position:relative;
+  flex-shrink:0;
+  width:120px; height:120px;
+}
+#boss-img {
+  width:120px; height:120px;
+  object-fit:contain;
+  display:block;
+  image-rendering:pixelated;
+  filter:drop-shadow(0 0 16px rgba(255,45,120,.5));
+  position:relative; z-index:2;
+}
+.boss-glow {
+  position:absolute;
+  inset:-8px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(255,45,120,.25) 0%,transparent 70%);
+  animation:bossGlow 2s ease-in-out infinite;
+}
+@keyframes bossGlow { 0%,100%{transform:scale(1);opacity:.7} 50%{transform:scale(1.15);opacity:1} }
+
+/* Shake boss quand il prend un coup */
+@keyframes bossShake {
+  0%   { transform:translateX(0) rotate(0deg); }
+  15%  { transform:translateX(-8px) rotate(-3deg); }
+  30%  { transform:translateX(8px) rotate(3deg); }
+  45%  { transform:translateX(-6px) rotate(-2deg); }
+  60%  { transform:translateX(6px) rotate(2deg); }
+  75%  { transform:translateX(-3px) rotate(-1deg); }
+  100% { transform:translateX(0) rotate(0deg); }
+}
+.boss-img-wrap.shake { animation:bossShake 0.4s ease-out; }
+
+/* Flash rouge quand hit */
+@keyframes hitFlash {
+  0%   { opacity:1 }
+  30%  { opacity:.1;filter:brightness(10) saturate(0) drop-shadow(0 0 30px #ff2d78); }
+  60%  { opacity:.7 }
+  100% { opacity:1 }
+}
+#boss-img.flash { animation:hitFlash 0.35s ease-out; }
+
+/* ── ZONE INFOS ── */
+.info-col {
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+/* ── HP DISPLAY ── */
+.hp-row {
+  display:flex;
+  align-items:baseline;
+  gap:8px;
+  margin-bottom:4px;
+}
+#hp-current {
+  font-family:'Orbitron',monospace;
+  font-size:32px;
+  font-weight:900;
+  color:#ff2d78;
+  text-shadow:0 0 20px rgba(255,45,120,.8);
+  line-height:1;
+  transition:all .15s;
+}
+.hp-sep { color:rgba(255,255,255,.3); font-size:20px; }
+#hp-max {
+  font-family:'Orbitron',monospace;
+  font-size:16px;
+  color:rgba(255,255,255,.4);
+  font-weight:700;
+}
+.hp-label {
+  font-size:11px;
+  letter-spacing:.1em;
+  color:rgba(255,45,120,.7);
+  font-family:'Orbitron',monospace;
+  margin-left:4px;
+}
+
+/* ── BARRE DE VIE ── */
+.hp-bar-wrap {
+  position:relative;
+  height:18px;
+  background:rgba(255,45,120,.1);
+  border-radius:9px;
+  border:1px solid rgba(255,45,120,.25);
+  overflow:hidden;
+}
+#hp-fill {
+  height:100%;
+  border-radius:9px;
+  background: linear-gradient(90deg, #c0003a, #ff2d78, #ff6b35);
+  box-shadow: 0 0 12px rgba(255,45,120,.6), inset 0 1px 0 rgba(255,255,255,.15);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  position:relative;
+}
+#hp-fill::after {
+  content:'';
+  position:absolute;
+  top:2px; left:4px; right:4px; height:4px;
+  border-radius:2px;
+  background:rgba(255,255,255,.25);
+}
+/* Sweep lumineux sur la barre */
+#hp-fill::before {
+  content:'';
+  position:absolute;
+  top:0; bottom:0; width:60px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);
+  animation:hpSweep 2.5s ease-in-out infinite;
+}
+@keyframes hpSweep { 0%{left:-60px} 100%{left:calc(100% + 60px)} }
+
+/* Barre qui se consume (mort) */
+@keyframes burnBar {
+  0%   { width:var(--hp-pct); filter:brightness(1); }
+  20%  { filter:brightness(2) saturate(3); }
+  60%  { width:0%; filter:brightness(3) saturate(0) sepia(1); }
+  100% { width:0%; opacity:0; }
+}
+#hp-fill.burning { animation:burnBar 1.2s ease-in forwards; }
+
+/* ── PARTICIPANTS ── */
+#participants-row {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:rgba(255,255,255,.5);
+}
+#participants-count {
+  color:#ff9d2d;
+  font-weight:700;
+  font-size:14px;
+}
+
+/* ── CHRONO ── */
+#timer-display {
+  font-family:'Orbitron',monospace;
+  font-size:12px;
+  color:rgba(255,255,255,.35);
+  letter-spacing:.1em;
+}
+#timer-display.urgent { color:#ff2d78; animation:urgentPulse 0.5s ease-in-out infinite; }
+@keyframes urgentPulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* ══════════════════════════════════════════════════════════
+   ANIMATION ATTAQUANT — le CM viewer se jette sur le boss
+══════════════════════════════════════════════════════════ */
+#attacker-layer {
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  overflow:hidden;
+  z-index:50;
+}
+.attacker {
+  position:absolute;
+  width:72px; height:72px;
+  image-rendering:pixelated;
+  will-change:transform,opacity;
+  filter:drop-shadow(0 0 8px rgba(255,255,100,.8));
+}
+/* Phase 1 : apparaît à droite hors écran */
+@keyframes attackerIn {
+  0%   { transform:translateX(120px) translateY(0px) scaleX(-1); opacity:0; }
+  15%  { opacity:1; }
+  40%  { transform:translateX(120px) translateY(0px) scaleX(-1); opacity:1; }
+  /* Phase 2 : charge vers la gauche (vers le boss) */
+  70%  { transform:translateX(-20px) translateY(10px) scaleX(-1) scale(1.25); opacity:1; }
+  80%  { transform:translateX(-40px) translateY(15px) scaleX(-1) scale(0.9); opacity:.8; }
+  /* Phase 3 : rebond arrière */
+  90%  { transform:translateX(40px) translateY(-5px) scaleX(-1); opacity:.6; }
+  100% { transform:translateX(120px) translateY(0px) scaleX(-1); opacity:0; }
+}
+.attacker { animation:attackerIn 1.2s cubic-bezier(0.22,1,0.36,1) forwards; }
+
+/* Étiquette pseudo au-dessus de l'attaquant */
+.attacker-label {
+  position:absolute;
+  font-family:'Rajdhani',sans-serif;
+  font-size:11px;
+  font-weight:700;
+  color:#fff;
+  text-shadow:0 0 8px rgba(255,255,0,.8), 0 1px 2px #000;
+  white-space:nowrap;
+  transform:translateX(-50%);
+  pointer-events:none;
+  animation:labelFade 1.2s ease-out forwards;
+}
+@keyframes labelFade { 0%{opacity:0} 20%{opacity:1} 70%{opacity:1} 100%{opacity:0} }
+
+/* ══════════════════════════════════════════════════════════
+   CHIFFRE DE DÉGATS
+══════════════════════════════════════════════════════════ */
+.dmg-number {
+  position:absolute;
+  font-family:'Orbitron',monospace;
+  font-weight:900;
+  color:#fff;
+  text-shadow:0 0 12px #ff2d78, 0 2px 4px #000;
+  pointer-events:none;
+  animation:dmgFloat 1.1s ease-out forwards;
+  z-index:60;
+}
+@keyframes dmgFloat {
+  0%   { transform:translateY(0) scale(.8);  opacity:0; }
+  15%  { transform:translateY(-10px) scale(1.4); opacity:1; }
+  50%  { transform:translateY(-30px) scale(1.2); opacity:1; }
+  100% { transform:translateY(-60px) scale(1);   opacity:0; }
+}
+
+/* ══════════════════════════════════════════════════════════
+   ÉCRAN DE MORT — récompense
+══════════════════════════════════════════════════════════ */
+#death-screen {
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-direction:column;
+  gap:12px;
+  opacity:0;
+  pointer-events:none;
+  z-index:80;
+}
+#death-screen.active { opacity:1; }
+@keyframes deathAppear {
+  0%   { opacity:0; transform:scale(0.7); }
+  40%  { opacity:1; transform:scale(1.1); }
+  100% { opacity:1; transform:scale(1); }
+}
+.death-title {
+  font-family:'Orbitron',monospace;
+  font-size:28px;
+  font-weight:900;
+  color:#ffd166;
+  text-shadow:0 0 30px rgba(255,209,102,.8), 0 0 60px rgba(255,209,102,.4);
+  letter-spacing:.08em;
+  animation:deathAppear .6s ease-out forwards;
+}
+.death-reward {
+  font-family:'Rajdhani',sans-serif;
+  font-size:22px;
+  font-weight:700;
+  color:#fff;
+  text-shadow:0 0 20px rgba(255,255,255,.5);
+  animation:deathAppear .6s .15s ease-out both;
+}
+.death-participants {
+  font-size:14px;
+  color:rgba(255,255,255,.5);
+  animation:deathAppear .6s .3s ease-out both;
+}
+
+/* ══════════════════════════════════════════════════════════
+   PARTICULES
+══════════════════════════════════════════════════════════ */
+#particles-layer {
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:70;
+  overflow:hidden;
+}
+.particle {
+  position:absolute;
+  border-radius:50%;
+  pointer-events:none;
+  animation:particleFly var(--dur,0.9s) ease-out forwards;
+}
+@keyframes particleFly {
+  0%   { transform:translate(0,0) scale(1); opacity:1; }
+  100% { transform:translate(var(--tx,0px),var(--ty,-60px)) scale(0); opacity:0; }
+}
+
+/* Poussière (mort du boss) */
+.dust {
+  width:6px;height:6px;
+  background:var(--c,#ff2d78);
+  box-shadow:0 0 6px var(--c,#ff2d78);
+  animation:dustFly var(--dur,1.5s) ease-out forwards;
+}
+@keyframes dustFly {
+  0%   { transform:translate(0,0) rotate(0deg) scale(1); opacity:1; }
+  100% { transform:translate(var(--tx,0px),var(--ty,-80px)) rotate(var(--rot,180deg)) scale(0); opacity:0; }
+}
+
+</style>
+</head>
+<body>
+
+<div id="particles-layer"></div>
+
+<div id="boss-panel">
+  <div class="bcard">
+    <div class="header-row">
+      <div class="boss-badge"><span class="dot"></span>BOSS RAID</div>
+      <div id="boss-title">— — —</div>
+      <div id="boss-cmd">Tape <code>!hit</code> pour attaquer</div>
+    </div>
+
+    <div class="body-row">
+      <!-- Image boss -->
+      <div class="boss-img-wrap" id="boss-img-wrap">
+        <div class="boss-glow"></div>
+        <img id="boss-img" src="" alt="">
+        <!-- Layer des attaquants animés -->
+        <div id="attacker-layer"></div>
+      </div>
+
+      <!-- Infos -->
+      <div class="info-col">
+        <div class="hp-row">
+          <div id="hp-current">—</div>
+          <div class="hp-sep">/</div>
+          <div id="hp-max">—</div>
+          <div class="hp-label">PV</div>
+        </div>
+
+        <div class="hp-bar-wrap">
+          <div id="hp-fill" style="width:100%"></div>
+        </div>
+
+        <div id="participants-row">
+          ⚔️ <span id="participants-count">0</span> attaquant(s)
+          &nbsp;·&nbsp;
+          <span id="timer-display">--:--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Écran de victoire -->
+    <div id="death-screen">
+      <div class="death-title">💥 BOSS VAINCU !</div>
+      <div class="death-reward" id="death-reward-text"></div>
+      <div class="death-participants" id="death-participants-text"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── ÉTAT ────────────────────────────────────────────────────────────────────
+let lastBossId   = null;
+let lastEventTs  = 0;       // timestamp ms du dernier event traité
+let showing      = false;
+let bossDefeated = false;
+let hpMax        = 1;
+let deathTimeout = null;
+
+// ── SÉLECTEURS ──────────────────────────────────────────────────────────────
+const panel       = document.getElementById('boss-panel');
+const bossImg     = document.getElementById('boss-img');
+const bossImgWrap = document.getElementById('boss-img-wrap');
+const titleEl     = document.getElementById('boss-title');
+const hpCur       = document.getElementById('hp-current');
+const hpMaxEl     = document.getElementById('hp-max');
+const hpFill      = document.getElementById('hp-fill');
+const timerEl     = document.getElementById('timer-display');
+const partCount   = document.getElementById('participants-count');
+const deathScreen = document.getElementById('death-screen');
+const deathReward = document.getElementById('death-reward-text');
+const deathParts  = document.getElementById('death-participants-text');
+const attackLayer = document.getElementById('attacker-layer');
+const particlesL  = document.getElementById('particles-layer');
+
+// ── HELPERS ─────────────────────────────────────────────────────────────────
+function showPanel() {
+  if (showing) return;
+  showing = true;
+  panel.classList.add('visible');
+}
+function hidePanel() {
+  if (!showing) return;
+  showing = false;
+  panel.classList.remove('visible');
+}
+function fmtTime(s) {
+  if (s <= 0) return '0:00';
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + ':' + String(sec).padStart(2,'0');
+}
+function setHp(cur, max) {
+  hpCur.textContent = cur;
+  hpMaxEl.textContent = max;
+  const pct = max > 0 ? Math.max(0, (cur / max) * 100) : 0;
+  hpFill.style.setProperty('--hp-pct', pct + '%');
+  hpFill.style.width = pct + '%';
+  hpMax = max;
+}
+
+// ── PARTICULES ───────────────────────────────────────────────────────────────
+function spawnParticles(x, y, count, colors, big) {
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = 40 + Math.random() * (big ? 120 : 60);
+    const dur   = 0.6 + Math.random() * 0.6;
+    const c     = colors[Math.floor(Math.random() * colors.length)];
+    const sz    = big ? (6 + Math.random() * 8) : (3 + Math.random() * 5);
+    p.style.cssText = `
+      left:${x}px; top:${y}px;
+      width:${sz}px; height:${sz}px;
+      background:${c};
+      box-shadow:0 0 ${sz*2}px ${c};
+      --tx:${Math.cos(angle)*dist}px;
+      --ty:${Math.sin(angle)*dist}px;
+      --dur:${dur}s;
+    `;
+    particlesL.appendChild(p);
+    setTimeout(() => p.remove(), dur * 1000 + 100);
+  }
+}
+
+// Poussière de mort (nombreuses particules qui tombent)
+function spawnDeathDust() {
+  const wrap = bossImgWrap.getBoundingClientRect();
+  const cx = wrap.left + wrap.width / 2;
+  const cy = wrap.top + wrap.height / 2;
+  const colors = ['#ff2d78','#ff6b35','#ffd166','#fff','#c0003a'];
+  for (let i = 0; i < 60; i++) {
+    const d = document.createElement('div');
+    d.className = 'dust';
+    const angle = (Math.random() * 360) - 90; // plus vers le haut
+    const dist  = 60 + Math.random() * 180;
+    const dur   = 0.8 + Math.random() * 1.2;
+    const c     = colors[Math.floor(Math.random() * colors.length)];
+    d.style.cssText = `
+      left:${cx}px; top:${cy}px;
+      --c:${c};
+      --tx:${Math.cos(angle*Math.PI/180)*dist}px;
+      --ty:${Math.sin(angle*Math.PI/180)*dist - 40}px;
+      --rot:${Math.random()*720}deg;
+      --dur:${dur}s;
+    `;
+    particlesL.appendChild(d);
+    setTimeout(() => d.remove(), dur * 1000 + 100);
+  }
+}
+
+// ── ANIMATION ATTAQUANT ──────────────────────────────────────────────────────
+function spawnAttacker(viewerImg, viewerName, damage) {
+  // Positionner par rapport à l'image du boss
+  const wrap = bossImgWrap.getBoundingClientRect();
+  
+  // Attaquant (CM viewer)
+  const el = document.createElement('img');
+  el.className = 'attacker';
+  el.src = viewerImg || '';
+  // Position : à droite du boss-img-wrap, centré verticalement
+  el.style.cssText = `top: 24px; left: 110px;`;
+  attackLayer.appendChild(el);
+
+  // Label pseudo
+  const lbl = document.createElement('div');
+  lbl.className = 'attacker-label';
+  lbl.textContent = viewerName;
+  lbl.style.cssText = `top: 12px; left: 146px;`;
+  attackLayer.appendChild(lbl);
+
+  // Chiffre de dégâts
+  const dmg = document.createElement('div');
+  dmg.className = 'dmg-number';
+  const sz = damage >= 6 ? 28 : damage >= 3 ? 22 : 16;
+  dmg.style.cssText = `font-size:${sz}px; top:${30 + Math.random()*30}px; left:${40 + Math.random()*40}px;`;
+  dmg.textContent = '-' + damage;
+  bossImgWrap.appendChild(dmg);
+
+  // Flash + shake sur le boss
+  bossImg.classList.remove('flash');
+  bossImgWrap.classList.remove('shake');
+  void bossImg.offsetWidth; // reflow
+  bossImg.classList.add('flash');
+  bossImgWrap.classList.add('shake');
+
+  // Particules d'impact au centre du boss
+  const bRect = bossImg.getBoundingClientRect();
+  spawnParticles(
+    bRect.left + bRect.width/2,
+    bRect.top + bRect.height/2,
+    12,
+    ['#ff2d78','#ff6b35','#ffd166','#fff'],
+    false
+  );
+
+  // Nettoyage
+  setTimeout(() => {
+    el.remove();
+    lbl.remove();
+    bossImg.classList.remove('flash');
+    bossImgWrap.classList.remove('shake');
+  }, 1300);
+  setTimeout(() => dmg.remove(), 1200);
+}
+
+// ── ANIMATION MORT ───────────────────────────────────────────────────────────
+function playDeathAnimation(rewardType, rewardValue, rewardItem, participants) {
+  bossDefeated = true;
+
+  // 1. Barre qui se consume
+  hpFill.style.setProperty('--hp-pct', hpFill.style.width);
+  hpFill.classList.add('burning');
+
+  // 2. Flash rouge sur tout le boss
+  bossImg.classList.remove('flash');
+  void bossImg.offsetWidth;
+  bossImg.classList.add('flash');
+
+  // 3. Poussière après 600ms
+  setTimeout(() => {
+    spawnDeathDust();
+    // Boss image disparait
+    bossImg.style.transition = 'opacity .4s, filter .4s';
+    bossImg.style.opacity = '0';
+    bossImg.style.filter = 'blur(8px) brightness(0)';
+    bossImgWrap.querySelector('.boss-glow').style.opacity = '0';
+  }, 600);
+
+  // 4. Écran récompense après 1.2s
+  setTimeout(() => {
+    let rewardText = '';
+    if (rewardType === 'xp')        rewardText = `🏆 Récompense : +${rewardValue} XP pour tous`;
+    else if (rewardType === 'happiness') rewardText = `🏆 Récompense : +${rewardValue} bonheur pour tous`;
+    else if (rewardType === 'item')  rewardText = `🏆 Récompense : 1× ${rewardItem} pour tous`;
+
+    deathReward.textContent = rewardText;
+    deathParts.textContent = `${participants} participant(s) récompensé(s)`;
+    deathScreen.classList.add('active');
+
+    // Grosse explosion de particules
+    spawnParticles(
+      bossImgWrap.getBoundingClientRect().left + 60,
+      bossImgWrap.getBoundingClientRect().top + 60,
+      40, ['#ffd166','#ff9d2d','#ff2d78','#fff','#00e5ff'], true
+    );
+  }, 1200);
+
+  // 5. Masquer après 8s
+  deathTimeout = setTimeout(() => {
+    hidePanel();
+    deathScreen.classList.remove('active');
+    bossDefeated = false;
+  }, 8000);
+}
+
+// ── POLLING ──────────────────────────────────────────────────────────────────
+let processing = false;
+
+async function tick() {
+  if (processing) return;
+  processing = true;
+  try {
+    const r = await fetch(`/overlay/boss_state?since=${lastEventTs}`, { cache: 'no-store' });
+    const j = await r.json();
+
+    if (!j.show) {
+      // Plus de boss -> on cache si on était visible (et pas en animation mort)
+      if (!bossDefeated && showing) setTimeout(() => hidePanel(), 500);
+      processing = false;
+      return;
+    }
+
+    const boss = j.boss;
+
+    // Nouveau boss -> reset
+    if (boss.id !== lastBossId) {
+      lastBossId = boss.id;
+      lastEventTs = 0;
+      bossDefeated = false;
+      if (deathTimeout) clearTimeout(deathTimeout);
+      deathScreen.classList.remove('active');
+      bossImg.style.opacity = '';
+      bossImg.style.filter  = '';
+      bossImgWrap.querySelector('.boss-glow').style.opacity = '';
+      hpFill.classList.remove('burning');
+
+      // Charger le boss
+      titleEl.textContent = boss.cm_name;
+      bossImg.src = boss.cm_image_url || '';
+      setHp(boss.hp_max, boss.hp_max);  // démarre à 100% (animation sera faite par les events)
+
+      showPanel();
+    }
+
+    // Mise à jour HP + timer si pas en train de mourir
+    if (!bossDefeated) {
+      setHp(boss.hp_current, boss.hp_max);
+      partCount.textContent = (j.events && j.events.length > 0
+        ? j.events[j.events.length-1].participants
+        : parseInt(partCount.textContent || '0')
+      );
+      const rem = boss.remaining;
+      timerEl.textContent = fmtTime(rem);
+      timerEl.className = rem <= 30 ? 'urgent' : '';
+    }
+
+    // Traiter les nouveaux events hit
+    if (j.events && j.events.length > 0) {
+      for (const ev of j.events) {
+        if (ev.ts > lastEventTs) lastEventTs = ev.ts;
+
+        if (ev.defeated && !bossDefeated) {
+          // Petit délai pour laisser le dernier attaquant apparaître
+          if (ev.viewer_img) {
+            spawnAttacker(ev.viewer_img, ev.viewer_name || ev.login, ev.damage);
+          }
+          setTimeout(() => playDeathAnimation(
+            ev.reward_type, ev.reward_value, ev.reward_item, ev.participants
+          ), 400);
+        } else if (!bossDefeated) {
+          if (ev.viewer_img) {
+            spawnAttacker(ev.viewer_img, ev.viewer_name || ev.login, ev.damage);
+          }
+          partCount.textContent = ev.participants;
+        }
+      }
+    }
+
+    // Expiration sans mort
+    if (j.status === 'expired' && !bossDefeated) {
+      setTimeout(() => hidePanel(), 3000);
+    }
+
+  } catch(e) {}
+  processing = false;
+}
+
+setInterval(tick, 900);
+tick();
+</script>
+</body>
+</html>""")
+
+
 @app.get("/overlay/parade_state")
 def overlay_parade_state():
     """Retourne jusqu'à 30 viewers avec leur CM actif pour la parade.
@@ -11257,15 +12142,17 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                     # Forme débloquée (stage atteint ou dépassé)
                     section_owned_forms += 1
                     active_cls = "active" if c["is_active"] and form["stage"] == c["max_stage"] else ""
-                    img_tag = f'<img src="{form["image_url"]}" alt="{form["name"]}">' if form["image_url"] else '<div class="silhouette">?</div>'
+                    if form["image_url"]:
+                        img_tag = f'<img src="{form["image_url"]}" alt="{form["name"]}" loading="lazy">'
+                    else:
+                        img_tag = '<div class="silhouette-ph">?</div>'
                     activate_btn = ""
                     if is_owner and not c["is_active"]:
-                      creature_id = c["creature_id"]
-                      activate_btn = (
-                          f'<button class="album-activate-btn" '
-                          f'onclick="setActiveCm({creature_id})">⚡ Activer</button>'
-                      )
-                    
+                        creature_id = c["creature_id"]
+                        activate_btn = (
+                            f'<button class="album-activate-btn" '
+                            f'onclick="setActiveCm({creature_id})">⚡ Activer</button>'
+                        )
                     cms_grid += f"""
                       <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
                         <div class="album-img-wrap">{img_tag}</div>
@@ -11274,10 +12161,14 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                         {activate_btn}
                       </div>"""
                 else:
-                    # Forme non encore atteinte ou CM non possédé
+                    # Forme verrouillée — silhouette de l'image réelle si disponible
+                    if form["image_url"]:
+                        locked_img = f'<img src="{form["image_url"]}" alt="" class="sil-img" loading="lazy">'
+                    else:
+                        locked_img = '<div class="silhouette-ph">?</div>'
                     cms_grid += f"""
             <div class="album-card locked" title="??? — Stage {stage_lbl}">
-              <div class="album-img-wrap"><div class="silhouette">?</div></div>
+              <div class="album-img-wrap">{locked_img}</div>
               <div class="album-name">???</div>
               <div class="album-stage-lbl">Stage {stage_lbl}</div>
             </div>"""
@@ -11341,6 +12232,54 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
         inv_html = f'<div class="inv-grid">{inv_items_html}</div>'
     else:
         inv_html = '<div class="muted-sm">Inventaire vide</div>'
+
+    # ── Section Companions (visible uniquement si propriétaire connecté) ────
+    companions_section = ""
+    if is_owner and owned_list:
+        comp_cards = ""
+        for o in owned_list:
+            is_act   = o["is_active"]
+            act_cls  = "comp-active" if is_act else ""
+            act_lbl  = '<span class="comp-act-badge">ACTIF</span>' if is_act else ""
+            stage_lbl= {1:"I", 2:"II", 3:"III"}.get(o["stage"], str(o["stage"]))
+            img_html = (f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy">'
+                        if o.get("image_url") else '<div class="comp-img-ph">?</div>')
+            xp_pct = min(100, int((o["xp_total"] % 500) / 5))
+            if is_act:
+                act_btn = '<div class="comp-act-state">✓ Actif</div>'
+            else:
+                act_btn = (
+                    f'<button class="comp-activate-btn" '
+                    f'onclick="setActiveCm({o['creature_id']})">⚡ Activer</button>'
+                )
+            comp_cards += f"""
+            <div class="comp-card {act_cls}">
+              <div class="comp-img-wrap">
+                {img_html}
+                {act_lbl}
+              </div>
+              <div class="comp-info">
+                <div class="comp-name">{o['name']}</div>
+                <div class="comp-meta">
+                  <span class="badge-pill c">{(o['lineage_key'] or '').upper()}</span>
+                  <span class="badge-pill g">S{stage_lbl}</span>
+                </div>
+                <div class="comp-xp-row">
+                  <div class="comp-xp-track"><div class="comp-xp-fill" style="width:{xp_pct}%"></div></div>
+                  <span class="comp-xp-val">{o['xp_total']} XP</span>
+                </div>
+                {act_btn}
+              </div>
+            </div>"""
+
+        companions_section = f"""
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>// MES CAPSMONS ({len(owned_list)})</span>
+    </div>
+    <div class="companions-grid">{comp_cards}
+    </div>
+  </div>"""
 
     completed_count = sum(1 for q in quests if q["completed"])
     total_forms_real = sum(
@@ -11469,6 +12408,28 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .btn-connect:hover{{background:rgba(0,229,255,.18)}}
 .btn-logout{{font-family:var(--font-mono);font-size:10px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,45,120,.3);background:rgba(255,45,120,.06);color:#ff2d78;text-decoration:none}}
 .inv-qty{{font-family:var(--font-head);font-size:16px;font-weight:900;color:var(--amber);text-shadow:0 0 12px rgba(255,209,102,.3);margin-left:auto;flex-shrink:0;padding-left:8px}}
+/* ── Silhouettes album ── */
+.sil-img{{width:100%;height:100%;object-fit:contain;filter:brightness(0) invert(0.18) sepia(0.4) hue-rotate(180deg);image-rendering:pixelated}}
+.silhouette-ph{{font-size:22px;color:rgba(74,106,136,.4)}}
+/* ── Section companions ── */
+.companions-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:4px}}
+.comp-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start;transition:border-color .2s,box-shadow .2s}}
+.comp-card:hover{{border-color:rgba(0,229,255,.2)}}
+.comp-card.comp-active{{border-color:rgba(0,255,157,.35);background:rgba(0,255,157,.04);box-shadow:0 0 14px rgba(0,255,157,.1)}}
+.comp-img-wrap{{position:relative;flex-shrink:0;width:64px;height:64px}}
+.comp-img{{width:64px;height:64px;border-radius:10px;object-fit:contain;background:rgba(255,255,255,.04);border:1px solid var(--border);display:block;image-rendering:pixelated}}
+.comp-img-ph{{width:64px;height:64px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--muted)}}
+.comp-act-badge{{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:8px;white-space:nowrap;padding:2px 6px;border-radius:999px;background:var(--green);color:#000;font-weight:700;letter-spacing:.06em}}
+.comp-info{{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}}
+.comp-name{{font-family:var(--font-ui);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.comp-meta{{display:flex;gap:5px;flex-wrap:wrap}}
+.comp-xp-row{{display:flex;align-items:center;gap:6px}}
+.comp-xp-track{{flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+.comp-xp-fill{{height:100%;background:linear-gradient(90deg,#7aa2ff,var(--cyan));border-radius:999px;transition:width .5s}}
+.comp-xp-val{{font-family:var(--font-mono);font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0}}
+.comp-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;transition:background .2s;width:100%}}
+.comp-activate-btn:hover{{background:rgba(255,209,102,.2)}}
+.comp-act-state{{font-family:var(--font-mono);font-size:10px;color:var(--green);padding:4px 0;text-align:center;letter-spacing:.06em}}
 </style></head>
 <body>
 <div class="wrap">
@@ -11496,6 +12457,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
       <div class="quests-grid">{quest_cards or '<div class="muted-sm">Aucune quête assignée</div>'}</div>
     </div>
   </div>
+  {companions_section}
   <div class="card">
     <div class="card-title">// ALBUM CAPSMONS</div>
     <div class="album-progress-bar"><div class="album-progress-fill" style="width:{album_pct}%"></div></div>
