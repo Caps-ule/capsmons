@@ -12057,6 +12057,7 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
     sections  = d["album_sections"]
     stats     = d["stats"]
     inventory = d.get("inventory", [])
+    owned_list = d.get("owned_list", [])
 
     if active and active.get("image_url"):
         cm_card = f"""
@@ -12692,10 +12693,20 @@ def user_profile_page(login: str, request: Request):
             inventory = [{"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3]} for r in cur.fetchall()]
 
     page_data = {
-        "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
-        "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
-        "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
+        "login": login,
+        "active_cm": active_cm,
+        "quests": quests,
+        "badges": badges,
+        "album_sections": album_sections,
+        "total_cms": total_cms,
+        "owned_total": owned_total,
+        "stats": {
+            "xp_total": xp_total_all,
+            "drops_total": drops_total,
+            "xp_rank": xp_rank,
+        },
         "inventory": inventory,
+        "owned_list": owned_list,
     }
     viewer_session = _verify_user_cookie(request)
     is_owner = viewer_session is not None and viewer_session["login"] == login
