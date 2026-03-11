@@ -1953,11 +1953,48 @@ class Bot(commands.Bot):
             await ctx.send(msg)
 
     # ------------------------------------------------------------------------
-    # Commande: !hit (coop) -> MVP: identique à !grab
+    # Commande: !hit — frappe le boss actif
     # ------------------------------------------------------------------------
     @commands.command(name="hit")
     async def hit(self, ctx: commands.Context):
-        await self.grab(ctx)
+        login = ctx.author.name.lower()
+        try:
+            r = requests.post(
+                "http://api:8000/internal/boss/hit",
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login},
+                timeout=3,
+            )
+        except Exception as e:
+            print("[BOT] boss hit error:", e, flush=True)
+            return
+
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("detail", "")
+            except Exception:
+                detail = ""
+            if "Déjà frappé" in detail:
+                await ctx.send(f"@{ctx.author.name} Tu as déjà frappé ce boss !")
+            elif "Aucun boss actif" in detail:
+                await ctx.send(f"@{ctx.author.name} Aucun boss actif en ce moment.")
+            elif "Oeuf ne peut pas frapper" in detail:
+                await ctx.send(f"@{ctx.author.name} Ton œuf ne peut pas encore combattre !")
+            elif "Pas de CM actif" in detail:
+                await ctx.send(f"@{ctx.author.name} Tu n'as pas de CapsMön actif !")
+            return
+
+        data = r.json()
+        damage   = data.get("damage", 0)
+        hp_after = data.get("hp_after", 0)
+        defeated = data.get("defeated", False)
+        stage    = data.get("stage", 0)
+        stage_lbl = {1: "I", 2: "II", 3: "III"}.get(stage, str(stage))
+
+        if defeated:
+            await ctx.send(f"@{ctx.author.name} ⚔️ COUP FINAL ! -{damage} PV (Stage {stage_lbl}) — le boss est vaincu ! 💥")
+        else:
+            await ctx.send(f"@{ctx.author.name} ⚔️ -{damage} PV (Stage {stage_lbl}) — Boss : {hp_after} PV restants.")
 
     # ------------------------------------------------------------------------
     # Commande: !commands
@@ -1969,7 +2006,7 @@ class Bot(commands.Bot):
             "!creature | !inv | !use <item_key> | "
             "!companion (liste) / !companion <numéro> | "
             "!trade @pseudo <n°> | !answer <n°> | !tyes / !tno | "
-            "!show | !grab"
+            "!show | !grab | !hit (boss)"
         )
         await ctx.send(msg)
 

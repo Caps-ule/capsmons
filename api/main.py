@@ -1639,7 +1639,7 @@ def handle_channel_points_redemption(ev: dict) -> None:
                 if action["type"] == "drop_coop":
                     pick_kind = (kv_get(cur, "cp_drop_pick_kind", kv_get(cur, "auto_drop_pick_kind", "any") or "any") or "any").strip().lower()
                     duration = int(kv_get(cur, "cp_drop_duration_seconds", kv_get(cur, "auto_drop_duration_seconds", "20") or "20") or 20)
-                    target_hits = int(kv_get(cur, "cp_drop_target_hits", kv_get(cur, "auto_drop_target_hits", "10") or "10") or 10)
+                    target_hits = None  # target_hits retiré
                     ticket_qty = int(kv_get(cur, "cp_drop_ticket_qty", kv_get(cur, "auto_drop_ticket_qty", "1") or "1") or 1)
 
                     picked = _pick_item_db(cur, pick_kind)
@@ -2690,6 +2690,246 @@ def internal_event_start(payload: dict, x_api_key: str | None = Header(default=N
     return start_event(event_key, triggered_by)
 
 
+
+# =============================================================================
+# §  SYSTÈME BOSS RAID
+# =============================================================================
+
+def _boss_damage_for_stage(stage: int) -> int:
+    return {1: 1, 2: 3, 3: 6}.get(stage, 0)
+
+@app.post("/admin/boss/start")
+def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    """Lance un boss raid depuis l'admin."""
+    require_admin(credentials)
+
+    cm_key       = str(payload.get("cm_key", "")).strip().lower()
+    hp_max       = int(payload.get("hp_max", 100))
+    duration_min = int(payload.get("duration_minutes", 10))
+    reward_type  = str(payload.get("reward_type", "xp"))
+    reward_value = int(payload.get("reward_value", 50))
+    reward_item  = str(payload.get("reward_item_key", "") or "").strip().lower() or None
+
+    if not cm_key:
+        raise HTTPException(400, "cm_key requis")
+    if reward_type not in ("xp", "happiness", "item"):
+        raise HTTPException(400, "reward_type invalide")
+    if reward_type == "item" and not reward_item:
+        raise HTTPException(400, "reward_item_key requis pour type item")
+
+    hp_max = max(1, min(9999, hp_max))
+    duration_sec = max(60, min(3600, duration_min * 60))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Récupérer infos du CM
+            cur.execute("""
+                SELECT COALESCE(f.name, c.cm_key), COALESCE(f.image_url, c.media_url, '')
+                FROM cms c
+                LEFT JOIN cm_forms f ON f.cm_key = c.key AND f.stage = 1
+                WHERE c.key = %s;
+            """, (cm_key,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "CM introuvable")
+            cm_name, cm_image = row
+
+            # Expirer les boss actifs
+            cur.execute("UPDATE boss_raids SET status='expired', ends_at=now() WHERE status='active';")
+
+            cur.execute("""
+                INSERT INTO boss_raids
+                  (cm_key, cm_name, cm_image_url, hp_max, hp_current,
+                   reward_type, reward_value, reward_item_key, ends_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now() + (%s || ' seconds')::interval)
+                RETURNING id, ends_at;
+            """, (cm_key, cm_name, cm_image, hp_max, hp_max,
+                  reward_type, reward_value, reward_item, duration_sec))
+            boss_id, ends_at = cur.fetchone()
+        conn.commit()
+
+    _announce(f"⚔️ BOSS RAID — {cm_name} apparaît ! {hp_max} PV · Utilisez !hit pour l'attaquer !")
+    return {"ok": True, "boss_id": boss_id, "cm_name": cm_name, "hp_max": hp_max, "ends_at": ends_at.isoformat()}
+
+
+@app.get("/admin/boss/config")
+def admin_boss_config_get(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    keys = [
+        "boss_hp_min", "boss_hp_max", "boss_duration_minutes",
+        "boss_reward_type", "boss_reward_value", "boss_reward_item_key",
+    ]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
+            cfg = {r[0]: r[1] for r in cur.fetchall()}
+    return cfg
+
+
+@app.post("/admin/boss/config")
+def admin_boss_config_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    allowed = {
+        "boss_hp_min":            lambda v: str(max(1,   min(9999, int(v)))),
+        "boss_hp_max":            lambda v: str(max(1,   min(9999, int(v)))),
+        "boss_duration_minutes":  lambda v: str(max(1,   min(60,   int(v)))),
+        "boss_reward_type":       lambda v: v if v in ("xp","happiness","item") else "xp",
+        "boss_reward_value":      lambda v: str(max(1,   min(9999, int(v)))),
+        "boss_reward_item_key":   lambda v: str(v).strip().lower(),
+    }
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for k, sanitize in allowed.items():
+                if k in payload:
+                    try:
+                        kv_set(cur, k, sanitize(payload[k]))
+                    except Exception:
+                        pass
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/internal/boss/active")
+def internal_boss_active(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, cm_key, cm_name, cm_image_url, hp_max, hp_current,
+                       reward_type, reward_value, reward_item_key, ends_at
+                FROM boss_raids
+                WHERE status='active' AND ends_at > now()
+                ORDER BY started_at DESC LIMIT 1;
+            """)
+            row = cur.fetchone()
+    if not row:
+        return {"active": False, "boss": None}
+    _id, cm_key, cm_name, cm_image, hp_max, hp_current, r_type, r_val, r_item, ends_at = row
+    return {
+        "active": True,
+        "boss": {
+            "id": _id, "cm_key": cm_key, "cm_name": cm_name, "cm_image_url": cm_image,
+            "hp_max": hp_max, "hp_current": hp_current,
+            "reward_type": r_type, "reward_value": r_val, "reward_item_key": r_item,
+            "ends_at": ends_at.isoformat(),
+        }
+    }
+
+
+@app.post("/internal/boss/hit")
+def internal_boss_hit(payload: dict, x_api_key: str | None = Header(default=None)):
+    """Un viewer frappe le boss actif avec son CM actif."""
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(400, "twitch_login requis")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # Trouver le boss actif
+            cur.execute("""
+                SELECT id, cm_name, hp_current, reward_type, reward_value, reward_item_key
+                FROM boss_raids
+                WHERE status='active' AND ends_at > now()
+                ORDER BY started_at DESC LIMIT 1;
+            """)
+            boss_row = cur.fetchone()
+            if not boss_row:
+                raise HTTPException(404, "Aucun boss actif")
+
+            boss_id, boss_name, hp_current, r_type, r_val, r_item = boss_row
+
+            # Vérifier que le viewer n'a pas déjà frappé
+            cur.execute("SELECT 1 FROM boss_hits WHERE boss_id=%s AND twitch_login=%s;", (boss_id, login))
+            if cur.fetchone():
+                raise HTTPException(400, "Déjà frappé")
+
+            # CM actif du viewer
+            cur.execute("""
+                SELECT stage, cm_key FROM creatures_v2
+                WHERE twitch_login=%s AND is_active=TRUE LIMIT 1;
+            """, (login,))
+            cm_row = cur.fetchone()
+            if not cm_row:
+                raise HTTPException(400, "Pas de CM actif")
+
+            stage, cm_key = cm_row
+            stage = int(stage or 0)
+
+            if stage == 0:
+                raise HTTPException(400, "Oeuf ne peut pas frapper")
+
+            damage = _boss_damage_for_stage(stage)
+
+            # Enregistrer le coup
+            cur.execute(
+                "INSERT INTO boss_hits (boss_id, twitch_login, damage) VALUES (%s, %s, %s);",
+                (boss_id, login, damage)
+            )
+
+            # Déduire les PV
+            new_hp = max(0, hp_current - damage)
+            defeated = new_hp <= 0
+
+            if defeated:
+                cur.execute("""
+                    UPDATE boss_raids SET hp_current=0, status='defeated', ends_at=now()
+                    WHERE id=%s;
+                """, (boss_id,))
+            else:
+                cur.execute("UPDATE boss_raids SET hp_current=%s WHERE id=%s;", (new_hp, boss_id))
+
+            conn.commit()
+
+        # Distribuer les récompenses si vaincu
+        if defeated:
+            with get_db() as conn2:
+                with conn2.cursor() as cur2:
+                    cur2.execute(
+                        "SELECT twitch_login FROM boss_hits WHERE boss_id=%s;",
+                        (boss_id,)
+                    )
+                    participants = [r[0] for r in cur2.fetchall()]
+
+                for p in participants:
+                    try:
+                        if r_type == "xp":
+                            grant_xp(p, int(r_val))
+                        elif r_type == "happiness":
+                            with get_db() as _c:
+                                with _c.cursor() as _cur:
+                                    _cur.execute("""
+                                        UPDATE creatures_v2
+                                        SET happiness = LEAST(100, happiness + %s), updated_at=now()
+                                        WHERE twitch_login=%s AND is_active=TRUE;
+                                    """, (int(r_val), p))
+                                _c.commit()
+                        elif r_type == "item" and r_item:
+                            with get_db() as _c:
+                                with _c.cursor() as _cur:
+                                    _grant_item_db(_cur, p, r_item, 1)
+                                _c.commit()
+                    except Exception as e:
+                        print(f"[BOSS] reward error for {p}:", e, flush=True)
+
+                reward_label = {
+                    "xp": f"+{r_val} XP",
+                    "happiness": f"+{r_val} bonheur",
+                    "item": f"1× {r_item}",
+                }.get(r_type, "récompense")
+                _announce(f"💥 {boss_name} est vaincu ! {len(participants)} participant(s) reçoivent {reward_label} !")
+
+    return {
+        "ok": True,
+        "damage": damage,
+        "hp_before": hp_current,
+        "hp_after": new_hp,
+        "defeated": defeated,
+        "stage": stage,
+    }
+
+
 @app.post("/internal/event/stop")
 def internal_event_stop(x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
@@ -3016,12 +3256,56 @@ def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
         "auto_drop_mode",
         "auto_drop_ticket_qty",
         "auto_drop_fallback_media_url",
+        "coop_drop_duration_seconds",
+        "coop_drop_interval_seconds",
+        "coop_xp_t1", "coop_xp_t2", "coop_xp_t3", "coop_xp_t4",
     ]
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT key, value FROM kv WHERE key = ANY(%s);", (keys,))
             rows = cur.fetchall()
     return {"ok": True, "settings": {k: v for (k, v) in rows}}
+
+
+@app.post("/admin/autodrop/save")
+def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    allowed = {
+        "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes","on") else "false",
+        "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
+        "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
+        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
+        "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
+        "auto_drop_ticket_qty":           lambda v: str(max(1,    min(50,   int(v)))),
+        "auto_drop_fallback_media_url":   lambda v: str(v).strip(),
+    }
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for k, sanitize in allowed.items():
+                # La SPA envoie des noms courts (enabled, min_seconds…) ET les noms complets
+                short_map = {
+                    "enabled": "auto_drop_enabled",
+                    "min_seconds": "auto_drop_min_seconds",
+                    "max_seconds": "auto_drop_max_seconds",
+                    "duration_min": "auto_drop_duration_min_seconds",
+                    "duration_max": "auto_drop_duration_max_seconds",
+                    "pick_kind": "auto_drop_pick_kind",
+                    "mode": "auto_drop_mode",
+                    "ticket_qty": "auto_drop_ticket_qty",
+                    "fallback_media_url": "auto_drop_fallback_media_url",
+                }
+                # Chercher dans payload avec les deux noms possibles
+                short_key = next((s for s, f in short_map.items() if f == k), None)
+                val = payload.get(k, payload.get(short_key) if short_key else None)
+                if val is not None:
+                    try:
+                        kv_set(cur, k, sanitize(val))
+                    except Exception:
+                        pass
+        conn.commit()
+    return {"ok": True}
 
 
 @app.post("/admin/autodrop/test")
@@ -3338,6 +3622,32 @@ def init_db():
               processed_at TIMESTAMPTZ
             );
             """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS boss_raids (
+              id           SERIAL PRIMARY KEY,
+              cm_key       TEXT NOT NULL,
+              cm_name      TEXT NOT NULL,
+              cm_image_url TEXT NOT NULL DEFAULT '',
+              hp_max       INT NOT NULL,
+              hp_current   INT NOT NULL,
+              reward_type  TEXT NOT NULL DEFAULT 'xp' CHECK (reward_type IN ('xp','happiness','item')),
+              reward_value INT NOT NULL DEFAULT 50,
+              reward_item_key TEXT,
+              status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','defeated','expired')),
+              started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+              ends_at      TIMESTAMPTZ NOT NULL
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS boss_hits (
+              boss_id      INT NOT NULL REFERENCES boss_raids(id) ON DELETE CASCADE,
+              twitch_login TEXT NOT NULL,
+              damage       INT NOT NULL DEFAULT 1,
+              hit_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+              PRIMARY KEY (boss_id, twitch_login)
+            );
+            """)
+
             cur.execute("""
             CREATE TABLE IF NOT EXISTS active_event (
               id SERIAL PRIMARY KEY,
@@ -9102,26 +9412,16 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                     "activated": (not has_active),
                 }
 
-            # Si pas d'œuf : on a besoin d'un CM actif pour appliquer XP/bonheur
+            # Si pas d’œuf : on a besoin d’un CM actif pour appliquer XP/bonheur
             if not arow:
                 raise HTTPException(status_code=400, detail="No active CM")
 
             active_cm_key, active_stage, active_xp, active_h = arow
             stage_before = int(active_stage or 0)
-            active_xp    = int(active_xp or 0)
-            active_h     = int(active_h or 0)
+            active_xp = int(active_xp or 0)
+            active_h = int(active_h or 0)
 
-            # Récupérer l'id du CM actif pour cibler précisément les UPDATE
-            cur.execute(
-                "SELECT id FROM creatures_v2 WHERE twitch_login=%s AND is_active=TRUE LIMIT 1;",
-                (login,),
-            )
-            active_id_row = cur.fetchone()
-            if not active_id_row:
-                raise HTTPException(status_code=400, detail="No active CM id")
-            active_id = active_id_row[0]
-
-            # 4) consommer 1 item (non-œuf)
+            # 4) consommer 1 item (non-œuf) UNE SEULE FOIS
             cur.execute(
                 """
                 UPDATE inventory
@@ -9131,58 +9431,49 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 (login, item_key),
             )
 
-            evo_payload   = None
-            new_xp_total  = active_xp
-            new_happiness = active_h
-            stage_after   = stage_before
-
-            # XP item
+            # XP item (piloté par items.xp_gain)
+            # XP item (piloté par items.xp_gain)
+            evo_payload = None
             if xp_gain > 0:
                 cur.execute(
                     "INSERT INTO xp_events (twitch_login, amount) VALUES (%s, %s);",
                     (login, xp_gain),
                 )
+
                 cur.execute(
                     """
                     UPDATE creatures_v2
                     SET xp_total = xp_total + %s, updated_at = now()
-                    WHERE id=%s
+                    WHERE twitch_login=%s AND cm_key=%s
                     RETURNING xp_total;
                     """,
-                    (xp_gain, active_id),
+                    (xp_gain, login, active_cm_key),
                 )
-                row_xp = cur.fetchone()
-                if not row_xp:
-                    raise HTTPException(status_code=500, detail="XP update failed")
-                new_xp_total = int(row_xp[0])
-                stage_after  = int(stage_from_xp(new_xp_total))
+                new_xp_total = int(cur.fetchone()[0])
 
+                stage_after = int(stage_from_xp(new_xp_total))
+                evo_payload = None
                 if stage_after != stage_before:
                     cur.execute(
-                        "UPDATE creatures_v2 SET stage=%s, updated_at=now() WHERE id=%s;",
-                        (stage_after, active_id),
+                        """
+                        UPDATE creatures_v2
+                        SET stage=%s, updated_at=now()
+                        WHERE twitch_login=%s AND is_active=TRUE;
+                        """,
+                        (stage_after, login),
                     )
                     # Hatch (0→1) : attribuer lignée et cm_key si encore "egg"
                     if stage_before == 0 and stage_after >= 1:
                         if not active_cm_key or active_cm_key == "egg":
                             lineage_key = pick_random_lineage(conn)
                             if lineage_key:
-                                cur.execute(
-                                    "UPDATE creatures_v2 SET lineage_key=%s, updated_at=now() WHERE id=%s;",
-                                    (lineage_key, active_id),
-                                )
+                                cur.execute("UPDATE creatures_v2 SET lineage_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (lineage_key, login))
                                 picked = pick_cm_for_lineage(conn, lineage_key)
                                 if picked:
                                     active_cm_key = picked
-                                    cur.execute(
-                                        "UPDATE creatures_v2 SET cm_key=%s, updated_at=now() WHERE id=%s;",
-                                        (active_cm_key, active_id),
-                                    )
+                                    cur.execute("UPDATE creatures_v2 SET cm_key=%s, updated_at=now() WHERE twitch_login=%s AND is_active=TRUE;", (active_cm_key, login))
                     # Préparer overlay évolution
-                    cur.execute(
-                        "SELECT name, image_url, sound_url FROM cm_forms WHERE cm_key=%s AND stage=%s;",
-                        (active_cm_key, stage_after),
-                    )
+                    cur.execute("SELECT name, image_url, sound_url FROM cm_forms WHERE cm_key=%s AND stage=%s;", (active_cm_key, stage_after))
                     f = cur.fetchone()
                     if f:
                         evo_payload = {
@@ -9190,41 +9481,15 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                             "stage": stage_after, "name": f[0],
                             "image_url": f[1], "sound_url": f[2],
                         }
+                else:
+                    stage_after = stage_before
 
-                conn.commit()
-
-            # Bonheur item
-            elif happiness_gain > 0:
-                _ensure_quests(cur, login)
-                _quest_progress(cur, login, "candy", 1)
-                new_happiness = max(0, min(100, active_h + happiness_gain))
-                cur.execute(
-                    "UPDATE creatures_v2 SET happiness=%s, updated_at=now() WHERE id=%s;",
-                    (new_happiness, active_id),
-                )
-                conn.commit()
-
-            else:
+                new_happiness = active_h
                 conn.commit()
 
         # Déclencher l'overlay hors transaction
         if evo_payload:
             trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
-
-        if xp_gain > 0:
-            return {
-                "ok": True,
-                "twitch_login": login,
-                "cm_key": str(active_cm_key),
-                "item_key": item_key,
-                "item_name": item_name,
-                "effect": "xp",
-                "xp_gain": int(xp_gain),
-                "xp_total": int(new_xp_total),
-                "stage_before": int(stage_before),
-                "stage_after": int(stage_after),
-                "happiness_after": int(new_happiness),
-            }
 
         return {
             "ok": True,
@@ -9232,10 +9497,45 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             "cm_key": str(active_cm_key),
             "item_key": item_key,
             "item_name": item_name,
-            "effect": "happiness",
-            "happiness_gain": int(happiness_gain),
-            "happiness_after": int(new_happiness),
+            "effect": "xp",
+            "xp_gain": int(xp_gain),
+            "xp_total": int(new_xp_total or 0),
+            "stage_before": int(stage_before or 0),
+            "stage_after": int(stage_after or 0),
+            "happiness_after": int(new_happiness or 0),
         }
+
+            # Bonheur (piloté par items.happiness_gain)
+            # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
+        if happiness_gain > 0:
+           _ensure_quests(cur, login)
+           _quest_progress(cur, login, 'candy', 1)
+        new_happiness = max(0, min(100, active_h + happiness_gain))
+
+        cur.execute(
+           """
+           UPDATE creatures_v2
+           SET happiness=%s, updated_at=now()
+           WHERE twitch_login=%s AND cm_key=%s;
+           """,
+           (new_happiness, login, active_cm_key),
+        )
+
+        new_xp_total = active_xp
+        stage_after = stage_before
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "cm_key": str(active_cm_key),
+        "item_key": item_key,
+        "item_name": item_name,
+        "effect": "happiness",
+        "happiness_gain": int(happiness_gain),
+        "happiness_after": int(new_happiness or 0),
+    }
 
 # =============================================================================
 # Overlay: Commande !show (CM actif uniquement)

@@ -935,6 +935,9 @@
   <div class="nav-item" data-page="events" onclick="nav(this)">
     <span class="icon">✨</span> Événements
   </div>
+  <div class="nav-item" data-page="boss" onclick="nav(this)">
+    <span class="icon">⚔️</span> Boss Raid
+  </div>
 <div class="nav-item" data-page="settings" onclick="nav(this)">
   <span class="icon">⚙</span> Réglages
 </div>
@@ -1837,10 +1840,6 @@
             <input type="number" id="cp_drop_duration_seconds" min="5" max="120" value="20" style="width:110px">
           </div>
           <div class="form-group">
-            <div class="form-label">TARGET HITS COOP</div>
-            <input type="number" id="cp_drop_target_hits" min="2" max="200" value="10" style="width:110px">
-          </div>
-          <div class="form-group">
             <div class="form-label">QTY TICKET COOP</div>
             <input type="number" id="cp_drop_ticket_qty" min="1" max="50" value="1" style="width:110px">
           </div>
@@ -2013,10 +2012,7 @@
             <div class="form-label">DURÉE DROP SPÉCIAL (s)</div>
             <input type="number" id="ev_drop_duration" min="10" max="300" value="60" style="width:110px">
           </div>
-          <div class="form-group">
-            <div class="form-label">TARGET HITS DROP SPÉCIAL</div>
-            <input type="number" id="ev_drop_target" min="2" max="200" value="10" style="width:110px">
-          </div>
+
         </div>
         <div class="row" style="margin-top:8px">
           <button class="btn btn-cyan" onclick="saveEventConfig()">✓ Enregistrer</button>
@@ -2351,6 +2347,105 @@
 </div>
 </div>
 
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     PAGE : BOSS RAID
+════════════════════════════════════════════════════════════════════════ -->
+<div id="page-boss" class="page">
+
+  <!-- Boss actif -->
+  <div class="card accent-c" id="boss-active-card">
+    <div class="card-title">⚔️ BOSS EN COURS</div>
+    <div id="boss-active-content" class="muted">Aucun boss actif</div>
+  </div>
+
+  <!-- Lancer un boss -->
+  <div class="card">
+    <div class="card-title">▶ LANCER UN BOSS RAID</div>
+    <div class="form-row" style="gap:16px;flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:200px">
+        <div class="form-label">CAPSMON (cm_key)</div>
+        <input type="text" id="boss_cm_key" placeholder="ex: flaminos" style="width:100%">
+      </div>
+      <div class="form-group">
+        <div class="form-label">PV</div>
+        <input type="number" id="boss_hp" min="1" max="9999" value="100" style="width:110px">
+      </div>
+      <div class="form-group">
+        <div class="form-label">DURÉE (min)</div>
+        <input type="number" id="boss_duration" min="1" max="60" value="10" style="width:90px">
+      </div>
+    </div>
+    <div class="form-row" style="gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+      <div class="form-group">
+        <div class="form-label">RÉCOMPENSE</div>
+        <select id="boss_reward_type" onchange="bossRewardTypeChange()" style="width:160px">
+          <option value="xp">XP</option>
+          <option value="happiness">Bonheur</option>
+          <option value="item">Objet</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <div class="form-label" id="boss_reward_value_label">VALEUR</div>
+        <input type="number" id="boss_reward_value" min="1" max="9999" value="50" style="width:110px">
+      </div>
+      <div class="form-group" id="boss_item_group" style="display:none">
+        <div class="form-label">ITEM KEY</div>
+        <input type="text" id="boss_reward_item" placeholder="ex: bonbon_2" style="width:160px">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn btn-magenta" onclick="startBoss()">⚔️ Lancer le Boss</button>
+      <div class="status-line" id="boss-start-status"></div>
+    </div>
+  </div>
+
+  <!-- Config defaults -->
+  <div class="card accent-g">
+    <div class="card-title">⚙ PARAMÈTRES PAR DÉFAUT</div>
+    <div class="form-row" style="gap:16px;flex-wrap:wrap">
+      <div class="form-group">
+        <div class="form-label">PV MIN</div>
+        <input type="number" id="boss_cfg_hp_min" min="1" max="9999" value="50" style="width:110px">
+      </div>
+      <div class="form-group">
+        <div class="form-label">PV MAX</div>
+        <input type="number" id="boss_cfg_hp_max" min="1" max="9999" value="200" style="width:110px">
+      </div>
+      <div class="form-group">
+        <div class="form-label">DURÉE (min)</div>
+        <input type="number" id="boss_cfg_duration" min="1" max="60" value="10" style="width:90px">
+      </div>
+    </div>
+    <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:8px">
+      <div class="form-group">
+        <div class="form-label">RÉCOMPENSE PAR DÉFAUT</div>
+        <select id="boss_cfg_reward_type" onchange="bossCfgRewardTypeChange()" style="width:160px">
+          <option value="xp">XP</option>
+          <option value="happiness">Bonheur</option>
+          <option value="item">Objet</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <div class="form-label">VALEUR</div>
+        <input type="number" id="boss_cfg_reward_value" min="1" max="9999" value="50" style="width:110px">
+      </div>
+      <div class="form-group" id="boss_cfg_item_group" style="display:none">
+        <div class="form-label">ITEM KEY</div>
+        <input type="text" id="boss_cfg_reward_item" placeholder="ex: bonbon_2" style="width:160px">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn btn-cyan" onclick="saveBossConfig()">✓ Enregistrer défauts</button>
+      <div class="status-line" id="boss-cfg-status"></div>
+    </div>
+    <div class="muted" style="margin-top:10px;font-size:12px">
+      ⚔️ Dégâts : Stage I = 1 PV · Stage II = 3 PV · Stage III = 6 PV · Œuf = ne peut pas frapper
+    </div>
+  </div>
+
+</div><!-- /page-boss -->
+
 <div id="page-settings" class="page">
 
   <div class="card" style="max-width:680px">
@@ -2441,6 +2536,7 @@ const pageTitles = {
   events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
+  boss:          '⚔️ BOSS RAID',
   settings:      '⚙ RÉGLAGES',
 };
 
@@ -2719,6 +2815,7 @@ function nav(el) {
   if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
+  if (page === 'boss')          loadBossPage();
   if (page === 'settings')      loadSettings();
 }
 
@@ -2730,6 +2827,117 @@ window.addEventListener('DOMContentLoaded', () => {
   loadDashboardKpis();
   initTheme();
 });
+
+
+/* ─── BOSS RAID ─────────────────────────────────────────────── */
+
+function bossRewardTypeChange() {
+  const t = document.getElementById('boss_reward_type').value;
+  const ig = document.getElementById('boss_item_group');
+  const vl = document.getElementById('boss_reward_value_label');
+  ig.style.display = t === 'item' ? 'block' : 'none';
+  vl.textContent = t === 'item' ? 'QTÉ' : (t === 'happiness' ? 'BONHEUR (+)' : 'XP');
+}
+
+function bossCfgRewardTypeChange() {
+  const t = document.getElementById('boss_cfg_reward_type').value;
+  document.getElementById('boss_cfg_item_group').style.display = t === 'item' ? 'block' : 'none';
+}
+
+async function loadBossPage() {
+  // Charger boss actif
+  try {
+    const r = await fetch('/internal/boss/active');
+    const j = await r.json();
+    const el = document.getElementById('boss-active-content');
+    if (j.active && j.boss) {
+      const b = j.boss;
+      const pct = Math.round((b.hp_current / b.hp_max) * 100);
+      const ends = new Date(b.ends_at).toLocaleTimeString('fr-FR');
+      el.innerHTML = `<strong>${b.cm_name}</strong> (${b.cm_key})<br>
+        ❤️ <strong>${b.hp_current} / ${b.hp_max} PV</strong>
+        <div style="background:#222;border-radius:4px;height:8px;margin:6px 0;overflow:hidden">
+          <div style="background:var(--accent-c,#e040fb);height:100%;width:${pct}%;transition:width .3s"></div>
+        </div>
+        🏆 Récompense : <strong>${b.reward_type === 'item' ? b.reward_item_key : b.reward_value + ' ' + (b.reward_type === 'xp' ? 'XP' : 'bonheur')}</strong>
+        &nbsp;·&nbsp; ⏱ Fin : ${ends}`;
+    } else {
+      el.textContent = 'Aucun boss actif';
+    }
+  } catch(e) { console.warn('boss active error', e); }
+
+  // Charger config defaults
+  try {
+    const r = await fetch('/admin/boss/config');
+    const c = await r.json();
+    const g = id => document.getElementById(id);
+    if (c.boss_hp_min)           g('boss_cfg_hp_min').value        = c.boss_hp_min;
+    if (c.boss_hp_max)           g('boss_cfg_hp_max').value        = c.boss_hp_max;
+    if (c.boss_duration_minutes) g('boss_cfg_duration').value      = c.boss_duration_minutes;
+    if (c.boss_reward_type)      g('boss_cfg_reward_type').value   = c.boss_reward_type;
+    if (c.boss_reward_value)     g('boss_cfg_reward_value').value  = c.boss_reward_value;
+    if (c.boss_reward_item_key)  g('boss_cfg_reward_item').value   = c.boss_reward_item_key;
+    bossCfgRewardTypeChange();
+
+    // Pré-remplir le formulaire de lancement avec les defaults
+    if (c.boss_hp_min && c.boss_hp_max) {
+      const hp = Math.floor(Math.random() * (parseInt(c.boss_hp_max) - parseInt(c.boss_hp_min) + 1)) + parseInt(c.boss_hp_min);
+      g('boss_hp').value = hp;
+    }
+    if (c.boss_duration_minutes) g('boss_duration').value     = c.boss_duration_minutes;
+    if (c.boss_reward_type)      g('boss_reward_type').value  = c.boss_reward_type;
+    if (c.boss_reward_value)     g('boss_reward_value').value = c.boss_reward_value;
+    if (c.boss_reward_item_key)  g('boss_reward_item').value  = c.boss_reward_item_key;
+    bossRewardTypeChange();
+  } catch(e) { console.warn('boss config error', e); }
+}
+
+async function startBoss() {
+  const g = id => document.getElementById(id);
+  const cm_key = g('boss_cm_key').value.trim().toLowerCase();
+  if (!cm_key) { setStatus('boss-start-status', '⛔ Renseigne un cm_key', false); return; }
+  setStatus('boss-start-status', '…');
+  const payload = {
+    cm_key,
+    hp_max:           parseInt(g('boss_hp').value),
+    duration_minutes: parseInt(g('boss_duration').value),
+    reward_type:      g('boss_reward_type').value,
+    reward_value:     parseInt(g('boss_reward_value').value),
+    reward_item_key:  g('boss_reward_item').value.trim().toLowerCase() || null,
+  };
+  const r = await fetch('/admin/boss/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.ok) {
+    setStatus('boss-start-status', `✓ Boss lancé : ${j.cm_name} (${j.hp_max} PV)`, true);
+    loadBossPage();
+  } else {
+    setStatus('boss-start-status', `⛔ ${j.detail || JSON.stringify(j)}`, false);
+  }
+}
+
+async function saveBossConfig() {
+  const g = id => document.getElementById(id);
+  setStatus('boss-cfg-status', '…');
+  const payload = {
+    boss_hp_min:           g('boss_cfg_hp_min').value,
+    boss_hp_max:           g('boss_cfg_hp_max').value,
+    boss_duration_minutes: g('boss_cfg_duration').value,
+    boss_reward_type:      g('boss_cfg_reward_type').value,
+    boss_reward_value:     g('boss_cfg_reward_value').value,
+    boss_reward_item_key:  g('boss_cfg_reward_item').value.trim().toLowerCase(),
+  };
+  const r = await fetch('/admin/boss/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const j = await r.json().catch(() => ({}));
+  setStatus('boss-cfg-status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
+}
 
 /* ─── THEME ──────────────────────────────────────────────── */
 function initTheme() {
@@ -2938,7 +3146,6 @@ async function loadPoints() {
   if (g('cp_egg_item_key'))           g('cp_egg_item_key').value        = c.cp_egg_item_key        || '';
   if (g('cp_drop_pick_kind'))         g('cp_drop_pick_kind').value      = c.cp_drop_pick_kind      || 'any';
   if (g('cp_drop_duration_seconds'))  g('cp_drop_duration_seconds').value = c.cp_drop_duration_seconds || 20;
-  if (g('cp_drop_target_hits'))       g('cp_drop_target_hits').value    = c.cp_drop_target_hits    || 10;
   if (g('cp_drop_ticket_qty'))        g('cp_drop_ticket_qty').value     = c.cp_drop_ticket_qty     || 1;
   if (g('cp_drop_fallback_icon_url')) g('cp_drop_fallback_icon_url').value = c.cp_drop_fallback_icon_url || '';
   if (g('broadcasterIdDisplay'))      g('broadcasterIdDisplay').textContent = c.broadcaster_user_id || '—';
@@ -2958,7 +3165,6 @@ async function savePoints() {
   fd.append('cp_egg_item_key',          g('cp_egg_item_key').value.trim());
   fd.append('cp_drop_pick_kind',        g('cp_drop_pick_kind').value);
   fd.append('cp_drop_duration_seconds', g('cp_drop_duration_seconds').value);
-  fd.append('cp_drop_target_hits',      g('cp_drop_target_hits').value);
   fd.append('cp_drop_ticket_qty',       g('cp_drop_ticket_qty').value);
   fd.append('cp_drop_fallback_icon_url',g('cp_drop_fallback_icon_url').value.trim());
   setStatus('cp_status', '…');
@@ -3005,7 +3211,6 @@ async function loadEvents() {
   if (g('ev_auto_enabled'))  g('ev_auto_enabled').checked = cfg.event_auto_enabled === 'true';
   if (g('ev_chance_pct'))    g('ev_chance_pct').value     = cfg.event_chance_pct || 30;
   if (g('ev_drop_duration')) g('ev_drop_duration').value  = cfg.event_special_drop_duration || 60;
-  if (g('ev_drop_target'))   g('ev_drop_target').value    = cfg.event_special_drop_target_hits || 10;
 }
 
 async function startEvent(key) {
@@ -3037,7 +3242,6 @@ async function saveEventConfig() {
       event_auto_enabled:               g('ev_auto_enabled').checked,
       event_chance_pct:                 parseInt(g('ev_chance_pct').value),
       event_special_drop_duration:      parseInt(g('ev_drop_duration').value),
-      event_special_drop_target_hits:   parseInt(g('ev_drop_target').value),
     })
   });
   const j = await r.json().catch(() => ({}));
