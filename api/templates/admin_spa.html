@@ -920,9 +920,6 @@
   </div>
 
   <div class="nav-section">// GAMEPLAY</div>
-  <div class="nav-item" data-page="items" onclick="nav(this)">
-    <span class="icon">◈</span> Items
-  </div>
   <div class="nav-item" data-page="drops" onclick="nav(this)">
     <span class="icon">▽</span> Drops
   </div>
@@ -932,18 +929,9 @@
   <div class="nav-item" data-page="points" onclick="nav(this)">
     <span class="icon">◈</span> Channel Points
   </div>
-  <div class="nav-item" data-page="events" onclick="nav(this)">
-    <span class="icon">✨</span> Événements
+  <div class="nav-item" data-page="settings" onclick="nav(this)">
+    <span class="icon">⚙</span> Réglages
   </div>
-  <div class="nav-item" data-page="boss" onclick="nav(this)">
-    <span class="icon">⚔️</span> Boss Raid
-  </div>
-  <div class="nav-item" data-page="xp" onclick="nav(this)">
-    <span class="icon">⚡</span> Seuils XP
-  </div>
-<div class="nav-item" data-page="settings" onclick="nav(this)">
-  <span class="icon">⚙</span> Réglages
-</div>
 
   <div class="sidebar-footer">
     <label class="toggle-switch">
@@ -1884,150 +1872,6 @@
          PAGE : ITEMS
          Gestion de la table items : key, name, icon_url, drop_weight, xp_gain, happiness_gain
          ══════════════════════════════════════════════════════════════════════ -->
-    <div class="page" id="page-items">
-
-      <!-- Tableau des items existants -->
-      <div class="card">
-        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
-          <span>◈ LISTE DES ITEMS</span>
-          <button class="btn btn-cyan btn-sm" onclick="openItemForm()">+ Ajouter</button>
-        </div>
-        <input type="text" id="items-filter" placeholder="Filtrer…" oninput="filterItemsTable(this.value)"
-               style="margin-bottom:10px;width:100%;max-width:320px">
-        <div style="overflow-x:auto">
-          <table class="data-table" id="items-table">
-            <thead>
-              <tr>
-                <th onclick="sortItemsTable(0)" style="cursor:pointer">KEY ↕</th>
-                <th onclick="sortItemsTable(1)" style="cursor:pointer">NOM ↕</th>
-                <th onclick="sortItemsTable(2)" style="cursor:pointer;text-align:center">DROP WEIGHT ↕</th>
-                <th style="text-align:center">XP</th>
-                <th style="text-align:center">BONHEUR</th>
-                <th style="text-align:center">ICÔNE</th>
-                <th style="text-align:center">EFFET</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="items-tbody">
-              <tr><td colspan="8" class="muted mono" style="text-align:center;padding:16px">Chargement…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Formulaire add/edit -->
-      <div class="card accent-c" id="item-form-card" style="display:none">
-        <div class="card-title" id="item-form-title">+ NOUVEL ITEM</div>
-
-        <!-- Rappel des effets -->
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
-          <div class="muted mono" style="font-size:11px;margin-bottom:6px">// COMMENT FONCTIONNE UN ITEM</div>
-          <div style="font-size:12px;line-height:1.8">
-            <span class="badge badge-warn">egg_*</span> key commençant par <code>egg_</code> + lignée (ex: <code>egg_biolab</code>) → crée un œuf de cette lignée<br>
-            <span class="badge badge-info">xp_gain &gt; 0</span> ajoute de l'XP au CM actif via <code>!use</code><br>
-            <span class="badge badge-ok">happiness_gain &gt; 0</span> ajoute du bonheur au CM actif via <code>!use</code><br>
-            <span class="badge badge-dim">drop_weight</span> poids dans le tirage aléatoire des drops (0 = jamais tiré)
-          </div>
-        </div>
-
-        <div class="form-row" style="gap:16px;flex-wrap:wrap">
-          <div class="form-group">
-            <div class="form-label">KEY <span class="muted">(a-z, 0-9, _)</span></div>
-            <input type="text" id="item-key" placeholder="grande_capsule" style="min-width:200px" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,''">
-          </div>
-          <div class="form-group">
-            <div class="form-label">NOM AFFICHÉ</div>
-            <input type="text" id="item-name" placeholder="Grande Capsule" style="min-width:220px">
-          </div>
-        </div>
-        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
-          <div class="form-group">
-            <div class="form-label">DROP WEIGHT <span class="muted">(0 = jamais tiré)</span></div>
-            <input type="number" id="item-drop-weight" min="0" max="9999" value="100" style="width:120px">
-          </div>
-          <div class="form-group">
-            <div class="form-label">XP GAIN <span class="muted">(0 = pas d'effet)</span></div>
-            <input type="number" id="item-xp-gain" min="0" max="9999" value="0" style="width:120px">
-          </div>
-          <div class="form-group">
-            <div class="form-label">HAPPINESS GAIN <span class="muted">(0 = pas d'effet)</span></div>
-            <input type="number" id="item-happiness-gain" min="0" max="100" value="0" style="width:120px">
-          </div>
-        </div>
-        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
-          <div class="form-group" style="flex:1">
-            <div class="form-label">ICON URL <span class="muted">(pour l'overlay drop)</span></div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="text" id="item-icon-url" placeholder="https://…" style="flex:1" oninput="previewItemIcon(this.value)">
-              <img id="item-icon-preview" src="" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:var(--bg3);border:1px solid var(--border);display:none">
-            </div>
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:12px;gap:8px">
-          <button class="btn btn-cyan" onclick="saveItem()">✓ Enregistrer</button>
-          <button class="btn btn-dim" onclick="closeItemForm()">Annuler</button>
-          <div class="status-line" id="item-save-status"></div>
-        </div>
-      </div>
-
-    </div><!-- /page-items -->
-
-    <div class="page" id="page-events">
-
-      <!-- Événement actif -->
-      <div class="card accent-c" id="ev-active-card">
-        <div class="card-title">✨ ÉVÉNEMENT EN COURS</div>
-        <div id="ev-active-content" class="muted">Aucun événement actif</div>
-        <div class="row" style="margin-top:12px">
-          <button class="btn btn-magenta" onclick="stopEvent()">⏹ Terminer l'événement</button>
-          <div class="status-line" id="ev-stop-status"></div>
-        </div>
-      </div>
-
-      <!-- Lancement manuel -->
-      <div class="card">
-        <div class="card-title">▶ LANCER UN ÉVÉNEMENT</div>
-        <div id="ev-catalog" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px">
-          <!-- Rempli par JS -->
-        </div>
-        <div class="row">
-          <div class="status-line" id="ev-start-status"></div>
-        </div>
-      </div>
-
-      <!-- Configuration auto -->
-      <div class="card accent-g">
-        <div class="card-title">⚙ CONFIGURATION</div>
-        <div class="form-row" style="gap:16px;flex-wrap:wrap">
-          <label class="toggle-switch">
-            <input type="checkbox" id="ev_auto_enabled">
-            <div class="toggle-track"></div>
-            <span>Événements automatiques (toutes les 30 min)</span>
-          </label>
-        </div>
-        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:12px">
-          <div class="form-group">
-            <div class="form-label">CHANCE DÉCLENCHEMENT (%)</div>
-            <input type="number" id="ev_chance_pct" min="0" max="100" value="30" style="width:110px">
-          </div>
-          <div class="form-group">
-            <div class="form-label">DURÉE DROP SPÉCIAL (s)</div>
-            <input type="number" id="ev_drop_duration" min="10" max="300" value="60" style="width:110px">
-          </div>
-
-        </div>
-        <div class="row" style="margin-top:8px">
-          <button class="btn btn-cyan" onclick="saveEventConfig()">✓ Enregistrer</button>
-          <div class="status-line" id="ev-cfg-status"></div>
-        </div>
-      </div>
-
-    </div><!-- /page-events -->
-
-        <!-- ══════════════════════════════════════════════════════════════════════
-         PAGE : PLANNING
-    ════════════════════════════════════════════════════════════════════════ -->
     <div class="page" id="page-planning">
 
       <!-- Toolbar supérieure -->
@@ -2187,14 +2031,7 @@
       </div>
     </div><!-- /page-planning -->
 
-
-    
-
-
-    <!-- ══════════════════════════════════════════════════════════════════════
-         PAGE : PREVIEW STUDIO
-    ════════════════════════════════════════════════════════════════════════ -->
-    <div class="page" id="page-preview">
+<div class="page" id="page-preview">
 <div class="layout">
 
   <!-- ══ PANNEAU CONTRÔLES ══ -->
@@ -2354,9 +2191,229 @@
 <!-- ══════════════════════════════════════════════════════════════════════
      PAGE : BOSS RAID
 ════════════════════════════════════════════════════════════════════════ -->
-<div id="page-boss" class="page">
 
-  <!-- Boss actif -->
+<div id="page-settings" class="page">
+
+  <!-- Onglets internes -->
+  <div class="stabs">
+    <button class="stab active" data-stab="autodrop"  onclick="switchStab(this)">⟳ Auto Drop</button>
+    <button class="stab"        data-stab="items"     onclick="switchStab(this)">◈ Items</button>
+    <button class="stab"        data-stab="events"    onclick="switchStab(this)">✨ Événements</button>
+    <button class="stab"        data-stab="boss"      onclick="switchStab(this)">⚔️ Boss Raid</button>
+    <button class="stab"        data-stab="xp"        onclick="switchStab(this)">⚡ Seuils XP</button>
+  </div>
+
+  <!-- Contenu : Auto Drop (ex page-settings) -->
+  <div class="stab-panel active" id="stab-autodrop">
+<div class="card" style="max-width:680px">
+    <div class="card-title">// DROP AUTOMATIQUE</div>
+    <div class="form-grid">
+      <label>Activés</label>
+      <input type="checkbox" id="s_drop_enabled">
+
+      <label>Intervalle min (s)</label>
+      <input type="number" id="s_drop_min" min="60" max="7200" placeholder="900">
+
+      <label>Intervalle max (s)</label>
+      <input type="number" id="s_drop_max" min="60" max="7200" placeholder="1500">
+
+      <label>Durée min (s)</label>
+      <input type="number" id="s_dur_min" min="5" max="300" placeholder="20">
+
+      <label>Durée max (s)</label>
+      <input type="number" id="s_dur_max" min="5" max="300" placeholder="40">
+
+      <label>Type d'objet</label>
+      <select id="s_kind">
+        <option value="any">Tous (any)</option>
+        <option value="ticket">Tickets</option>
+        <option value="egg">Œufs</option>
+      </select>
+
+      <label>Mode</label>
+      <select id="s_mode">
+        <option value="first">First (premier arrivé)</option>
+        <option value="random">Random (tirage au sort)</option>
+        <option value="coop">COOP (tout le monde)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:680px;margin-top:14px">
+    <div class="card-title">// DROP COOP</div>
+    <div class="form-grid">
+      <label>Durée du drop (s)</label>
+      <input type="number" id="s_coop_dur" min="10" max="300" placeholder="60">
+
+      <label>Intervalle entre drops (s)</label>
+      <input type="number" id="s_coop_interval" min="30" max="3600" placeholder="180">
+    </div>
+
+    <div class="card-title" style="margin-top:16px">// XP PAR TRANCHE DE PARTICIPANTS</div>
+    <div class="form-grid">
+      <label>1 participant</label>
+      <input type="number" id="s_xp_t1" min="1" max="1000" placeholder="25">
+
+      <label>2–3 participants</label>
+      <input type="number" id="s_xp_t2" min="1" max="1000" placeholder="40">
+
+      <label>4–6 participants</label>
+      <input type="number" id="s_xp_t3" min="1" max="1000" placeholder="65">
+
+      <label>7+ participants</label>
+      <input type="number" id="s_xp_t4" min="1" max="1000" placeholder="100">
+    </div>
+    <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:8px">
+      ±15% de variance appliquée aléatoirement sur chaque valeur
+    </div>
+  </div>
+
+  <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:16px">💾 Enregistrer</button>
+  <div id="settings-status" style="margin-top:8px;font-family:var(--font-mono);font-size:12px"></div>
+  </div>
+
+  <!-- Contenu : Items -->
+  <div class="stab-panel" id="stab-items">
+<!-- Tableau des items existants -->
+      <div class="card">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+          <span>◈ LISTE DES ITEMS</span>
+          <button class="btn btn-cyan btn-sm" onclick="openItemForm()">+ Ajouter</button>
+        </div>
+        <input type="text" id="items-filter" placeholder="Filtrer…" oninput="filterItemsTable(this.value)"
+               style="margin-bottom:10px;width:100%;max-width:320px">
+        <div style="overflow-x:auto">
+          <table class="data-table" id="items-table">
+            <thead>
+              <tr>
+                <th onclick="sortItemsTable(0)" style="cursor:pointer">KEY ↕</th>
+                <th onclick="sortItemsTable(1)" style="cursor:pointer">NOM ↕</th>
+                <th onclick="sortItemsTable(2)" style="cursor:pointer;text-align:center">DROP WEIGHT ↕</th>
+                <th style="text-align:center">XP</th>
+                <th style="text-align:center">BONHEUR</th>
+                <th style="text-align:center">ICÔNE</th>
+                <th style="text-align:center">EFFET</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="items-tbody">
+              <tr><td colspan="8" class="muted mono" style="text-align:center;padding:16px">Chargement…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Formulaire add/edit -->
+      <div class="card accent-c" id="item-form-card" style="display:none">
+        <div class="card-title" id="item-form-title">+ NOUVEL ITEM</div>
+
+        <!-- Rappel des effets -->
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+          <div class="muted mono" style="font-size:11px;margin-bottom:6px">// COMMENT FONCTIONNE UN ITEM</div>
+          <div style="font-size:12px;line-height:1.8">
+            <span class="badge badge-warn">egg_*</span> key commençant par <code>egg_</code> + lignée (ex: <code>egg_biolab</code>) → crée un œuf de cette lignée<br>
+            <span class="badge badge-info">xp_gain &gt; 0</span> ajoute de l'XP au CM actif via <code>!use</code><br>
+            <span class="badge badge-ok">happiness_gain &gt; 0</span> ajoute du bonheur au CM actif via <code>!use</code><br>
+            <span class="badge badge-dim">drop_weight</span> poids dans le tirage aléatoire des drops (0 = jamais tiré)
+          </div>
+        </div>
+
+        <div class="form-row" style="gap:16px;flex-wrap:wrap">
+          <div class="form-group">
+            <div class="form-label">KEY <span class="muted">(a-z, 0-9, _)</span></div>
+            <input type="text" id="item-key" placeholder="grande_capsule" style="min-width:200px" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9_]/g,''">
+          </div>
+          <div class="form-group">
+            <div class="form-label">NOM AFFICHÉ</div>
+            <input type="text" id="item-name" placeholder="Grande Capsule" style="min-width:220px">
+          </div>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
+          <div class="form-group">
+            <div class="form-label">DROP WEIGHT <span class="muted">(0 = jamais tiré)</span></div>
+            <input type="number" id="item-drop-weight" min="0" max="9999" value="100" style="width:120px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">XP GAIN <span class="muted">(0 = pas d'effet)</span></div>
+            <input type="number" id="item-xp-gain" min="0" max="9999" value="0" style="width:120px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">HAPPINESS GAIN <span class="muted">(0 = pas d'effet)</span></div>
+            <input type="number" id="item-happiness-gain" min="0" max="100" value="0" style="width:120px">
+          </div>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
+          <div class="form-group" style="flex:1">
+            <div class="form-label">ICON URL <span class="muted">(pour l'overlay drop)</span></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="item-icon-url" placeholder="https://…" style="flex:1" oninput="previewItemIcon(this.value)">
+              <img id="item-icon-preview" src="" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:4px;background:var(--bg3);border:1px solid var(--border);display:none">
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px;gap:8px">
+          <button class="btn btn-cyan" onclick="saveItem()">✓ Enregistrer</button>
+          <button class="btn btn-dim" onclick="closeItemForm()">Annuler</button>
+          <div class="status-line" id="item-save-status"></div>
+        </div>
+      </div>
+  </div>
+
+  <!-- Contenu : Événements -->
+  <div class="stab-panel" id="stab-events">
+<!-- Événement actif -->
+      <div class="card accent-c" id="ev-active-card">
+        <div class="card-title">✨ ÉVÉNEMENT EN COURS</div>
+        <div id="ev-active-content" class="muted">Aucun événement actif</div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn btn-magenta" onclick="stopEvent()">⏹ Terminer l'événement</button>
+          <div class="status-line" id="ev-stop-status"></div>
+        </div>
+      </div>
+
+      <!-- Lancement manuel -->
+      <div class="card">
+        <div class="card-title">▶ LANCER UN ÉVÉNEMENT</div>
+        <div id="ev-catalog" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px">
+          <!-- Rempli par JS -->
+        </div>
+        <div class="row">
+          <div class="status-line" id="ev-start-status"></div>
+        </div>
+      </div>
+
+      <!-- Configuration auto -->
+      <div class="card accent-g">
+        <div class="card-title">⚙ CONFIGURATION</div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap">
+          <label class="toggle-switch">
+            <input type="checkbox" id="ev_auto_enabled">
+            <div class="toggle-track"></div>
+            <span>Événements automatiques (toutes les 30 min)</span>
+          </label>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:12px">
+          <div class="form-group">
+            <div class="form-label">CHANCE DÉCLENCHEMENT (%)</div>
+            <input type="number" id="ev_chance_pct" min="0" max="100" value="30" style="width:110px">
+          </div>
+          <div class="form-group">
+            <div class="form-label">DURÉE DROP SPÉCIAL (s)</div>
+            <input type="number" id="ev_drop_duration" min="10" max="300" value="60" style="width:110px">
+          </div>
+
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn btn-cyan" onclick="saveEventConfig()">✓ Enregistrer</button>
+          <div class="status-line" id="ev-cfg-status"></div>
+        </div>
+      </div>
+  </div>
+
+  <!-- Contenu : Boss Raid -->
+  <div class="stab-panel" id="stab-boss">
+<!-- Boss actif -->
   <div class="card accent-c" id="boss-active-card">
     <div class="card-title">⚔️ BOSS EN COURS</div>
     <div id="boss-active-content" class="muted">Aucun boss actif</div>
@@ -2446,16 +2503,11 @@
       ⚔️ Dégâts : Stage I = 1 PV · Stage II = 3 PV · Stage III = 6 PV · Œuf = ne peut pas frapper
     </div>
   </div>
+  </div>
 
-</div><!-- /page-boss -->
-
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     PAGE : SEUILS XP
-════════════════════════════════════════════════════════════════════════ -->
-<div id="page-xp" class="page">
-
-  <div class="card">
+  <!-- Contenu : Seuils XP -->
+  <div class="stab-panel" id="stab-xp">
+<div class="card">
     <div class="card-title">⚡ SEUILS D'ÉVOLUTION XP</div>
 
     <!-- Diagramme visuel des stades -->
@@ -2512,77 +2564,10 @@
       </div>
     </div>
   </div>
-
-</div><!-- /page-xp -->
-
-<div id="page-settings" class="page">
-
-  <div class="card" style="max-width:680px">
-    <div class="card-title">// DROP AUTOMATIQUE</div>
-    <div class="form-grid">
-      <label>Activés</label>
-      <input type="checkbox" id="s_drop_enabled">
-
-      <label>Intervalle min (s)</label>
-      <input type="number" id="s_drop_min" min="60" max="7200" placeholder="900">
-
-      <label>Intervalle max (s)</label>
-      <input type="number" id="s_drop_max" min="60" max="7200" placeholder="1500">
-
-      <label>Durée min (s)</label>
-      <input type="number" id="s_dur_min" min="5" max="300" placeholder="20">
-
-      <label>Durée max (s)</label>
-      <input type="number" id="s_dur_max" min="5" max="300" placeholder="40">
-
-      <label>Type d'objet</label>
-      <select id="s_kind">
-        <option value="any">Tous (any)</option>
-        <option value="ticket">Tickets</option>
-        <option value="egg">Œufs</option>
-      </select>
-
-      <label>Mode</label>
-      <select id="s_mode">
-        <option value="first">First (premier arrivé)</option>
-        <option value="random">Random (tirage au sort)</option>
-        <option value="coop">COOP (tout le monde)</option>
-      </select>
-    </div>
   </div>
 
-  <div class="card" style="max-width:680px;margin-top:14px">
-    <div class="card-title">// DROP COOP</div>
-    <div class="form-grid">
-      <label>Durée du drop (s)</label>
-      <input type="number" id="s_coop_dur" min="10" max="300" placeholder="60">
+</div><!-- /page-settings -->
 
-      <label>Intervalle entre drops (s)</label>
-      <input type="number" id="s_coop_interval" min="30" max="3600" placeholder="180">
-    </div>
-
-    <div class="card-title" style="margin-top:16px">// XP PAR TRANCHE DE PARTICIPANTS</div>
-    <div class="form-grid">
-      <label>1 participant</label>
-      <input type="number" id="s_xp_t1" min="1" max="1000" placeholder="25">
-
-      <label>2–3 participants</label>
-      <input type="number" id="s_xp_t2" min="1" max="1000" placeholder="40">
-
-      <label>4–6 participants</label>
-      <input type="number" id="s_xp_t3" min="1" max="1000" placeholder="65">
-
-      <label>7+ participants</label>
-      <input type="number" id="s_xp_t4" min="1" max="1000" placeholder="100">
-    </div>
-    <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:8px">
-      ±15% de variance appliquée aléatoirement sur chaque valeur
-    </div>
-  </div>
-
-  <button class="btn btn-primary" onclick="saveSettings()" style="margin-top:16px">💾 Enregistrer</button>
-  <div id="settings-status" style="margin-top:8px;font-family:var(--font-mono);font-size:12px"></div>
-</div>
 
 <script>
 
@@ -2601,14 +2586,39 @@ const pageTitles = {
   drops:         '▽ DROPS',
   autodrop:      '⟳ AUTODROP',
   points:        '◈ CHANNEL POINTS',
-  items:         '◈ ITEMS',
-  events:        '✨ ÉVÉNEMENTS',
   planning:      '📅 PLANNING',
   preview:       '🎬 PREVIEW STUDIO',
-  boss:          '⚔️ BOSS RAID',
-  xp:            '⚡ SEUILS XP',
   settings:      '⚙ RÉGLAGES',
 };
+
+
+/* ─── ONGLETS SETTINGS ───────────────────────────────────────── */
+
+function switchStab(btn) {
+  const panel = btn.dataset.stab;
+  document.querySelectorAll('#page-settings .stab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#page-settings .stab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('stab-' + panel).classList.add('active');
+  // Charger les données si nécessaire
+  if (panel === 'items')  loadItems();
+  if (panel === 'events') loadEvents();
+  if (panel === 'boss')   loadBossPage();
+  if (panel === 'xp')     loadXpThresholds();
+  if (panel === 'autodrop') loadAutoDrop();
+}
+
+function loadSettingsPage() {
+  // Onglet actif par défaut : autodrop
+  const activeStab = document.querySelector('#page-settings .stab.active');
+  const panel = activeStab ? activeStab.dataset.stab : 'autodrop';
+  if (panel === 'autodrop') loadAutoDrop();
+  if (panel === 'items')    loadItems();
+  if (panel === 'events')   loadEvents();
+  if (panel === 'boss')     loadBossPage();
+  if (panel === 'xp')       loadXpThresholds();
+  loadSettings();
+}
 
 /* ─── ITEMS ─────────────────────────────────────────────────── */
 
@@ -2881,18 +2891,17 @@ function nav(el) {
   if (page === 'planning')      initPlanning();
   if (page === 'preview')       _initPreviewStudio();
   if (page === 'points')        loadPoints();
-  if (page === 'items')         loadItems();
-  if (page === 'events')        loadEvents();
   if (page === 'stats')         startAutoRefresh();
   if (page === 'dashboard')     loadDashboardKpis();
-  if (page === 'boss')          loadBossPage();
-  if (page === 'xp')            loadXpThresholds();
-  if (page === 'settings')      loadSettings();
+  if (page === 'settings')      loadSettingsPage();
 }
 
 // restore from hash
 window.addEventListener('DOMContentLoaded', () => {
-  const hash = location.hash.replace('#', '') || 'dashboard';
+  // Rediriger les anciens hash vers settings
+  const hashAliases = { items:'settings', events:'settings', boss:'settings', xp:'settings' };
+  let hash = location.hash.replace('#', '') || 'dashboard';
+  if (hashAliases[hash]) hash = hashAliases[hash];
   const target = document.querySelector(`[data-page="${hash}"]`);
   if (target) nav(target);
   loadDashboardKpis();
@@ -3010,6 +3019,25 @@ async function saveBossConfig() {
   setStatus('boss-cfg-status', r.ok ? '✓ Enregistré' : `⛔ ${JSON.stringify(j)}`, r.ok);
 }
 
+
+
+/* ─── ONGLETS SETTINGS (stabs) ───────────────────────────────── */
+.stabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
+.stab {
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  padding: 7px 16px; border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2); color: var(--muted);
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+  letter-spacing: .04em;
+}
+.stab:hover { background: var(--bg3); color: var(--text); }
+.stab.active {
+  background: rgba(0,229,255,.1); border-color: var(--cyan);
+  color: var(--cyan); box-shadow: 0 0 10px rgba(0,229,255,.12);
+}
+.stab-panel { display: none; }
+.stab-panel.active { display: block; }
 
 /* ─── SEUILS XP ─────────────────────────────────────────────── */
 .xp-input-wrap { display:flex; align-items:center; gap:6px; }
