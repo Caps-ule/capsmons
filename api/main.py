@@ -2375,12 +2375,13 @@ def grant_xp(login: str, amount: int):
                 if f:
                     form_name, image_url, sound_url = f
                     evo_payload = {
-                        "twitch_login": login,
-                        "cm_key":       cm_key,
-                        "stage":        new_stage,
-                        "name":         form_name,
-                        "image_url":    image_url,
-                        "sound_url":    sound_url,
+                        "twitch_login":    login,
+                        "cm_key":          cm_key,
+                        "stage":           new_stage,
+                        "prev_stage":      prev_stage,
+                        "name":            form_name,
+                        "image_url":       image_url,
+                        "sound_url":       sound_url,
                     }
 
             _ensure_quests(cur, login)
@@ -3580,8 +3581,16 @@ def init_db():
                   image_url TEXT,
                   sound_url TEXT,
                 
+                  prev_stage INT,
+                  prev_name TEXT,
+                  prev_image_url TEXT,
+                
                   expires_at TIMESTAMP NOT NULL
                 );
+                ALTER TABLE overlay_evolutions
+                  ADD COLUMN IF NOT EXISTS prev_stage INT,
+                  ADD COLUMN IF NOT EXISTS prev_name TEXT,
+                  ADD COLUMN IF NOT EXISTS prev_image_url TEXT;
 
 
                 CREATE INDEX IF NOT EXISTS idx_drops_active_expires ON drops(status, expires_at);
@@ -4456,15 +4465,16 @@ def admin_action(
 def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None)):
     require_internal_key(x_api_key)
 
-    login = payload.get("twitch_login")
-    stage = int(payload.get("stage"))
+    login     = payload.get("twitch_login")
+    stage     = int(payload.get("stage"))
+    prev_stage = int(payload.get("prev_stage", stage - 1))
 
     with get_db() as conn:
         with conn.cursor() as cur:
             # infos viewer
             display, avatar = twitch_user_profile(login)
 
-            # récupérer la forme
+            # récupérer la nouvelle forme
             cur.execute("""
                 SELECT f.name, f.image_url, f.sound_url, c.key
                 FROM creatures_v2 cr
@@ -4473,21 +4483,40 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
                 WHERE cr.twitch_login = %s AND cr.is_active=true
                 LIMIT 1;
             """, (stage, login))
-
-
             row = cur.fetchone()
             if not row:
                 raise HTTPException(400, "No evolution form")
-
             name, image_url, sound_url, cm_key = row
+
+            # récupérer la forme précédente
+            prev_name = payload.get("prev_name", "")
+            prev_image = payload.get("prev_image_url", "")
+            if not prev_name and prev_stage >= 1:
+                cur.execute("""
+                    SELECT name, image_url FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s LIMIT 1;
+                """, (cm_key, prev_stage))
+                prow = cur.fetchone()
+                if prow:
+                    prev_name, prev_image = prow
 
             cur.execute("""
                 INSERT INTO overlay_evolutions
                 (twitch_login, viewer_display, viewer_avatar,
-                 cm_key, stage, name, image_url, sound_url, expires_at)
+                 cm_key, stage, name, image_url, sound_url,
+                 prev_stage, prev_name, prev_image_url,
+                 expires_at)
                 VALUES
-                (%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '15 seconds');
-            """, (login, display, avatar, cm_key, stage, name, image_url, sound_url))
+                (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now() + interval '25 seconds');
+            """, (login, display, avatar, cm_key, stage, name, image_url, sound_url,
+                  prev_stage, prev_name or "", prev_image or ""))
+
+            # Annonce chat via bot_announcements
+            prev_label = prev_name or f"Stage {prev_stage}"
+            new_label  = name or f"Stage {stage}"
+            viewer_tag = f"@{display or login}"
+            announce   = f"✨ {prev_label} commence son évolution... Il se transforme en {new_label} ! Bravo à {viewer_tag} !"
+            cur.execute("INSERT INTO bot_announcements (message) VALUES (%s);", (announce,))
 
         conn.commit()
 
@@ -8170,648 +8199,471 @@ tick();
 
 @app.get("/overlay/evolution", response_class=HTMLResponse)
 def overlay_evolution_page():
-    return HTMLResponse(r"""
-<!doctype html>
+    return HTMLResponse(r"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
-  :root{
-    --bg: rgba(10,15,20,.72);
-    --border: rgba(255,255,255,.12);
-    --text: #e6edf3;
-    --muted: #9aa4b2;
-    --accent: rgba(122,162,255,.95);
-    --accent2: rgba(255, 214, 102, .95);
-  }
-
-  body{
-    margin:0;
-    background:transparent;
-    overflow:hidden;
-    font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;
-  }
-
-  .wrap{
-    position:fixed; inset:0;
-    display:flex; align-items:center; justify-content:center;
-    pointer-events:none;
-  }
-
-  /* --- Backdrop cinematic --- */
-  .backdrop{
-    position:fixed; inset:0;
-    display:none;
-    background:
-      radial-gradient(1200px 700px at 50% 50%, rgba(122,162,255,.16), rgba(0,0,0,0) 60%),
-      radial-gradient(900px 520px at 52% 48%, rgba(255,214,102,.10), rgba(0,0,0,0) 55%);
-    opacity:0;
-    transition: opacity 450ms ease;
-  }
-  .backdrop.show{ opacity:1; }
-
-  /* subtle scanlines */
-  .scanlines{
-    position:absolute; inset:-40px;
-    background: repeating-linear-gradient(
-      to bottom,
-      rgba(255,255,255,.03) 0px,
-      rgba(255,255,255,.03) 1px,
-      rgba(0,0,0,0) 3px,
-      rgba(0,0,0,0) 7px
-    );
-    opacity:.25;
-    mix-blend-mode: overlay;
-    filter: blur(.2px);
-  }
-
-  /* --- Card --- */
-  .card{
-    display:none;
-    width:min(920px, 92vw);
-    padding:18px 20px 20px;
-    border-radius:26px;
-    background: var(--bg);
-    border:1px solid var(--border);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 20px 70px rgba(0,0,0,.45);
-    position:relative;
-
-    opacity:0;
-    transform: translateY(14px) scale(.92);
-    transition: opacity 520ms ease, transform 520ms ease;
-  }
-  .card.show{
-    opacity:1;
-    transform: translateY(0) scale(1);
-  }
-
-  /* Glitch edges on entrance */
-  .card::before{
-    content:"";
-    position:absolute; inset:-2px;
-    border-radius:28px;
-    background: linear-gradient(90deg, rgba(122,162,255,.0), rgba(122,162,255,.35), rgba(255,214,102,.2), rgba(122,162,255,.0));
-    filter: blur(14px);
-    opacity:0;
-    transition: opacity 520ms ease;
-  }
-  .card.show::before{ opacity:1; }
-
-  /* --- Viewer bar --- */
-  .viewerBar{
-    display:flex; align-items:center; gap:12px;
-    padding:10px 12px;
-    border-radius:16px;
-    background: rgba(255,255,255,.06);
-    border:1px solid rgba(255,255,255,.10);
-  }
-  .avatar{
-    width:40px;height:40px;border-radius:12px;
-    object-fit:cover;border:1px solid rgba(255,255,255,.15);
-  }
-  .viewerName{
-  color: var(--text);
-  font-weight: 900;
-  font-size: 16px;        /* avant: 14px */
-  line-height: 1.1;
-  text-shadow: 0 1px 6px rgba(0,0,0,.5);
+* { box-sizing:border-box; margin:0; padding:0; }
+body {
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, Arial, sans-serif;
+  width: 1920px; height: 1080px;
 }
 
-  .viewerSub{ color:var(--muted); font-size:12px; margin-top:2px; }
-
-  /* --- Main layout --- */
-  .grid{
-    display:grid;
-    grid-template-columns: 1fr 520px;
-    gap:18px;
-    align-items:center;
-    margin-top:14px;
-  }
-
-  /* --- Image chamber --- */
-  .chamber{
-    position:relative;
-    width:520px; height:520px;
-    border-radius:28px;
-    background: rgba(255,255,255,.05);
-    border:1px solid rgba(255,255,255,.10);
-    overflow:hidden;
-    display:flex; align-items:center; justify-content:center;
-  }
-
-  /* rings */
-  .ring{
-    position:absolute;
-    width:640px;height:640px;
-    border-radius:999px;
-    border:1px solid rgba(122,162,255,.25);
-    filter: blur(.2px);
-    opacity:.0;
-    transform: scale(.7);
-  }
-  .ring.r1{ border-color: rgba(122,162,255,.25); }
-  .ring.r2{ border-color: rgba(255,214,102,.22); width:720px;height:720px; }
-  .ring.r3{ border-color: rgba(255,255,255,.12); width:820px;height:820px; }
-
-  /* shockwave */
-  .shockwave{
-    position:absolute;
-    width:24px;height:24px;
-    border-radius:999px;
-    border:2px solid rgba(255,255,255,.35);
-    opacity:0;
-    transform: scale(1);
-  }
-
-  /* the image */
-  .img{
-    width:92%;
-    height:92%;
-    object-fit:contain;
-    filter: drop-shadow(0 18px 26px rgba(0,0,0,.55));
-    opacity:0;
-    transform: translateY(6px) scale(.96);
-    transition: opacity 520ms ease, transform 520ms ease;
-  }
-  .card.show .img{
-    opacity:1;
-    transform: translateY(0) scale(1);
-  }
-
-  /* text block */
-.title{
-  font-size: 42px;        /* avant: 34px */
-  font-weight: 1000;
-  color: var(--text);
-  letter-spacing: .4px;
-  line-height: 1.08;
-  text-shadow:
-    0 2px 10px rgba(0,0,0,.55),
-    0 0 18px rgba(122,162,255,.35);
+/* ── Panneau principal (gauche, comme !show) ────────────────── */
+#panel {
+  position: absolute;
+  left: 48px; top: 50%;
+  transform: translateY(-50%) translateX(-560px);
+  width: 480px;
+  background: rgba(6,11,18,.88);
+  border: 1px solid rgba(0,229,255,.18);
+  border-radius: 24px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 30px 80px rgba(0,0,0,.7), 0 0 60px rgba(0,229,255,.08);
+  padding: 20px;
+  transition: transform .55s cubic-bezier(.22,1,.36,1), opacity .45s ease;
+  opacity: 0;
+  pointer-events: none;
+}
+#panel.visible {
+  transform: translateY(-50%) translateX(0px);
+  opacity: 1;
 }
 
-/* Typewriter cursor */
-.titleTyping::after{
-  content:"";
-  display:inline-block;
-  width:10px;
-  height:1.15em;
-  margin-left:8px;
-  background: rgba(255,255,255,.65);
-  border-radius:2px;
-  animation: caretBlink 900ms steps(2, end) infinite;
-  vertical-align: -0.15em;
+/* ── Viewer bar ─────────────────────────────────────────────── */
+.vbar {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px;
+  padding: 9px 12px;
+  margin-bottom: 14px;
+}
+.vavatar {
+  width: 40px; height: 40px; border-radius: 10px;
+  object-fit: cover; border: 1px solid rgba(0,229,255,.3);
+  flex-shrink: 0;
+}
+.vname {
+  font-weight: 800; font-size: 15px;
+  color: #e8f4ff;
+  text-shadow: 0 0 14px rgba(0,229,255,.4);
+}
+.vsub {
+  font-size: 11px; color: #4a7a99; margin-top: 2px;
+  font-family: 'Share Tech Mono', monospace;
 }
 
-@keyframes caretBlink{
-  0%, 49% { opacity:1; }
-  50%, 100% { opacity:0; }
+/* ── Chambre image (grande) ─────────────────────────────────── */
+.chamber {
+  position: relative;
+  width: 100%; aspect-ratio: 1;
+  border-radius: 18px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.08);
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+}
+.chamber canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none;
+}
+.cm-img {
+  width: 88%; height: 88%; object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 12px 24px rgba(0,0,0,.6));
+  transition: opacity .35s ease;
 }
 
-/* Pulse (appliqué en JS via transform + text-shadow) */
-.titlePulse{
-  will-change: transform, text-shadow, filter;
+/* ── Glitch ─────────────────────────────────────────────────── */
+@keyframes glitch1 {
+  0%   { clip-path: inset(0 0 85% 0); transform: translateX(-6px); }
+  20%  { clip-path: inset(20% 0 50% 0); transform: translateX(8px); }
+  40%  { clip-path: inset(55% 0 10% 0); transform: translateX(-4px); }
+  60%  { clip-path: inset(70% 0 5% 0); transform: translateX(10px); }
+  80%  { clip-path: inset(10% 0 80% 0); transform: translateX(-8px); }
+  100% { clip-path: inset(0 0 95% 0); transform: translateX(4px); }
+}
+@keyframes glitch2 {
+  0%   { clip-path: inset(40% 0 40% 0); transform: translateX(10px) scaleX(1.04); }
+  33%  { clip-path: inset(5% 0 80% 0); transform: translateX(-12px) scaleX(.97); }
+  66%  { clip-path: inset(75% 0 5% 0); transform: translateX(6px) scaleX(1.02); }
+  100% { clip-path: inset(30% 0 50% 0); transform: translateX(-8px); }
+}
+@keyframes glitch-hue {
+  0%,100% { filter: hue-rotate(0deg) saturate(1) drop-shadow(0 12px 24px rgba(0,0,0,.6)); }
+  25% { filter: hue-rotate(90deg) saturate(3) drop-shadow(0 0 20px rgba(0,229,255,.8)); }
+  50% { filter: hue-rotate(200deg) saturate(2) drop-shadow(0 0 30px rgba(255,45,120,.7)); }
+  75% { filter: hue-rotate(300deg) saturate(4) drop-shadow(0 0 15px rgba(255,209,102,.9)); }
+}
+@keyframes shake-panel {
+  0%,100% { translate: 0 0; }
+  10% { translate: -5px -2px; }
+  20% { translate: 6px 3px; }
+  30% { translate: -8px 1px; }
+  40% { translate: 4px -4px; }
+  50% { translate: -3px 5px; }
+  60% { translate: -6px -3px; }
+  70% { translate: 7px 2px; }
+  80% { translate: -4px -1px; }
+  90% { translate: 3px 4px; }
+}
+.cm-img.glitching {
+  animation: glitch-hue .18s linear infinite;
+}
+.glitch-layer {
+  position: absolute; inset: 6%; pointer-events: none;
+  object-fit: contain; image-rendering: pixelated;
+  opacity: .7;
+}
+.glitch-layer.g1 { animation: glitch1 .13s steps(1) infinite; mix-blend-mode: screen; }
+.glitch-layer.g2 { animation: glitch2 .17s steps(1) infinite; mix-blend-mode: screen; filter: hue-rotate(120deg); }
+
+/* ── Labels sous l'image ────────────────────────────────────── */
+.cm-label {
+  text-align: center;
+}
+.cm-name {
+  font-size: 20px; font-weight: 900; color: #e8f4ff;
+  text-shadow: 0 0 18px rgba(0,229,255,.5);
+  letter-spacing: .5px;
+}
+.cm-stage {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: #4a7a99; margin-top: 3px;
+  letter-spacing: .12em;
+}
+.cm-stage.new-stage {
+  color: #00e5ff;
+  text-shadow: 0 0 10px rgba(0,229,255,.5);
 }
 
-
-.subtitle{
-  margin-top: 12px;
-  color: #cfd6e3;         /* plus clair */
-  font-size: 17px;        /* avant: 14px */
-  line-height: 1.5;
-  text-shadow: 0 1px 6px rgba(0,0,0,.45);
+/* ── Flash blanc ────────────────────────────────────────────── */
+#flash-overlay {
+  position: absolute; inset: 0;
+  background: white; opacity: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  transition: opacity .06s ease;
 }
 
-  .pillRow{ margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; }
-.pill{
-  padding: 7px 12px;      /* un peu plus haut */
-  font-size: 13px;        /* avant: 12px */
-  color: #e1e7f0;
-  background: rgba(0,0,0,.22);
+/* ── Confettis canvas (hors chambre, couvre tout le panneau) ── */
+#confetti-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: 24px; pointer-events: none;
+  z-index: 10;
 }
-
-  .dot{
-    width:8px;height:8px;border-radius:999px;
-    background: var(--accent);
-    box-shadow: 0 0 18px rgba(122,162,255,.55);
-  }
-
-  /* cinematic flash overlay */
-  .flash{
-    position:fixed; inset:0;
-    background: radial-gradient(800px 500px at 50% 50%, rgba(255,255,255,.55), rgba(255,255,255,0) 55%);
-    opacity:0;
-    pointer-events:none;
-  }
-
-  /* subtle shake */
-  @keyframes shake {
-    0%{ transform: translateY(0) }
-    20%{ transform: translateY(-2px) }
-    40%{ transform: translateY(2px) }
-    60%{ transform: translateY(-1px) }
-    80%{ transform: translateY(1px) }
-    100%{ transform: translateY(0) }
-  }
-
-  /* ring burst */
-  @keyframes ringBurst {
-    0%{ opacity:0; transform: scale(.65) rotate(0deg); }
-    25%{ opacity:.85; }
-    100%{ opacity:0; transform: scale(1.12) rotate(12deg); }
-  }
-
-  @keyframes shock {
-    0%{ opacity:.9; transform: scale(1); }
-    100%{ opacity:0; transform: scale(42); }
-  }
-
-  /* particles canvas */
-  canvas{
-    position:absolute; inset:0;
-    width:100%; height:100%;
-  }
-
-  /* show/hide timing */
-  .hideFade{
-    opacity:0 !important;
-    transform: translateY(14px) scale(.92) !important;
-    transition: opacity 420ms ease, transform 420ms ease !important;
-  }
-
-  /* reduce motion fallback */
-  @media (prefers-reduced-motion: reduce){
-    .card, .img, .backdrop{ transition:none !important; }
-  }
 </style>
 </head>
-
 <body>
-<div class="backdrop" id="backdrop">
-  <div class="scanlines"></div>
-</div>
-<div class="flash" id="flash"></div>
 
-<div class="wrap">
-  <div id="card" class="card">
-    <div class="viewerBar">
-      <img id="avatar" class="avatar" src="" alt="">
-      <div>
-        <div id="viewerName" class="viewerName"></div>
-        <div class="viewerSub">Évolution détectée — ManaCorp</div>
-      </div>
+<div id="panel">
+  <canvas id="confetti-canvas"></canvas>
+
+  <div class="vbar">
+    <img id="vavatar" class="vavatar" src="" alt="">
+    <div>
+      <div id="vname" class="vname"></div>
+      <div class="vsub">ÉVOLUTION DÉTECTÉE</div>
     </div>
+  </div>
 
-    <div class="grid">
-      <div>
-        <div class="title" id="formName">Évolution</div>
-        <div class="subtitle" id="subText">
-          Stabilisation de la signature génétique… synchronisation des flux…
-        </div>
+  <div class="chamber" id="chamber">
+    <canvas id="spark-canvas"></canvas>
+    <div id="flash-overlay"></div>
+    <img id="cm-img-prev" class="cm-img" src="" alt="" style="position:absolute">
+    <img id="cm-img-next" class="cm-img" src="" alt="" style="position:absolute;opacity:0">
+    <img id="glitch-g1" class="glitch-layer g1" src="" alt="" style="display:none">
+    <img id="glitch-g2" class="glitch-layer g2" src="" alt="" style="display:none">
+  </div>
 
-        <div class="pillRow">
-          <div class="pill"><span class="dot"></span> Procédure : ÉVOLUTION</div>
-          <div class="pill">🔊 Son synchronisé</div>
-          <div class="pill">🧬 Forme validée</div>
-        </div>
-      </div>
-
-      <div class="chamber" id="chamber">
-        <canvas id="fx"></canvas>
-        <div class="ring r1" id="r1"></div>
-        <div class="ring r2" id="r2"></div>
-        <div class="ring r3" id="r3"></div>
-        <div class="shockwave" id="shockwave"></div>
-        <img id="img" class="img" src="" alt="">
-      </div>
-    </div>
-
-<audio id="sfx" preload="auto" src="/static/evo.mp3"></audio>
+  <div class="cm-label">
+    <div id="cm-name" class="cm-name"></div>
+    <div id="cm-stage" class="cm-stage"></div>
   </div>
 </div>
 
+<audio id="evo-sfx" src="/static/evo.mp3" preload="auto"></audio>
+
 <script>
+// ── Constantes timing (en ms) ───────────────────────────────
+const T_PREV     = 8000;   // ancien CM visible
+const T_GLITCH   = 4000;   // glitch transition
+const T_NEXT     = 8000;   // nouveau CM visible + confettis
+const TOTAL      = T_PREV + T_GLITCH + T_NEXT;  // = 20 000ms
+
+// ── Éléments ────────────────────────────────────────────────
+const panel      = document.getElementById('panel');
+const vavatar    = document.getElementById('vavatar');
+const vname      = document.getElementById('vname');
+const imgPrev    = document.getElementById('cm-img-prev');
+const imgNext    = document.getElementById('cm-img-next');
+const g1         = document.getElementById('glitch-g1');
+const g2         = document.getElementById('glitch-g2');
+const cmName     = document.getElementById('cm-name');
+const cmStage    = document.getElementById('cm-stage');
+const flashEl    = document.getElementById('flash-overlay');
+const sfx        = document.getElementById('evo-sfx');
+const sparkCvs   = document.getElementById('spark-canvas');
+const sparkCtx   = sparkCvs.getContext('2d');
+const confCvs    = document.getElementById('confetti-canvas');
+const confCtx    = confCvs.getContext('2d');
+
+// ── State ────────────────────────────────────────────────────
 let showing = false;
 let lastSig = "";
-let hideTimer = null;
-const SHOW_MS = 6500;
+let phaseTimer = null;
+let sparkParticles = [];
+let confettis = [];
+let animId = null;
 
-const card = document.getElementById('card');
-const backdrop = document.getElementById('backdrop');
-const flash = document.getElementById('flash');
+// ── Resize canvases ──────────────────────────────────────────
+function resizeCvs() {
+  const chamber = document.getElementById('chamber');
+  const cr = chamber.getBoundingClientRect();
+  sparkCvs.width  = Math.floor(cr.width  * devicePixelRatio);
+  sparkCvs.height = Math.floor(cr.height * devicePixelRatio);
+  sparkCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
 
-const avatar = document.getElementById('avatar');
-const viewerName = document.getElementById('viewerName');
-const img = document.getElementById('img');
-const formName = document.getElementById('formName');
-const snd = document.getElementById('snd');
-
-const r1 = document.getElementById('r1');
-const r2 = document.getElementById('r2');
-const r3 = document.getElementById('r3');
-const shockwave = document.getElementById('shockwave');
-
-const canvas = document.getElementById('fx');
-const ctx = canvas.getContext('2d');
-
-function resizeCanvas(){
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = Math.floor(rect.width * devicePixelRatio);
-  canvas.height = Math.floor(rect.height * devicePixelRatio);
-  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  const pr = panel.getBoundingClientRect();
+  confCvs.width  = Math.floor(pr.width  * devicePixelRatio);
+  confCvs.height = Math.floor(pr.height * devicePixelRatio);
+  confCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
 }
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', resizeCvs);
 
-let particles = [];
-function spawnParticles(){
-  particles = [];
-  const w = canvas.getBoundingClientRect().width;
-  const h = canvas.getBoundingClientRect().height;
-  const cx = w/2, cy = h/2;
-
-  const n = 80;
-  for(let i=0;i<n;i++){
-    const a = Math.random() * Math.PI * 2;
-    const sp = 0.8 + Math.random()*2.2;
-    particles.push({
-      x: cx + (Math.random()*10-5),
-      y: cy + (Math.random()*10-5),
-      vx: Math.cos(a) * sp,
-      vy: Math.sin(a) * sp,
-      life: 0,
-      max: 40 + Math.floor(Math.random()*35),
-      size: 1 + Math.random()*2.2,
-      kind: Math.random() < 0.75 ? 0 : 1
+// ── Particules étincelles (chambre) ─────────────────────────
+function spawnSparks(n=60) {
+  sparkParticles = [];
+  const w = sparkCvs.getBoundingClientRect().width;
+  const h = sparkCvs.getBoundingClientRect().height;
+  for (let i=0; i<n; i++) {
+    const a = Math.random()*Math.PI*2;
+    const sp = 1.2 + Math.random()*3;
+    sparkParticles.push({
+      x: w/2 + (Math.random()-0.5)*20,
+      y: h/2 + (Math.random()-0.5)*20,
+      vx: Math.cos(a)*sp, vy: Math.sin(a)*sp,
+      life:0, max: 30+Math.floor(Math.random()*30),
+      size: 1.5+Math.random()*2,
+      col: Math.random()<.6 ? '#00e5ff' : '#ffd166'
     });
   }
 }
 
-function stepParticles(){
-  const w = canvas.getBoundingClientRect().width;
-  const h = canvas.getBoundingClientRect().height;
-  ctx.clearRect(0,0,w,h);
-
-  // subtle vignette
-  const g = ctx.createRadialGradient(w/2,h/2,10,w/2,h/2,Math.min(w,h)/1.5);
-  g.addColorStop(0,'rgba(122,162,255,.06)');
-  g.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0,0,w,h);
-
-  // particles
-  for(const p of particles){
-    p.life++;
-    p.x += p.vx;
-    p.y += p.vy;
-    p.vx *= 0.985;
-    p.vy *= 0.985;
-
-    const t = p.life / p.max;
-    const alpha = Math.max(0, 1 - t);
-
-    ctx.globalAlpha = alpha * 0.85;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
-
-    if(p.kind === 0){
-      ctx.fillStyle = 'rgba(122,162,255,1)';
-      ctx.shadowColor = 'rgba(122,162,255,.75)';
-      ctx.shadowBlur = 12;
-    }else{
-      ctx.fillStyle = 'rgba(255,214,102,1)';
-      ctx.shadowColor = 'rgba(255,214,102,.55)';
-      ctx.shadowBlur = 10;
-    }
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    // end
-    if(p.life >= p.max){
-      p.life = 999999;
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  particles = particles.filter(p => p.life < p.max);
-
-  if(showing){
-    requestAnimationFrame(stepParticles);
+// ── Confettis (panneau entier) ───────────────────────────────
+function spawnConfettis(n=80) {
+  confettis = [];
+  const w = confCvs.getBoundingClientRect().width;
+  for (let i=0; i<n; i++) {
+    const hue = Math.floor(Math.random()*360);
+    confettis.push({
+      x: Math.random()*w,
+      y: -10 - Math.random()*60,
+      vx: (Math.random()-0.5)*3,
+      vy: 2 + Math.random()*3,
+      rot: Math.random()*Math.PI*2,
+      vrot: (Math.random()-0.5)*0.2,
+      w: 6+Math.random()*8, h: 4+Math.random()*6,
+      life:0, max: 90+Math.floor(Math.random()*60),
+      col: `hsl(${hue},90%,65%)`
+    });
   }
 }
 
-function playFlash(){
-  flash.style.opacity = '0';
-  // force
-  void flash.offsetWidth;
-  flash.style.transition = 'opacity 140ms ease';
-  flash.style.opacity = '0.9';
-  setTimeout(()=>{ flash.style.opacity = '0'; }, 160);
-}
+// ── Animation loop ───────────────────────────────────────────
+function animLoop() {
+  const cw = sparkCvs.getBoundingClientRect().width;
+  const ch = sparkCvs.getBoundingClientRect().height;
+  sparkCtx.clearRect(0,0,cw,ch);
+  for (const p of sparkParticles) {
+    p.life++; p.x+=p.vx; p.y+=p.vy; p.vx*=.97; p.vy*=.97;
+    const t = 1 - p.life/p.max;
+    sparkCtx.globalAlpha = t*0.9;
+    sparkCtx.beginPath();
+    sparkCtx.arc(p.x,p.y,p.size,0,Math.PI*2);
+    sparkCtx.fillStyle = p.col;
+    sparkCtx.shadowColor = p.col; sparkCtx.shadowBlur = 10;
+    sparkCtx.fill(); sparkCtx.shadowBlur=0;
+  }
+  sparkParticles = sparkParticles.filter(p=>p.life<p.max);
+  sparkCtx.globalAlpha = 1;
 
-function burstRings(){
-  // reset + animate
-  for (const el of [r1,r2,r3]){
-    el.style.animation = 'none';
-    el.style.opacity = '0';
-    el.style.transform = 'scale(.7)';
-    void el.offsetWidth;
-    el.style.animation = 'ringBurst 820ms ease-out';
+  const pw = confCvs.getBoundingClientRect().width;
+  const ph = confCvs.getBoundingClientRect().height;
+  confCtx.clearRect(0,0,pw,ph);
+  for (const c of confettis) {
+    c.life++; c.x+=c.vx; c.y+=c.vy; c.rot+=c.vrot;
+    const t = 1 - c.life/c.max;
+    confCtx.globalAlpha = Math.min(1, t*2);
+    confCtx.save();
+    confCtx.translate(c.x, c.y); confCtx.rotate(c.rot);
+    confCtx.fillStyle = c.col;
+    confCtx.fillRect(-c.w/2,-c.h/2,c.w,c.h);
+    confCtx.restore();
+  }
+  confettis = confettis.filter(c=>c.life<c.max && c.y<ph+20);
+  confCtx.globalAlpha = 1;
+
+  if (showing || sparkParticles.length || confettis.length) {
+    animId = requestAnimationFrame(animLoop);
+  } else {
+    animId = null;
+    sparkCtx.clearRect(0,0,cw,ch);
+    confCtx.clearRect(0,0,pw,ph);
   }
 }
-
-function burstShockwave(){
-  shockwave.style.animation = 'none';
-  shockwave.style.opacity = '0';
-  void shockwave.offsetWidth;
-  shockwave.style.animation = 'shock 720ms ease-out';
+function ensureAnim() {
+  if (!animId) { animId = requestAnimationFrame(animLoop); }
 }
 
-function showCard(){
-  if (!showing){
-    backdrop.style.display='block';
-    card.style.display='block';
-    // reflow
-    void card.offsetWidth;
-    backdrop.classList.add('show');
-    card.classList.add('show');
-
-    // cinematic impact
-    playFlash();
-    burstRings();
-    burstShockwave();
-    spawnParticles();
-    resizeCanvas();
-    showing = true;
-    requestAnimationFrame(stepParticles);
-
-    // tiny shake
-    card.style.animation = 'shake 360ms ease';
-    setTimeout(()=>{ card.style.animation = 'none'; }, 380);
-  }
-
-  if (hideTimer) clearTimeout(hideTimer);
-  hideTimer = setTimeout(hideCard, SHOW_MS);
-}
-
-function hideCard(){
-  if (!showing) return;
-
-  card.classList.remove('show');
-  backdrop.classList.remove('show');
-
-  // stop FX after fade
+// ── Flash blanc ──────────────────────────────────────────────
+function doFlash() {
+  flashEl.style.transition = 'none';
+  flashEl.style.opacity = '0.95';
   setTimeout(()=>{
-    card.style.display='none';
-    backdrop.style.display='none';
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    particles = [];
-  }, 520);
+    flashEl.style.transition = 'opacity .4s ease';
+    flashEl.style.opacity = '0';
+  }, 80);
+}
 
+// ── Phase 1 : afficher l'ancien CM ──────────────────────────
+function phaseOld(data) {
+  // Mettre les images
+  imgPrev.src = data.prev.image || '';
+  imgNext.src = data.form.image || '';
+  imgPrev.style.opacity = '1';
+  imgNext.style.opacity = '0';
+  g1.style.display = 'none'; g2.style.display = 'none';
+  g1.src = ''; g2.src = '';
+
+  // Label
+  const prevStageLbl = {0:'Œuf',1:'Stage I',2:'Stage II',3:'Stage III'}[data.prev.stage] || `Stage ${data.prev.stage}`;
+  cmName.textContent = data.prev.name || prevStageLbl;
+  cmStage.textContent = prevStageLbl;
+  cmStage.className = 'cm-stage';
+
+  // Viewer
+  vname.textContent  = data.viewer.name || '';
+  vavatar.src        = data.viewer.avatar || '';
+
+  // Apparaître
+  panel.classList.add('visible');
+
+  spawnSparks(40);
+  ensureAnim();
+
+  // Musique
+  sfx.currentTime = 0;
+  sfx.play().catch(()=>{});
+
+  // → phase glitch après T_PREV
+  phaseTimer = setTimeout(()=>phaseGlitch(data), T_PREV);
+}
+
+// ── Phase 2 : glitch ─────────────────────────────────────────
+function phaseGlitch(data) {
+  // Activer le glitch sur imgPrev
+  imgPrev.classList.add('glitching');
+  g1.src = imgPrev.src; g2.src = imgPrev.src;
+  g1.style.display = ''; g2.style.display = '';
+
+  // Secouer le panneau
+  panel.style.animation = 'shake-panel .12s linear infinite';
+
+  // Labels qui clignotent
+  cmName.textContent = '???';
+  cmStage.textContent = '/// ÉVOLUTION ///';
+
+  // Etincelles denses
+  const spInt = setInterval(()=>{ spawnSparks(20); ensureAnim(); }, 400);
+
+  // Au milieu du glitch : flash + swap d'image
+  phaseTimer = setTimeout(()=>{
+    doFlash();
+    clearInterval(spInt);
+    phaseTimer = setTimeout(()=>phaseNew(data), 400);
+  }, T_GLITCH - 400);
+}
+
+// ── Phase 3 : nouveau CM ─────────────────────────────────────
+function phaseNew(data) {
+  // Arrêter le glitch
+  panel.style.animation = '';
+  imgPrev.classList.remove('glitching');
+  g1.style.display = 'none'; g2.style.display = 'none';
+
+  // Swap images
+  imgPrev.style.opacity = '0';
+  imgNext.style.opacity = '1';
+  imgNext.style.filter = 'drop-shadow(0 12px 24px rgba(0,0,0,.6))';
+
+  // Labels
+  const newStageLbl = {1:'Stage I',2:'Stage II',3:'Stage III'}[data.form.stage] || `Stage ${data.form.stage}`;
+  cmName.textContent = data.form.name || newStageLbl;
+  cmStage.textContent = newStageLbl;
+  cmStage.className = 'cm-stage new-stage';
+
+  // Confettis + étincelles
+  spawnSparks(80);
+  spawnConfettis(90);
+  ensureAnim();
+
+  // Continue à faire pleuvoir des confettis
+  const confInt = setInterval(()=>{ spawnConfettis(25); ensureAnim(); }, 1200);
+
+  // Masquer après T_NEXT
+  phaseTimer = setTimeout(()=>{
+    clearInterval(confInt);
+    hidePanel();
+  }, T_NEXT);
+}
+
+// ── Masquer le panneau ───────────────────────────────────────
+function hidePanel() {
+  panel.classList.remove('visible');
   showing = false;
-  hideTimer = null;
-  stopPulse();
-formName.style.transform = '';
-formName.style.textShadow = '';
-
+  phaseTimer = null;
+  setTimeout(()=>{
+    imgPrev.src=''; imgNext.src='';
+    g1.src=''; g2.src='';
+    g1.style.display='none'; g2.style.display='none';
+    sparkParticles=[]; confettis=[];
+  }, 500);
 }
 
-// ---------------------
-// Typewriter
-// ---------------------
-let typingTimer = null;
+// ── Lancer une séquence ──────────────────────────────────────
+function startSequence(data) {
+  if (phaseTimer) { clearTimeout(phaseTimer); phaseTimer=null; }
+  sfx.pause(); sfx.currentTime=0;
+  panel.style.animation='';
+  imgPrev.classList.remove('glitching');
 
-function typewriter(el, fullText, speedMs=28){
-  // reset
-  if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
-  el.textContent = "";
-  el.classList.add("titleTyping");
-
-  let i = 0;
-  typingTimer = setInterval(() => {
-    el.textContent += fullText[i] || "";
-    i++;
-    if (i >= fullText.length){
-      clearInterval(typingTimer);
-      typingTimer = null;
-
-      // retire le curseur après une petite pause
-      setTimeout(()=>{ el.classList.remove("titleTyping"); }, 700);
-    }
-  }, speedMs);
+  showing = true;
+  resizeCvs();
+  phaseOld(data);
 }
 
-// ---------------------
-// Audio pulse (WebAudio)
-// ---------------------
-let audioCtx = null;
-let analyser = null;
-let dataArray = null;
-let rafPulse = null;
-
-function stopPulse(){
-  if (rafPulse) cancelAnimationFrame(rafPulse);
-  rafPulse = null;
-  if (analyser) analyser.disconnect();
-  analyser = null;
-  dataArray = null;
-}
-
-function startPulse(audioEl, targetEl){
-  stopPulse();
-
-  // WebAudio context (créé à la demande)
-  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-
-  const src = audioCtx.createMediaElementSource(audioEl);
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
-
-  src.connect(analyser);
-  analyser.connect(audioCtx.destination);
-
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-  targetEl.classList.add("titlePulse");
-
-  const baseScale = 1.0;
-
-  const loop = () => {
-    if (!analyser) return;
-
-    analyser.getByteFrequencyData(dataArray);
-
-    // énergie moyenne (0..255)
-    let sum = 0;
-    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-    const avg = sum / dataArray.length;
-
-    // normalise (0..1 environ)
-    const n = Math.min(1, avg / 140);
-
-    // pulse
-    const scale = baseScale + n * 0.06;
-    targetEl.style.transform = `scale(${scale})`;
-
-    // glow lié au son
-    const glow = 10 + n * 26;
-    targetEl.style.textShadow = `
-      0 2px 10px rgba(0,0,0,.55),
-      0 0 ${glow}px rgba(122,162,255,.55),
-      0 0 ${glow * 0.6}px rgba(255,214,102,.25)
-    `;
-
-    rafPulse = requestAnimationFrame(loop);
-  };
-
-  rafPulse = requestAnimationFrame(loop);
-}
-
-
-async function tick(){
-  try{
+// ── Polling ──────────────────────────────────────────────────
+async function tick() {
+  try {
     const r = await fetch('/overlay/evolution_state', {cache:'no-store'});
     const d = await r.json();
-    if(!d.active) return;
+    if (!d.active) return;
 
-    const sig = `${d.viewer.name}|${d.form.name}|${d.form.image}|${d.form.sound||''}`;
-    if (sig !== lastSig){
+    const sig = `${d.viewer.name}|${d.form.name}|${d.form.image}`;
+    if (sig !== lastSig) {
       lastSig = sig;
-
-// texte lettre par lettre
-typewriter(formName, d.form.name || "Évolution", 28);
-
-// image
-img.src = d.form.image || '';
-
-// son + pulse sync
-if (d.form.sound){
-  snd.src = d.form.sound;
-  try {
-    snd.currentTime = 0;
-
-    // IMPORTANT: certains navigateurs nécessitent resume()
-    if (audioCtx && audioCtx.state === "suspended") {
-      audioCtx.resume().catch(()=>{});
+      startSequence(d);
     }
-
-    snd.play().catch(()=>{});
-    startPulse(snd, formName);
   } catch(e) {}
-} else {
-  stopPulse();
 }
 
-showCard();
-
-    }
-  }catch(e){}
-}
-
-
-
-setInterval(tick, 500);
+setInterval(tick, 800);
 tick();
 </script>
 </body>
@@ -8819,9 +8671,7 @@ tick();
 """)
 
 
-
-# =============================================================================
-# ADMIN: CMS ACTION 
+ 
 # =============================================================================
 
 
@@ -9101,7 +8951,8 @@ def overlay_evolution_state():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,'')
+                SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,''),
+                       COALESCE(prev_stage,0), COALESCE(prev_name,''), COALESCE(prev_image_url,'')
                 FROM overlay_evolutions
                 WHERE expires_at > now()
                 ORDER BY id DESC
@@ -9112,11 +8963,12 @@ def overlay_evolution_state():
     if not row:
         return {"active": False}
 
-    viewer_display, viewer_avatar, name, image_url, sound_url = row
+    viewer_display, viewer_avatar, name, image_url, sound_url, prev_stage, prev_name, prev_image = row
     return {
         "active": True,
         "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
-        "form": {"name": name, "image": image_url, "sound": sound_url or ""},
+        "form":   {"name": name, "image": image_url, "sound": sound_url or ""},
+        "prev":   {"stage": prev_stage, "name": prev_name, "image": prev_image},
     }
 
 @app.post("/internal/xp")
@@ -9224,11 +9076,12 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                     form_name, image_url, sound_url = f
                     evo_payload = {
                         "twitch_login": login,
-                        "cm_key": cm_key,
-                        "stage": new_stage,
-                        "name": form_name,
-                        "image_url": image_url,
-                        "sound_url": sound_url,
+                        "cm_key":       cm_key,
+                        "stage":        new_stage,
+                        "prev_stage":   prev_stage,
+                        "name":         form_name,
+                        "image_url":    image_url,
+                        "sound_url":    sound_url,
                     }
 
         conn.commit()
@@ -9559,8 +9412,10 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                     if f:
                         evo_payload = {
                             "twitch_login": login, "cm_key": active_cm_key,
-                            "stage": stage_after, "name": f[0],
-                            "image_url": f[1], "sound_url": f[2],
+                            "stage":        stage_after,
+                            "prev_stage":   stage_before,
+                            "name":         f[0],
+                            "image_url":    f[1], "sound_url": f[2],
                         }
                 else:
                     stage_after = stage_before
