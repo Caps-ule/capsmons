@@ -2783,6 +2783,27 @@ def admin_xp_thresholds_save(payload: dict, credentials: HTTPBasicCredentials = 
     return {"ok": True, "xp_hatch": hatch, "xp_evolve_1": evo1, "xp_evolve_2": evo2}
 
 
+@app.get("/admin/boss/cms_list")
+def admin_boss_cms_list(credentials: HTTPBasicCredentials = Depends(security)):
+    """Liste tous les CMs activés avec image stage 1 pour le sélecteur boss."""
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.key,
+                       COALESCE(f1.name, c.key)          AS name,
+                       COALESCE(f1.image_url, c.media_url, '') AS image_url,
+                       COALESCE(l.name, c.lineage_key, '') AS lineage_name
+                FROM cms c
+                LEFT JOIN cm_forms f1 ON f1.cm_key = c.key AND f1.stage = 1
+                LEFT JOIN lineages l  ON l.key = c.lineage_key
+                WHERE c.is_enabled = TRUE
+                ORDER BY c.lineage_key, c.key;
+            """)
+            rows = cur.fetchall()
+    return [{"key": r[0], "name": r[1], "image_url": r[2], "lineage": r[3]} for r in rows]
+
+
 @app.post("/admin/boss/start")
 def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
     """Lance un boss raid depuis l'admin."""
@@ -2874,9 +2895,8 @@ def admin_boss_config_save(payload: dict, credentials: HTTPBasicCredentials = De
     return {"ok": True}
 
 
-@app.get("/internal/boss/active")
-def internal_boss_active(x_api_key: str | None = Header(default=None)):
-    require_internal_key(x_api_key)
+def _boss_active_data():
+    """Logique partagée : état du boss actif."""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -2899,6 +2919,19 @@ def internal_boss_active(x_api_key: str | None = Header(default=None)):
             "ends_at": ends_at.isoformat(),
         }
     }
+
+
+@app.get("/admin/boss/active")
+def admin_boss_active(credentials: HTTPBasicCredentials = Depends(security)):
+    """État du boss actif — appelé par le SPA admin."""
+    require_admin(credentials)
+    return _boss_active_data()
+
+
+@app.get("/internal/boss/active")
+def internal_boss_active(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    return _boss_active_data()
 
 
 @app.post("/internal/boss/hit")

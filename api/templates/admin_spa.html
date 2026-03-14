@@ -2480,11 +2480,26 @@
   <!-- Lancer un boss -->
   <div class="card">
     <div class="card-title">▶ LANCER UN BOSS RAID</div>
-    <div class="form-row" style="gap:16px;flex-wrap:wrap;align-items:flex-end">
-      <div class="form-group" style="flex:1;min-width:200px">
-        <div class="form-label">CAPSMON (cm_key)</div>
-        <input type="text" id="boss_cm_key" placeholder="ex: flaminos" style="width:100%">
+
+    <!-- Sélecteur CM -->
+    <div class="form-row" style="gap:16px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px">
+      <div class="form-group" style="flex:1;min-width:220px">
+        <div class="form-label">CAPSMON BOSS</div>
+        <select id="boss_cm_key" onchange="bossCmPreview(this.value)" style="width:100%">
+          <option value="">— chargement… —</option>
+        </select>
       </div>
+      <div id="boss-cm-preview" style="display:none;align-items:center;gap:10px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:160px">
+        <img id="boss-cm-preview-img" src="" alt="" style="width:56px;height:56px;object-fit:contain;image-rendering:pixelated;border-radius:8px;background:rgba(255,255,255,.04)">
+        <div>
+          <div id="boss-cm-preview-name" style="font-weight:700;font-size:14px;color:var(--text)"></div>
+          <div id="boss-cm-preview-lineage" style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:2px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-row" style="gap:16px;flex-wrap:wrap;align-items:flex-end">
+      <div style="display:none"><!-- cm_key est maintenant dans le select --></div>
       <div class="form-group">
         <div class="form-label">PV</div>
         <input type="number" id="boss_hp" min="1" max="9999" value="100" style="width:110px">
@@ -3090,9 +3105,23 @@ function bossCfgRewardTypeChange() {
 }
 
 async function loadBossPage() {
+  // Charger la liste des CMs pour le sélecteur
+  try {
+    const r = await fetch('/admin/boss/cms_list');
+    if (r.ok) {
+      const cms = await r.json();
+      const sel = document.getElementById('boss_cm_key');
+      const prev = sel.value; // garder la sélection courante si possible
+      sel.innerHTML = '<option value="">— Choisir un CapsMon —</option>' +
+        cms.map(c => `<option value="${c.key}" data-img="${c.image_url}" data-lineage="${c.lineage}">${c.name} (${c.lineage})</option>`).join('');
+      if (prev && cms.find(c => c.key === prev)) sel.value = prev;
+      bossCmPreview(sel.value);
+    }
+  } catch(e) { console.warn('boss cms_list error', e); }
+
   // Charger boss actif
   try {
-    const r = await fetch('/internal/boss/active');
+    const r = await fetch('/admin/boss/active');
     const j = await r.json();
     const el = document.getElementById('boss-active-content');
     if (j.active && j.boss) {
@@ -3137,10 +3166,28 @@ async function loadBossPage() {
   } catch(e) { console.warn('boss config error', e); }
 }
 
+function bossCmPreview(key) {
+  const sel = document.getElementById('boss_cm_key');
+  const opt = sel.querySelector(`option[value="${key}"]`);
+  const wrap = document.getElementById('boss-cm-preview');
+  const img  = document.getElementById('boss-cm-preview-img');
+  const name = document.getElementById('boss-cm-preview-name');
+  const lin  = document.getElementById('boss-cm-preview-lineage');
+  if (!opt || !key) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'flex';
+  img.src   = opt.dataset.img || '';
+  img.style.display = opt.dataset.img ? 'block' : 'none';
+  name.textContent  = opt.textContent.split(' (')[0];
+  lin.textContent   = opt.dataset.lineage || '';
+}
+
 async function startBoss() {
   const g = id => document.getElementById(id);
   const cm_key = g('boss_cm_key').value.trim().toLowerCase();
-  if (!cm_key) { setStatus('boss-start-status', '⛔ Renseigne un cm_key', false); return; }
+  if (!cm_key) { setStatus('boss-start-status', '⛔ Sélectionne un CapsMon', false); return; }
   setStatus('boss-start-status', '…');
   const payload = {
     cm_key,
