@@ -9783,7 +9783,7 @@ def overlay_boss_state(since: int = 0):
             cur.execute("""
                 SELECT id, twitch_login, damage, viewer_cm_image, viewer_cm_name,
                        defeated, reward_type, reward_value, reward_item_key, participants,
-                       EXTRACT(EPOCH FROM created_at)::bigint * 1000
+                       (EXTRACT(EPOCH FROM created_at) * 1000)::bigint
                 FROM boss_hit_events
                 WHERE boss_id=%s
                   AND (EXTRACT(EPOCH FROM created_at) * 1000)::bigint > %s
