@@ -9769,15 +9769,14 @@ def overlay_boss_state(since: int = 0):
                 WHERE status='active' AND ends_at <= now();
             """)
 
-            # Pour l'overlay boss, on ne garde visibles que les boss encore actifs
-            # ou vaincus (le temps de jouer l'animation de mort côté front).
-            # Un boss expiré mais encore vivant doit disparaître immédiatement.
+            # On récupère le boss le plus récent, quel que soit son statut.
+            # Important : si le boss le plus récent est expiré, l'overlay doit
+            # disparaître immédiatement, sans ressusciter un ancien boss vaincu.
             cur.execute("""
                 SELECT id, cm_key, cm_name, cm_image_url, hp_max, hp_current,
                        reward_type, reward_value, reward_item_key, status, ends_at,
                        EXTRACT(EPOCH FROM ends_at)::bigint
                 FROM boss_raids
-                WHERE status IN ('active','defeated')
                 ORDER BY started_at DESC LIMIT 1;
             """)
             boss_row = cur.fetchone()
@@ -9787,6 +9786,11 @@ def overlay_boss_state(since: int = 0):
 
             (bid, cm_key, cm_name, cm_img, hp_max, hp_current,
              r_type, r_val, r_item, status, ends_at, ends_epoch) = boss_row
+
+            # Si le boss le plus récent est expiré, on masque l'overlay.
+            if status == 'expired':
+                conn.commit()
+                return {"show": False, "status": "expired"}
 
             # Nouveaux hit-events depuis le timestamp `since`
             cur.execute("""
