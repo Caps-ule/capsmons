@@ -1826,6 +1826,19 @@ def ensure_active_egg(conn, login: str) -> None:
         )
 
 @app.get("/admin/twitch/connect")
+
+def get_egg_image_url(cur, lineage_key: str) -> str:
+    """Retourne l'icon_url de l'item egg_{lineage_key}, ou '' si non trouvé."""
+    if not lineage_key:
+        return ""
+    cur.execute(
+        "SELECT COALESCE(icon_url,'') FROM items WHERE key=%s LIMIT 1;",
+        (f"egg_{lineage_key}",)
+    )
+    row = cur.fetchone()
+    return row[0] if row else ""
+
+
 def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     state = secrets.token_urlsafe(16)
@@ -2699,6 +2712,42 @@ def internal_event_start(payload: dict, x_api_key: str | None = Header(default=N
 
 def _boss_damage_for_stage(stage: int) -> int:
     return {1: 1, 2: 3, 3: 6}.get(stage, 0)
+
+# =============================================================================
+# §  ŒUFS — images par type
+# =============================================================================
+
+@app.get("/admin/eggs/json")
+def admin_eggs_json(credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT key, COALESCE(name, key), COALESCE(icon_url, '')
+                FROM items
+                WHERE key LIKE 'egg_%'
+                ORDER BY key;
+            """)
+            rows = cur.fetchall()
+    return [{"key": r[0], "name": r[1], "icon_url": r[2]} for r in rows]
+
+
+@app.post("/admin/eggs/save")
+def admin_eggs_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+    require_admin(credentials)
+    key      = str(payload.get("key", "")).strip().lower()
+    icon_url = str(payload.get("icon_url", "")).strip()
+    if not key.startswith("egg_"):
+        raise HTTPException(400, "La clé doit commencer par egg_")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM items WHERE key=%s;", (key,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"Item {key} introuvable — créez-le d'abord dans Items")
+            cur.execute("UPDATE items SET icon_url=%s WHERE key=%s;", (icon_url or None, key))
+        conn.commit()
+    return {"ok": True, "key": key, "icon_url": icon_url}
+
 
 # =============================================================================
 # §  SEUILS XP — lecture et sauvegarde
@@ -9500,7 +9549,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
         with conn.cursor() as cur:
             # 1️⃣ CM actif (creatures_v2)
             cur.execute("""
-                SELECT cm_key, stage, xp_total, happiness
+                SELECT cm_key, stage, xp_total, happiness, COALESCE(lineage_key,'')
                 FROM creatures_v2
                 WHERE twitch_login=%s AND is_active=true
                 LIMIT 1;
@@ -9509,38 +9558,44 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
             if not row:
                 raise HTTPException(status_code=400, detail="No active CM")
 
-            cm_key, stage, xp_total, happiness = (
-                row[0],
-                int(row[1]),
-                int(row[2]),
-                int(row[3] or 0),
+            cm_key, stage, xp_total, happiness, lineage_key = (
+                row[0], int(row[1]), int(row[2]), int(row[3] or 0), row[4]
             )
 
-            # 2️⃣ Forme selon le stage
-            cur.execute("""
-                SELECT name, image_url, sound_url
-                FROM cm_forms
-                WHERE cm_key=%s AND stage=%s;
-            """, (cm_key, stage))
-            f = cur.fetchone()
-
-            if f and f[0] and f[1]:
-                cm_name = f[0]
-                media_url = f[1]
-                # sound_url = f[2]  # (optionnel plus tard)
-            else:
-                # 3️⃣ Fallback CMS
-                cur.execute("""
-                    SELECT name, COALESCE(media_url,'')
-                    FROM cms
-                    WHERE key=%s;
-                """, (cm_key,))
-                cmrow = cur.fetchone()
-                if not cmrow:
-                    raise HTTPException(status_code=400, detail="Unknown CM")
-                cm_name, media_url = cmrow
+            # 2️⃣ Cas œuf : récupérer l'image via egg_{lineage_key}
+            if cm_key == "egg" or stage == 0:
+                lineage_key = lineage_key  # déjà lu ci-dessus
+                egg_img = get_egg_image_url(cur, lineage_key)
+                cm_name = f"Œuf {lineage_key.capitalize()}" if lineage_key else "Œuf"
+                media_url = egg_img
                 if not media_url:
-                    raise HTTPException(status_code=400, detail="CM missing media_url")
+                    raise HTTPException(status_code=400, detail="Egg has no image — set one in admin > Réglages > Œufs")
+            else:
+                # 2️⃣ Forme selon le stage
+                cur.execute("""
+                    SELECT name, image_url, sound_url
+                    FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
+                """, (cm_key, stage))
+                f = cur.fetchone()
+
+                if f and f[0] and f[1]:
+                    cm_name = f[0]
+                    media_url = f[1]
+                    # sound_url = f[2]  # (optionnel plus tard)
+                else:
+                    # 3️⃣ Fallback CMS
+                    cur.execute("""
+                        SELECT name, COALESCE(media_url,'')
+                        FROM cms
+                        WHERE key=%s;
+                    """, (cm_key,))
+                    cmrow = cur.fetchone()
+                    if not cmrow:
+                        raise HTTPException(status_code=400, detail="Unknown CM")
+                    cm_name, media_url = cmrow
+                    if not media_url:
+                        raise HTTPException(status_code=400, detail="CM missing media_url")
 
     # Infos viewer Twitch
     display, avatar = twitch_user_profile(login)
@@ -12028,7 +12083,7 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 if not form["name"] and not form["image_url"]:
                     continue  # forme non définie dans cm_forms
                 section_total_forms += 1
-                stage_lbl = {1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
+                stage_lbl = {0:"Œuf", 1:"I", 2:"II", 3:"III"}.get(form["stage"], str(form["stage"]))
                 if c["owned"] and form["stage"] <= c["max_stage"]:
                     # Forme débloquée (stage atteint ou dépassé)
                     section_owned_forms += 1
@@ -12044,11 +12099,12 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                             f'<button class="album-activate-btn" '
                             f'onclick="setActiveCm({creature_id})">⚡ Activer</button>'
                         )
+                    egg_cls = "egg-card" if form["stage"] == 0 else ""
                     cms_grid += f"""
-                      <div class="album-card owned {active_cls}" title="{form['name']} — Stage {stage_lbl}">
+                      <div class="album-card owned {active_cls} {egg_cls}" title="{form['name']} — {'Œuf en incubation' if stage_lbl == 'Œuf' else f'Stage {stage_lbl}'}">
                         <div class="album-img-wrap">{img_tag}</div>
                         <div class="album-name">{form['name']}</div>
-                        <div class="album-stage-lbl">Stage {stage_lbl}</div>
+                        <div class="album-stage-lbl">{"" if stage_lbl == "Œuf" else "Stage "}{stage_lbl}</div>
                         {activate_btn}
                       </div>"""
                 else:
@@ -12133,11 +12189,14 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
             is_egg    = (o["cm_key"] == "egg" or o["stage"] == 0)
             act_cls   = "comp-active" if is_act else ""
             act_lbl   = '<span class="comp-act-badge">ACTIF</span>' if is_act else ""
-            stage_lbl = {1:"I", 2:"II", 3:"III"}.get(o["stage"], str(o["stage"]))
+            stage_lbl = {0:"Œuf", 1:"I", 2:"II", 3:"III"}.get(o["stage"], str(o["stage"]))
 
             if is_egg:
-                # Œuf — affichage spécial emoji + barre XP vers éclosion
-                img_html  = '<div class="comp-img-egg">🥚</div>'
+                # Œuf — utiliser l'image réelle si disponible, sinon emoji
+                if o.get("image_url"):
+                    img_html = f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy" style="image-rendering:pixelated">'
+                else:
+                    img_html  = '<div class="comp-img-egg">🥚</div>'
                 name_disp = "Œuf"
                 meta_html = '<span class="badge-pill egg-pill">EN INCUBATION</span>'
                 hatch_pct = min(100, int((o["xp_total"] / 600) * 100)) if o["xp_total"] else 0
@@ -12308,6 +12367,8 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .inv-use-btn:disabled{{opacity:.35;cursor:not-allowed}}
 .album-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:3px 8px;border-radius:5px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;margin-top:5px;width:100%;transition:background .2s}}
 .album-activate-btn:hover{{background:rgba(255,209,102,.2)}}
+.album-card.egg-card{{border-color:rgba(255,209,102,.3);background:rgba(255,209,102,.04)}}
+.album-card.egg-card.active{{border-color:rgba(255,209,102,.6);box-shadow:0 0 12px rgba(255,209,102,.2)}}
 .album-card.active{{border:1px solid var(--cyan);box-shadow:0 0 10px rgba(0,229,255,.2)}}
 .use-feedback{{font-family:var(--font-mono);font-size:11px;margin-top:6px;min-height:16px}}
 .use-ok{{color:var(--green)}}.use-err{{color:var(--magenta)}}
@@ -12532,7 +12593,29 @@ def user_profile_page(login: str, request: Request):
                 LEFT JOIN cm_forms f ON f.cm_key=c.cm_key AND f.stage=c.stage
                 WHERE c.twitch_login=%s ORDER BY c.is_active DESC, c.xp_total DESC;
             """, (login,))
-            owned_list = [{"creature_id":r[0],"cm_key":r[1],"lineage_key":r[2],"stage":int(r[3] or 0),"xp_total":int(r[4] or 0),"is_active":bool(r[5]),"name":r[6],"image_url":r[7]} for r in cur.fetchall()]
+            owned_rows = cur.fetchall()
+            # Récupérer les images egg en batch
+            egg_lineages = list({r[2] for r in owned_rows if r[1] == 'egg' and r[2]})
+            egg_images = {}
+            if egg_lineages:
+                placeholders = ','.join(['%s']*len(egg_lineages))
+                cur.execute(
+                    f"SELECT key, COALESCE(icon_url,'') FROM items WHERE key IN ({placeholders});",
+                    [f"egg_{lk}" for lk in egg_lineages]
+                )
+                for ikey, iurl in cur.fetchall():
+                    lk = ikey[4:]  # strip 'egg_'
+                    egg_images[lk] = iurl
+            owned_list = []
+            for r in owned_rows:
+                is_egg = (r[1] == 'egg' or int(r[3] or 0) == 0)
+                img = r[7]
+                if is_egg and not img and r[2]:
+                    img = egg_images.get(r[2], '')
+                nm = r[6]
+                if is_egg and (not nm or nm == 'egg'):
+                    nm = f"Œuf {r[2].capitalize()}" if r[2] else "Œuf"
+                owned_list.append({"creature_id":r[0],"cm_key":r[1],"lineage_key":r[2],"stage":int(r[3] or 0),"xp_total":int(r[4] or 0),"is_active":bool(r[5]),"name":nm,"image_url":img})
             cur.execute("""
                 SELECT c.key, c.name, c.lineage_key, l.name,
                        COALESCE(c.media_url,''),
@@ -12587,6 +12670,32 @@ def user_profile_page(login: str, request: Request):
         album_by_lineage[r[3]].append(entry)
 
     album_sections = [{"lineage_name":ln,"cms":cms_list,"owned_count":sum(1 for c in cms_list if c["owned"])} for ln,cms_list in sorted(album_by_lineage.items())]
+
+    # Ajouter une section spéciale pour les oeufs possédés
+    egg_owned = [o for o in owned_list if o["cm_key"] == "egg" or o["stage"] == 0]
+    if egg_owned:
+        egg_cms = []
+        seen_lk = set()
+        for e in egg_owned:
+            lk = e.get("lineage_key") or ""
+            key = f"egg_{lk}" if lk else "egg"
+            if key in seen_lk: continue
+            seen_lk.add(key)
+            egg_cms.append({
+                "key": key,
+                "name": e["name"],
+                "lineage_key": lk,
+                "lineage_name": "Œufs",
+                "media_url": e["image_url"],
+                "forms": [{"stage": 0, "name": e["name"], "image_url": e["image_url"]}],
+                "owned": True,
+                "is_active": e["is_active"],
+                "max_stage": 0,
+                "creature_id": e["creature_id"],
+            })
+        if egg_cms:
+            album_sections.insert(0, {"lineage_name": "Œufs", "cms": egg_cms, "owned_count": len(egg_cms)})
+
     total_cms   = sum(len(s["cms"]) for s in album_sections)
     owned_total = sum(s["owned_count"] for s in album_sections)
 

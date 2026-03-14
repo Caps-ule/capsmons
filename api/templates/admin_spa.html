@@ -866,6 +866,22 @@
 #page-preview .evo-vwr { font-family:'Share Tech Mono',monospace; font-size:11px; color:#6a8aaa; letter-spacing:.1em; z-index:1; }
 
 
+
+/* ─── ADMIN ŒUFS ────────────────────────────────────────────── */
+.egg-admin-row {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(255,209,102,.04);
+  border: 1px solid rgba(255,209,102,.12);
+  border-radius: 10px; padding: 10px 14px;
+}
+.egg-preview-wrap { width: 56px; height: 56px; flex-shrink: 0; }
+.egg-preview-img { width: 56px; height: 56px; object-fit: contain; border-radius: 8px; border: 1px solid rgba(255,255,255,.1); image-rendering: pixelated; }
+.egg-preview-ph { width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; font-size: 28px; border-radius: 8px; border: 1px solid rgba(255,209,102,.2); background: rgba(255,209,102,.06); }
+.egg-row-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.egg-row-key { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+.egg-url-group { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; }
+.egg-url-input { flex: 1; min-width: 0; }
+
 /* ─── ONGLETS SETTINGS (stabs) ───────────────────────────────── */
 .stabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; }
 .stab {
@@ -2232,6 +2248,7 @@
     <button class="stab"        data-stab="items"     onclick="switchStab(this)">◈ Items</button>
     <button class="stab"        data-stab="events"    onclick="switchStab(this)">✨ Événements</button>
     <button class="stab"        data-stab="boss"      onclick="switchStab(this)">⚔️ Boss Raid</button>
+    <button class="stab"        data-stab="eggs"      onclick="switchStab(this)">🥚 Œufs</button>
     <button class="stab"        data-stab="xp"        onclick="switchStab(this)">⚡ Seuils XP</button>
   </div>
 
@@ -2445,6 +2462,15 @@
 
   <!-- Contenu : Boss Raid -->
   <div class="stab-panel" id="stab-boss">
+
+  <!-- URL OBS -->
+  <div class="card" style="padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0">
+    <span class="muted mono" style="white-space:nowrap">// URL OBS :</span>
+    <code id="boss-overlay-url" style="flex:1;min-width:0;overflow:auto">chargement…</code>
+    <button class="btn btn-dim btn-sm" onclick="copyBossOverlayUrl()">📋 Copier</button>
+    <span class="muted" style="font-size:11px;white-space:nowrap">1920 × 300 px · fond transparent</span>
+  </div>
+
 <!-- Boss actif -->
   <div class="card accent-c" id="boss-active-card">
     <div class="card-title">⚔️ BOSS EN COURS</div>
@@ -2536,6 +2562,25 @@
     </div>
   </div>
   </div>
+
+  <!-- Contenu : Œufs -->
+  <div class="stab-panel" id="stab-eggs">
+
+    <div class="card">
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+        <span>🥚 IMAGES DES ŒUFS PAR LIGNÉE</span>
+        <div class="status-line" id="eggs-status"></div>
+      </div>
+      <div class="muted mono" style="font-size:11px;margin-bottom:16px;line-height:1.7">
+        Chaque type d'œuf (<code>egg_biolab</code>, <code>egg_securite</code>…) correspond à un item dans la table items.<br>
+        L'image définie ici s'affiche dans l'album viewer, le !show et les drops.
+      </div>
+      <div id="eggs-grid" style="display:flex;flex-direction:column;gap:10px">
+        <div class="muted mono">Chargement…</div>
+      </div>
+    </div>
+
+  </div><!-- /stab-eggs -->
 
   <!-- Contenu : Seuils XP -->
   <div class="stab-panel" id="stab-xp">
@@ -2638,6 +2683,7 @@ function switchStab(btn) {
   if (panel === 'boss')   loadBossPage();
   if (panel === 'xp')     loadXpThresholds();
   if (panel === 'autodrop') loadAutoDrop();
+  if (panel === 'eggs')     loadEggsAdmin();
 }
 
 function loadSettingsPage() {
@@ -2940,6 +2986,93 @@ window.addEventListener('DOMContentLoaded', () => {
   initTheme();
 });
 
+
+
+/* ─── BOSS OVERLAY URL ───────────────────────────────────────── */
+
+function copyBossOverlayUrl() {
+  const el = document.getElementById('boss-overlay-url');
+  const url = el.textContent.trim();
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = el.nextElementSibling;
+    btn.textContent = '✓ Copié';
+    setTimeout(() => btn.textContent = '📋 Copier', 2000);
+  });
+}
+
+// Remplir l'URL boss au chargement de la page
+(function() {
+  const el = document.getElementById('boss-overlay-url');
+  if (el) el.textContent = window.location.origin + '/overlay/boss';
+})();
+
+
+/* ─── GESTION ŒUFS ───────────────────────────────────────────── */
+
+async function loadEggsAdmin() {
+  const grid = document.getElementById('eggs-grid');
+  grid.innerHTML = '<div class="muted mono">Chargement…</div>';
+  try {
+    const r = await fetch('/admin/eggs/json');
+    if (!r.ok) { grid.innerHTML = '<div class="muted mono">Erreur chargement</div>'; return; }
+    const eggs = await r.json();
+    if (!eggs.length) {
+      grid.innerHTML = '<div class="muted mono">Aucun item egg_* trouvé. Créez-les dans l\'onglet Items.</div>';
+      return;
+    }
+    grid.innerHTML = eggs.map(e => `
+      <div class="egg-admin-row" id="egg-row-${e.key}">
+        <div class="egg-preview-wrap">
+          ${e.icon_url ? `<img src="${e.icon_url}" class="egg-preview-img" alt="${e.name}" onerror="this.style.display='none'">` : '<div class="egg-preview-ph">🥚</div>'}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="egg-row-name">${e.name}</div>
+          <div class="egg-row-key">${e.key}</div>
+        </div>
+        <div class="egg-url-group">
+          <input type="text" class="egg-url-input" id="egg-url-${e.key}"
+            value="${e.icon_url || ''}" placeholder="https://… URL de l'image">
+          <button class="btn btn-cyan btn-sm" onclick="saveEggImage('${e.key}')">💾 Enregistrer</button>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    grid.innerHTML = '<div class="muted mono">Erreur réseau</div>';
+  }
+}
+
+async function saveEggImage(key) {
+  const input = document.getElementById('egg-url-' + key);
+  const url = input.value.trim();
+  const st = document.getElementById('eggs-status');
+  st.textContent = '…';
+  st.style.color = '';
+  try {
+    const r = await fetch('/admin/eggs/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ key, icon_url: url }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      st.textContent = `✓ ${key} mis à jour`;
+      st.style.color = 'var(--green)';
+      // Mettre à jour la préview inline
+      const row = document.getElementById('egg-row-' + key);
+      const wrap = row.querySelector('.egg-preview-wrap');
+      if (url) {
+        wrap.innerHTML = `<img src="${url}" class="egg-preview-img" onerror="this.style.display='none'">`;
+      } else {
+        wrap.innerHTML = '<div class="egg-preview-ph">🥚</div>';
+      }
+    } else {
+      st.textContent = '⛔ ' + (j.detail || JSON.stringify(j));
+      st.style.color = 'var(--red, #ff4455)';
+    }
+  } catch(e) {
+    st.textContent = '⛔ Erreur réseau';
+    st.style.color = 'var(--red, #ff4455)';
+  }
+}
 
 /* ─── BOSS RAID ─────────────────────────────────────────────── */
 
