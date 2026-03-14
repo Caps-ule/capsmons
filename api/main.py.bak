@@ -9762,27 +9762,18 @@ def overlay_boss_state(since: int = 0):
     """
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Marquer automatiquement les boss expirés avant de calculer l'état overlay.
-            cur.execute("""
-                UPDATE boss_raids
-                SET status='expired'
-                WHERE status='active' AND ends_at <= now();
-            """)
-
-            # Pour l'overlay boss, on ne garde visibles que les boss encore actifs
-            # ou vaincus (le temps de jouer l'animation de mort côté front).
-            # Un boss expiré mais encore vivant doit disparaître immédiatement.
+            # Boss le plus récent (actif, defeated ou expired depuis <30s)
             cur.execute("""
                 SELECT id, cm_key, cm_name, cm_image_url, hp_max, hp_current,
                        reward_type, reward_value, reward_item_key, status, ends_at,
                        EXTRACT(EPOCH FROM ends_at)::bigint
                 FROM boss_raids
                 WHERE status IN ('active','defeated')
+                   OR (status='expired' AND ends_at > now() - interval '30 seconds')
                 ORDER BY started_at DESC LIMIT 1;
             """)
             boss_row = cur.fetchone()
             if not boss_row:
-                conn.commit()
                 return {"show": False}
 
             (bid, cm_key, cm_name, cm_img, hp_max, hp_current,
@@ -10520,13 +10511,8 @@ async function tick() {
     const j = await r.json();
 
     if (!j.show) {
-      // Plus de boss -> on masque immédiatement et on nettoie l'état visuel.
-      if (deathTimeout) clearTimeout(deathTimeout);
-      deathScreen.classList.remove('active');
-      bossDefeated = false;
-      lastBossId = null;
-      lastEventTs = 0;
-      hidePanel();
+      // Plus de boss -> on cache si on était visible (et pas en animation mort)
+      if (!bossDefeated && showing) setTimeout(() => hidePanel(), 500);
       processing = false;
       return;
     }
