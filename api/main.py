@@ -2830,7 +2830,7 @@ def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(
         with conn.cursor() as cur:
             # Récupérer infos du CM
             cur.execute("""
-                SELECT COALESCE(f.name, c.cm_key), COALESCE(f.image_url, c.media_url, '')
+                SELECT COALESCE(f.name, c.key), COALESCE(f.image_url, c.media_url, '')
                 FROM cms c
                 LEFT JOIN cm_forms f ON f.cm_key = c.key AND f.stage = 1
                 WHERE c.key = %s;
