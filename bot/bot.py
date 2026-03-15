@@ -1108,65 +1108,115 @@ class Bot(commands.Bot):
         parts = ctx.message.content.strip().split()
 
         if len(parts) < 2:
-            await ctx.send(f"@{ctx.author.name} usage: !use <item_key>")
+            await ctx.send(f"@{ctx.author.name} usage: !use <item_key> [count]")
             return
 
         item_key = parts[1].strip().lower()
 
-        try:
-            r = requests.post(
-                "http://api:8000/internal/item/use",
-                headers={"X-API-Key": API_KEY},
-                json={"twitch_login": login, "item_key": item_key},
-                timeout=2,
-            )
-
-            if r.status_code != 200:
-                msg = "⛔ Objet indisponible."
-                try:
-                    d = r.json()
-                    detail = str(d.get("detail", "")).lower()
-                    if "unknown item" in detail:
-                        msg = "⛔ Objet inconnu."
-                    elif "no item" in detail:
-                        msg = "⛔ Tu n’en as pas dans ton inventaire."
-                except Exception:
-                    pass
-
-                await ctx.send(f"@{ctx.author.name} {msg}")
+        # Optionnel : nombre d'utilisations
+        count = 1
+        if len(parts) >= 3:
+            try:
+                count = int(parts[2])
+            except ValueError:
+                await ctx.send(f"@{ctx.author.name} ⛔ Le nombre doit être un entier. Ex: !use grande_capsule 3")
+                return
+            if count < 1:
+                await ctx.send(f"@{ctx.author.name} ⛔ Le nombre doit être au moins 1.")
+                return
+            if count > 20:
+                await ctx.send(f"@{ctx.author.name} ⛔ Maximum 20 items à la fois.")
                 return
 
-            data = r.json()
+        total_xp = 0
+        total_happiness = 0
+        last_data = None
+        used_count = 0
 
-        except Exception as e:
-            print("[BOT] use error:", e, flush=True)
-            await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
+        for i in range(count):
+            try:
+                r = requests.post(
+                    "http://api:8000/internal/item/use",
+                    headers={"X-API-Key": API_KEY},
+                    json={"twitch_login": login, "item_key": item_key},
+                    timeout=2,
+                )
+
+                if r.status_code != 200:
+                    err_msg = "⛔ Objet indisponible."
+                    try:
+                        d = r.json()
+                        detail = str(d.get("detail", "")).lower()
+                        if "unknown item" in detail:
+                            err_msg = "⛔ Objet inconnu."
+                        elif "no item" in detail:
+                            if i == 0:
+                                err_msg = "⛔ Tu n'en as pas dans ton inventaire."
+                            else:
+                                err_msg = None  # on résumera ce qui a été fait
+                    except Exception:
+                        pass
+
+                    if i == 0:
+                        await ctx.send(f"@{ctx.author.name} {err_msg}")
+                        return
+                    else:
+                        # Stock épuisé en cours de route — on sort et on résume
+                        break
+
+                data = r.json()
+                last_data = data
+                used_count += 1
+                effect = data.get("effect")
+
+                if effect == "xp":
+                    total_xp += int(data.get("xp_gain", data.get("amount", 0)))
+                elif effect == "happiness":
+                    total_happiness += int(data.get("happiness_gain", data.get("amount", 0)))
+                elif effect == "egg":
+                    # Les œufs créent un CM : on traite un par un
+                    lk = data.get("lineage_key", "?")
+                    activated = bool(data.get("activated", False))
+                    if activated:
+                        await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Il devient ton compagnon actif ✅")
+                    else:
+                        await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Ajouté à ta collection ✅")
+                    return
+
+            except Exception as e:
+                print("[BOT] use error:", e, flush=True)
+                await ctx.send(f"@{ctx.author.name} ⚠️ Erreur objet.")
+                return
+
+        if last_data is None:
             return
 
-        effect = data.get("effect")
+        effect = last_data.get("effect")
+        stock_warning = f" (stock insuffisant : {used_count}/{count})" if used_count < count else ""
 
         if effect == "xp":
-            gained = int(data.get("xp_gain", data.get("amount", 0)))
-            await ctx.send(f"@{ctx.author.name} 💊 Capsule consommée ! +{gained} XP ⚡")
+            final_xp = int(last_data.get("xp_total", 0))
+            stage_before = int(last_data.get("stage_before", 0))
+            stage_after = int(last_data.get("stage_after", 0))
+            suffix = f" ×{used_count}" if used_count > 1 else ""
+            evo_msg = f" ✨ Évolution ! Stage {stage_after} !" if stage_after > stage_before else ""
+            await ctx.send(
+                f"@{ctx.author.name} 💊 Capsule{suffix} consommée !"
+                f" +{total_xp} XP ⚡ (total : {final_xp} XP){evo_msg}{stock_warning}"
+            )
             return
 
         if effect == "happiness":
-            gain_h = int(data.get("happiness_gain", data.get("amount", 0)))
-            after_h = int(data.get("happiness_after", 0))
-            name = data.get("item_name", item_key)
-            await ctx.send(f"@{ctx.author.name} 🥰 {name} utilisé ! +{gain_h} bonheur (❤️ {after_h}%).")
+            after_h = int(last_data.get("happiness_after", 0))
+            name = last_data.get("item_name", item_key)
+            suffix = f" ×{used_count}" if used_count > 1 else ""
+            await ctx.send(
+                f"@{ctx.author.name} 🥰 {name}{suffix} utilisé !"
+                f" +{total_happiness} bonheur (❤️ {after_h}%){stock_warning}."
+            )
             return
 
-        if effect == "egg":
-            lk = data.get("lineage_key", "?")
-            activated = bool(data.get("activated", False))
-            if activated:
-                await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Il devient ton compagnon actif ✅")
-            else:
-                await ctx.send(f"@{ctx.author.name} 🥚 Œuf récupéré ({lk}) ! Ajouté à ta collection ✅")
-            return
-
-        await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé.")
+        await ctx.send(f"@{ctx.author.name} ✔️ Objet utilisé{stock_warning}.")
 
     # ------------------------------------------------------------------------
     # Annonces générales (channel points, drops, etc.)
@@ -1927,7 +1977,16 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} {late}")
             return
 
+        joined = bool(data.get("joined", False))
         title = data.get("title", "un objet")
+
+        if not joined:
+            ok = await rp_get("drop.claim.ok") or "📡 Déjà enregistré."
+            await ctx.send(f"@{ctx.author.name} {ok} ({title})")
+            return
+
+        ok = await rp_get("drop.claim.ok") or "📡 Participation validée."
+        await ctx.send(f"@{ctx.author.name} {ok} ({title})")
 
         result = data.get("result")
         if result and result.get("won"):
@@ -1984,6 +2043,8 @@ class Bot(commands.Bot):
 
         if defeated:
             await ctx.send(f"@{ctx.author.name} ⚔️ COUP FINAL ! -{damage} PV (Stage {stage_lbl}) — le boss est vaincu ! 💥")
+        else:
+            await ctx.send(f"@{ctx.author.name} ⚔️ -{damage} PV (Stage {stage_lbl}) — Boss : {hp_after} PV restants.")
 
     # ------------------------------------------------------------------------
     # Commande: !commands
@@ -1992,7 +2053,7 @@ class Bot(commands.Bot):
     async def commands_cmd(self, ctx: commands.Context):
         msg = (
             f"@{ctx.author.name} 📜 Commandes viewers: "
-            "!creature | !inv | !use <item_key> | "
+            "!creature | !inv | !use <item_key> [count] | "
             "!companion (liste) / !companion <numéro> | "
             "!trade @pseudo <n°> | !answer <n°> | !tyes / !tno | "
             "!show | !grab | !hit (boss)"
