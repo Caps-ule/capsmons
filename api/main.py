@@ -7443,6 +7443,35 @@ def overlay_drop_page():
     100% { opacity: 0; transform: var(--tx, translate(0,-80px)) scale(0.2); }
   }
 
+  /* ── AVATARS PARTICIPANTS ── */
+  #avatars-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 10px 12px 0 12px;
+    /* chevauche le bas de la card */
+    margin-top: -10px;
+    position: relative;
+    z-index: 1;
+  }
+  .av {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 2px solid #060e1c;
+    object-fit: cover;
+    margin-left: -8px;
+    background: #0a1a2a;
+    flex-shrink: 0;
+    transition: transform .2s, box-shadow .2s;
+    animation: avPop .25s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  .av:first-child { margin-left: 0; }
+  .av:hover { transform: translateY(-4px) scale(1.15); z-index: 5; }
+  @keyframes avPop {
+    from { opacity: 0; transform: scale(0.4) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
   /* ── ENTRÉE / SORTIE ── */
   @keyframes slideIn {
     from { transform: translateY(-50%) translateX(380px); }
@@ -7496,6 +7525,7 @@ def overlay_drop_page():
       Tape <code>!grab</code> dans le chat
     </div>
   </div>
+  <div id="avatars-strip"></div>
 </div>
 
 <audio id="dropSfx" preload="auto" src="/static/drop.mp3"></audio>
@@ -7516,11 +7546,13 @@ const cmdHint    = document.getElementById('cmd-hint');
 const dropSfx    = document.getElementById('dropSfx');
 const canvas     = document.getElementById('particles');
 const ctx        = canvas.getContext('2d');
+const avatarsEl  = document.getElementById('avatars-strip');
 
 let showing = false;
 let lastDropId = null;
 let totalDuration = null;
 let spawnedInitial = false;
+let _knownLogins = [];
 
 // ── Canvas particules ──────────────────────────────────────
 function resizeCanvas() {
@@ -7640,13 +7672,35 @@ function updateHits(count, target) {
   hitsCount.textContent = count + (target ? '/' + target : '');
 }
 
+// ── Avatars participants ─────────────────────────────────
+function updateAvatars(logins) {
+  if (!logins || !logins.length) {
+    if (avatarsEl.children.length) avatarsEl.innerHTML = '';
+    _knownLogins = [];
+    return;
+  }
+  // ajouter seulement les nouveaux (préserver les existants pour garder l'animation)
+  const existing = new Set(_knownLogins);
+  logins.forEach(login => {
+    if (existing.has(login)) return;
+    _knownLogins.push(login);
+    const img = document.createElement('img');
+    img.className = 'av';
+    img.title = login;
+    img.alt = login;
+    img.src = `https://avatar.glitch.me/${login}.png`;
+    img.onerror = () => { img.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(login)}&size=34&background=0a1a2a&color=00e5ff&bold=true&rounded=true`; };
+    avatarsEl.appendChild(img);
+  });
+}
+
 // ── Tick ──────────────────────────────────────────────────
 async function tick() {
   try {
     const r = await fetch('/overlay/drop_state', { cache: 'no-store' });
     const j = await r.json();
 
-    if (!j.show) { hidePanel(); return; }
+    if (!j.show) { hidePanel(); updateAvatars([]); return; }
 
     const d = j.drop;
 
@@ -7679,6 +7733,7 @@ async function tick() {
 
     // Mode
     setMode(d.mode || 'coop');
+    updateAvatars(d.logins || []);
 
     // Sous-texte & hits
     if (d.mode === 'coop') {
@@ -9709,9 +9764,13 @@ def overlay_drop_state():
                 resolve_drop(int(drop_id))
                 return {"show": False}
 
-            # participants count
-            cur.execute("SELECT COUNT(*) FROM drop_participants WHERE drop_id=%s;", (drop_id,))
-            count = int(cur.fetchone()[0])
+            # participants logins + count (max 30 pour overlay)
+            cur.execute(
+                "SELECT twitch_login FROM drop_participants WHERE drop_id=%s ORDER BY joined_at ASC LIMIT 30;",
+                (drop_id,)
+            )
+            logins = [r[0] for r in cur.fetchall()]
+            count = len(logins)
 
             # remaining seconds
             cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
@@ -9726,6 +9785,7 @@ def overlay_drop_state():
             "media": media_url,
             "remaining": remaining,
             "count": count,
+            "logins": logins,
             "target": int(target_hits) if target_hits is not None else None,
             "xp_bonus": int(xp_bonus),
             "ticket_key": ticket_key,

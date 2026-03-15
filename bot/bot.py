@@ -1927,16 +1927,7 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} {late}")
             return
 
-        joined = bool(data.get("joined", False))
         title = data.get("title", "un objet")
-
-        if not joined:
-            ok = await rp_get("drop.claim.ok") or "📡 Déjà enregistré."
-            await ctx.send(f"@{ctx.author.name} {ok} ({title})")
-            return
-
-        ok = await rp_get("drop.claim.ok") or "📡 Participation validée."
-        await ctx.send(f"@{ctx.author.name} {ok} ({title})")
 
         result = data.get("result")
         if result and result.get("won"):
@@ -1993,8 +1984,6 @@ class Bot(commands.Bot):
 
         if defeated:
             await ctx.send(f"@{ctx.author.name} ⚔️ COUP FINAL ! -{damage} PV (Stage {stage_lbl}) — le boss est vaincu ! 💥")
-        else:
-            await ctx.send(f"@{ctx.author.name} ⚔️ -{damage} PV (Stage {stage_lbl}) — Boss : {hp_after} PV restants.")
 
     # ------------------------------------------------------------------------
     # Commande: !commands
