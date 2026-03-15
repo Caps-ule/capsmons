@@ -9503,7 +9503,6 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             )
 
             # XP item (piloté par items.xp_gain)
-            # XP item (piloté par items.xp_gain)
             evo_payload = None
             if xp_gain > 0:
                 cur.execute(
@@ -9523,7 +9522,6 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 new_xp_total = int(cur.fetchone()[0])
 
                 stage_after = int(stage_from_xp(new_xp_total))
-                evo_payload = None
                 if stage_after != stage_before:
                     cur.execute(
                         """
@@ -9560,10 +9558,37 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 new_happiness = active_h
                 conn.commit()
 
-        # Déclencher l'overlay hors transaction
-        if evo_payload:
-            trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
+            # Bonheur (piloté par items.happiness_gain)
+            elif happiness_gain > 0:
+                _ensure_quests(cur, login)
+                _quest_progress(cur, login, 'candy', 1)
+                new_happiness = max(0, min(100, active_h + happiness_gain))
 
+                cur.execute(
+                    """
+                    UPDATE creatures_v2
+                    SET happiness=%s, updated_at=now()
+                    WHERE twitch_login=%s AND cm_key=%s;
+                    """,
+                    (new_happiness, login, active_cm_key),
+                )
+
+                new_xp_total = active_xp
+                stage_after = stage_before
+                conn.commit()
+
+            else:
+                # item sans effet défini : consommé sans effet
+                new_happiness = active_h
+                new_xp_total = active_xp
+                stage_after = stage_before
+                conn.commit()
+
+    # Déclencher l'overlay hors transaction
+    if evo_payload:
+        trigger_evolution(evo_payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
+
+    if xp_gain > 0:
         return {
             "ok": True,
             "twitch_login": login,
@@ -9578,27 +9603,6 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             "happiness_after": int(new_happiness or 0),
         }
 
-            # Bonheur (piloté par items.happiness_gain)
-            # (si happiness_gain==0 et xp_gain==0, ça “consomme” mais n’a pas d’effet → à toi de voir si tu veux bloquer)
-        if happiness_gain > 0:
-           _ensure_quests(cur, login)
-           _quest_progress(cur, login, 'candy', 1)
-        new_happiness = max(0, min(100, active_h + happiness_gain))
-
-        cur.execute(
-           """
-           UPDATE creatures_v2
-           SET happiness=%s, updated_at=now()
-           WHERE twitch_login=%s AND cm_key=%s;
-           """,
-           (new_happiness, login, active_cm_key),
-        )
-
-        new_xp_total = active_xp
-        stage_after = stage_before
-
-        conn.commit()
-
     return {
         "ok": True,
         "twitch_login": login,
@@ -9609,7 +9613,6 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
         "happiness_gain": int(happiness_gain),
         "happiness_after": int(new_happiness or 0),
     }
-
 # =============================================================================
 # Overlay: Commande !show (CM actif uniquement)
 # =============================================================================
