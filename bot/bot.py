@@ -910,17 +910,18 @@ class Bot(commands.Bot):
             await ctx.send("⛔ drop error")
             return
 
-        # Message RP
-        rp_key = f"drop.spawn.{mode}"
-        line = await rp_get(rp_key) or '✨ Drop lancé : {title} — tape "!grab" pour participer'
-        msg = rp_format(
-            line,
-            title=title,
-            xp=payload["xp_bonus"],
-            ticket_key=payload["ticket_key"],
-            ticket_qty=payload["ticket_qty"],
-        )
-        await ctx.send(msg)
+        # Message RP (seulement pour first/random — en COOP, main.py insère dans bot_announcements)
+        if mode != "coop":
+            rp_key = f"drop.spawn.{mode}"
+            line = await rp_get(rp_key) or '✨ Drop lancé : {title} — tape "!grab" pour participer'
+            msg = rp_format(
+                line,
+                title=title,
+                xp=payload["xp_bonus"],
+                ticket_key=payload["ticket_key"],
+                ticket_qty=payload["ticket_qty"],
+            )
+            await ctx.send(msg)
 
     # ------------------------------------------------------------------------
     # Message handler (XP chat + commands)
@@ -1387,21 +1388,23 @@ class Bot(commands.Bot):
                 print("[BOT] auto drop spawn error:", e, flush=True)
                 continue
 
-            try:
-                chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                if chan:
-                    rp_key = f"drop.spawn.{payload['mode']}"
-                    line = await rp_get(rp_key) or "✨ Drop automatique : {title}. Attrape le avec !grab."
-                    msg = rp_format(
-                        line,
-                        title=payload["title"],
-                        xp=payload["xp_bonus"],
-                        ticket_key=payload["ticket_key"],
-                        ticket_qty=payload["ticket_qty"],
-                    )
-                    await chan.send(msg)
-            except Exception:
-                pass
+            # Message RP (seulement pour first/random — en COOP, main.py insère dans bot_announcements)
+            if payload["mode"] != "coop":
+                try:
+                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
+                    if chan:
+                        rp_key = f"drop.spawn.{payload['mode']}"
+                        line = await rp_get(rp_key) or "✨ Drop automatique : {title}. Attrape le avec !grab."
+                        msg = rp_format(
+                            line,
+                            title=payload["title"],
+                            xp=payload["xp_bonus"],
+                            ticket_key=payload["ticket_key"],
+                            ticket_qty=payload["ticket_qty"],
+                        )
+                        await chan.send(msg)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------------
     # Presence loop (XP de présence)
@@ -1679,10 +1682,6 @@ class Bot(commands.Bot):
                 if not payload["media_url"]:
                     return
                 rr = requests.post(API_DROP_SPAWN_URL, headers={"X-API-Key": API_KEY}, json=payload, timeout=3)
-                if rr.ok:
-                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                    if chan:
-                        await chan.send(f"🌠 Pluie d'Étoiles Filantes — {picked.get('item_name','un objet')} à saisir ! !grab")
             except Exception as e:
                 print("[BOT] pluie_etoiles drop error:", e, flush=True)
 
@@ -1731,15 +1730,6 @@ class Bot(commands.Bot):
 
             try:
                 rr = requests.post(API_DROP_SPAWN_URL, headers={"X-API-Key": API_KEY}, json=payload, timeout=3)
-                if rr.ok:
-                    chan = self.get_channel(os.environ["TWITCH_CHANNEL"])
-                    if chan:
-                        descs = {
-                            "douce_chaleur": "tout le monde reçoit un œuf !",
-                            "douce_brise":   "XP doublé pour tous !",
-                            "pluie_sucree":  "+3 à 10 bonheur pour tous !",
-                        }
-                        await chan.send(f"{names.get(event_key,'Event')} — Drop COOP spécial ! {descs.get(event_key,'')} Tapez !grab !")
             except Exception as e:
                 print(f"[BOT] {event_key} drop error:", e, flush=True)
 
@@ -1972,13 +1962,18 @@ class Bot(commands.Bot):
         except Exception:
             return
 
+        mode = data.get("mode", "")
+        joined = bool(data.get("joined", False))
+        title = data.get("title", "un objet")
+
+        # En COOP : silence total à la participation, seul le résultat final compte
+        if mode == "coop":
+            return
+
         if not data.get("active"):
             late = await rp_get("drop.claim.late") or "⌛ Trop tard…"
             await ctx.send(f"@{ctx.author.name} {late}")
             return
-
-        joined = bool(data.get("joined", False))
-        title = data.get("title", "un objet")
 
         if not joined:
             ok = await rp_get("drop.claim.ok") or "📡 Déjà enregistré."
