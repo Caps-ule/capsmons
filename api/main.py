@@ -4573,14 +4573,22 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
             # récupérer la forme précédente
             prev_name = payload.get("prev_name", "")
             prev_image = payload.get("prev_image_url", "")
-            if not prev_name and prev_stage >= 1:
-                cur.execute("""
-                    SELECT name, image_url FROM cm_forms
-                    WHERE cm_key=%s AND stage=%s LIMIT 1;
-                """, (cm_key, prev_stage))
-                prow = cur.fetchone()
-                if prow:
-                    prev_name, prev_image = prow
+            if not prev_name:
+                if prev_stage == 0:
+                    # Éclosion : l'état d'avant est l'œuf → utiliser cms.media_url
+                    cur.execute("SELECT name, media_url FROM cms WHERE key=%s LIMIT 1;", (cm_key,))
+                    prow = cur.fetchone()
+                    if prow:
+                        prev_name  = prow[0] or "Œuf"
+                        prev_image = prow[1] or ""
+                else:
+                    cur.execute("""
+                        SELECT name, image_url FROM cm_forms
+                        WHERE cm_key=%s AND stage=%s LIMIT 1;
+                    """, (cm_key, prev_stage))
+                    prow = cur.fetchone()
+                    if prow:
+                        prev_name, prev_image = prow
 
             cur.execute("""
                 INSERT INTO overlay_evolutions
@@ -8512,8 +8520,8 @@ body {
   <div class="chamber" id="chamber">
     <canvas id="spark-canvas"></canvas>
     <div id="flash-overlay"></div>
-    <img id="cm-img-prev" class="cm-img" src="" alt="" style="position:absolute">
-    <img id="cm-img-next" class="cm-img" src="" alt="" style="position:absolute;opacity:0">
+    <img id="cm-img-prev" class="cm-img" src="" alt="" style="position:absolute;inset:6%;width:88%;height:88%">
+    <img id="cm-img-next" class="cm-img" src="" alt="" style="position:absolute;inset:6%;width:88%;height:88%;opacity:0">
     <img id="glitch-g1" class="glitch-layer g1" src="" alt="" style="display:none">
     <img id="glitch-g2" class="glitch-layer g2" src="" alt="" style="display:none">
   </div>
@@ -8670,9 +8678,9 @@ function doFlash() {
 
 // ── Phase 1 : afficher l'ancien CM ──────────────────────────
 function phaseOld(data) {
-  // Mettre les images
+  // Mettre les images — imgNext chargé plus tard pour éviter le flash en taille native
   imgPrev.src = data.prev.image || '';
-  imgNext.src = data.form.image || '';
+  imgNext.src = '';
   imgPrev.style.opacity = '1';
   imgNext.style.opacity = '0';
   g1.style.display = 'none'; g2.style.display = 'none';
@@ -8734,7 +8742,8 @@ function phaseNew(data) {
   imgPrev.classList.remove('glitching');
   g1.style.display = 'none'; g2.style.display = 'none';
 
-  // Swap images
+  // Charger et swapper l'image du nouveau CM
+  imgNext.src = data.form.image || '';
   imgPrev.style.opacity = '0';
   imgNext.style.opacity = '1';
   imgNext.style.filter = 'drop-shadow(0 12px 24px rgba(0,0,0,.6))';
