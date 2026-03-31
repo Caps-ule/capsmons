@@ -64,10 +64,7 @@ app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://extension-files.twitch.tv",
-        "https://capsmons.devlooping.fr",
-    ],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "x-extension-jwt"],
