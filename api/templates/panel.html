@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capsmons Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060810;
+  --panel:#0a0d18;
+  --panel2:#0d1120;
+  --border:#1a2540;
+  --border2:#243050;
+  --cyan:#00e5ff;
+  --magenta:#ff2d78;
+  --green:#00ff9d;
+  --yellow:#ffe033;
+  --text:#c8d4f0;
+  --muted:#5a6a90;
+  --muted2:#3a4a6a;
+}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Rajdhani',sans-serif;
+  font-size:15px;
+  min-height:100vh;
+  padding:0;
+  overflow-x:hidden;
+}
+
+/* scanlines */
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.06) 2px,rgba(0,0,0,.06) 3px);
+  pointer-events:none;z-index:9999;
+}
+
+/* ─── HEADER ─── */
+#header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 20px;
+  border-bottom:1px solid var(--border);
+  background:var(--panel);
+  position:sticky;top:0;z-index:100;
+}
+.logo{
+  font-family:'Orbitron',monospace;font-size:18px;font-weight:900;
+  color:var(--cyan);letter-spacing:.08em;
+  text-shadow:0 0 20px rgba(0,229,255,.4);
+}
+.logo span{color:var(--muted);font-size:11px;font-family:'Share Tech Mono',monospace;
+  letter-spacing:.15em;display:block;margin-top:1px;}
+
+#login-btn{
+  font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;
+  color:var(--cyan);background:transparent;
+  border:1px solid rgba(0,229,255,.3);
+  padding:6px 14px;border-radius:6px;cursor:pointer;
+  letter-spacing:.05em;text-transform:uppercase;
+  transition:all .15s;
+}
+#login-btn:hover{background:rgba(0,229,255,.08);border-color:var(--cyan);}
+
+#user-badge{
+  display:flex;align-items:center;gap:10px;
+}
+#user-avatar{
+  width:32px;height:32px;border-radius:50%;border:2px solid var(--border2);
+  object-fit:cover;background:var(--border);
+}
+#user-name{font-weight:700;font-size:14px;letter-spacing:.04em;}
+#logout-btn{
+  font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;
+  font-family:'Share Tech Mono',monospace;padding:0 0 0 4px;
+  transition:color .15s;
+}
+#logout-btn:hover{color:var(--magenta);}
+
+/* ─── MAIN ─── */
+#main{max-width:960px;margin:0 auto;padding:20px 16px 40px;}
+
+/* ─── ACTIVE CM CARD ─── */
+#active-card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:16px 20px;
+  display:flex;align-items:center;gap:16px;
+  margin-bottom:20px;
+  position:relative;overflow:hidden;
+}
+#active-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  opacity:.5;
+}
+#active-img-wrap{
+  width:72px;height:72px;
+  border-radius:10px;border:1px solid var(--border2);
+  background:var(--panel2);
+  overflow:hidden;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+}
+#active-img{width:64px;height:64px;object-fit:contain;image-rendering:pixelated;}
+#active-img-placeholder{
+  width:40px;height:40px;
+  border-radius:50%;background:var(--border);
+  display:flex;align-items:center;justify-content:center;
+}
+#active-info{flex:1;min-width:0;}
+#active-label{
+  font-size:10px;letter-spacing:.2em;color:var(--muted);
+  font-family:'Share Tech Mono',monospace;text-transform:uppercase;
+  margin-bottom:3px;
+}
+#active-name{
+  font-family:'Orbitron',monospace;font-size:17px;font-weight:700;
+  color:var(--cyan);letter-spacing:.04em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#active-stage{
+  font-size:12px;color:var(--muted);margin-top:2px;
+  font-family:'Share Tech Mono',monospace;
+}
+
+.stat-row{display:flex;gap:20px;margin-top:10px;flex-wrap:wrap;}
+.stat-item{display:flex;flex-direction:column;gap:2px;}
+.stat-label{font-size:10px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;}
+.stat-val{font-size:16px;font-weight:700;color:var(--text);}
+
+/* XP bar */
+.xp-bar-wrap{margin-top:12px;}
+.xp-bar-labels{display:flex;justify-content:space-between;font-size:11px;
+  color:var(--muted);font-family:'Share Tech Mono',monospace;margin-bottom:4px;}
+.xp-bar-track{
+  height:6px;background:var(--border);border-radius:3px;overflow:hidden;
+}
+.xp-bar-fill{
+  height:100%;background:var(--cyan);border-radius:3px;
+  transition:width .6s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 0 8px rgba(0,229,255,.5);
+}
+
+/* ─── SECTION TITLES ─── */
+.section-title{
+  font-family:'Orbitron',monospace;font-size:11px;font-weight:700;
+  color:var(--muted);letter-spacing:.2em;text-transform:uppercase;
+  margin-bottom:12px;
+  display:flex;align-items:center;gap:8px;
+}
+.section-title::after{
+  content:'';flex:1;height:1px;background:var(--border);
+}
+
+/* ─── COMPANIONS GRID ─── */
+#companions-section{margin-bottom:20px;}
+#companions-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
+  gap:10px;
+}
+.cm-card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 10px;
+  cursor:pointer;
+  text-align:center;
+  transition:border-color .15s,background .15s,transform .1s;
+  position:relative;
+  user-select:none;
+}
+.cm-card:hover{border-color:var(--border2);background:var(--panel2);}
+.cm-card.active{
+  border-color:var(--cyan);
+  background:rgba(0,229,255,.05);
+}
+.cm-card.active::after{
+  content:'ACTIF';
+  position:absolute;top:6px;right:6px;
+  font-size:8px;letter-spacing:.12em;
+  font-family:'Share Tech Mono',monospace;
+  color:var(--cyan);
+  background:rgba(0,229,255,.15);
+  padding:2px 5px;border-radius:3px;
+}
+.cm-card.selecting{opacity:.6;pointer-events:none;}
+.cm-card-img-wrap{
+  width:56px;height:56px;margin:0 auto 8px;
+  border-radius:8px;background:var(--panel2);
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+.cm-card-img{width:48px;height:48px;object-fit:contain;image-rendering:pixelated;}
+.cm-card-name{
+  font-size:12px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cm-card-sub{font-size:10px;color:var(--muted);margin-top:2px;
+  font-family:'Share Tech Mono',monospace;}
+
+/* ─── INVENTORY ─── */
+#inventory-section{margin-bottom:20px;}
+#inventory-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:10px;
+}
+.item-card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 12px;
+  display:flex;align-items:center;gap:10px;
+  cursor:pointer;
+  transition:border-color .15s,background .15s;
+  position:relative;
+  user-select:none;
+}
+.item-card:hover{border-color:var(--border2);background:var(--panel2);}
+.item-card.using{opacity:.6;pointer-events:none;}
+.item-icon-wrap{
+  width:44px;height:44px;flex-shrink:0;
+  border-radius:8px;background:var(--panel2);
+  border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+.item-icon{width:36px;height:36px;object-fit:contain;image-rendering:pixelated;}
+.item-icon-fallback{font-size:20px;line-height:1;}
+.item-info{flex:1;min-width:0;}
+.item-name{font-size:13px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.item-qty{
+  font-size:11px;font-family:'Share Tech Mono',monospace;
+  color:var(--muted);margin-top:2px;
+}
+.use-btn{
+  font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  font-family:'Rajdhani',sans-serif;
+  color:var(--green);background:rgba(0,255,157,.08);
+  border:1px solid rgba(0,255,157,.25);
+  padding:3px 8px;border-radius:4px;
+  cursor:pointer;transition:all .15s;white-space:nowrap;
+  margin-left:4px;flex-shrink:0;
+}
+.use-btn:hover{background:rgba(0,255,157,.15);border-color:var(--green);}
+
+/* ─── TOAST ─── */
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--panel);border:1px solid var(--border2);
+  padding:10px 20px;border-radius:8px;
+  font-size:13px;font-weight:700;letter-spacing:.04em;
+  pointer-events:none;opacity:0;
+  transition:opacity .2s,transform .2s;
+  z-index:9998;white-space:nowrap;
+  box-shadow:0 0 30px rgba(0,0,0,.5);
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.ok{color:var(--green);border-color:rgba(0,255,157,.3);}
+#toast.err{color:var(--magenta);border-color:rgba(255,45,120,.3);}
+
+/* ─── EMPTY STATES ─── */
+.empty{
+  padding:24px;text-align:center;color:var(--muted);
+  font-size:13px;font-family:'Share Tech Mono',monospace;
+  letter-spacing:.1em;
+}
+
+/* ─── LOGIN WALL ─── */
+#login-wall{
+  min-height:60vh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;text-align:center;
+}
+.login-wall-title{
+  font-family:'Orbitron',monospace;font-size:22px;font-weight:900;
+  color:var(--cyan);letter-spacing:.05em;
+  text-shadow:0 0 30px rgba(0,229,255,.3);
+}
+.login-wall-sub{font-size:14px;color:var(--muted);max-width:300px;line-height:1.6;}
+.login-wall-btn{
+  font-family:'Orbitron',monospace;font-size:13px;font-weight:700;
+  color:#000;background:var(--cyan);
+  border:none;padding:12px 28px;border-radius:8px;cursor:pointer;
+  letter-spacing:.08em;text-transform:uppercase;
+  transition:all .15s;box-shadow:0 0 20px rgba(0,229,255,.3);
+  margin-top:8px;
+}
+.login-wall-btn:hover{box-shadow:0 0 30px rgba(0,229,255,.5);transform:translateY(-1px);}
+
+/* ─── LOADING ─── */
+#loading{
+  min-height:40vh;display:flex;align-items:center;justify-content:center;
+  font-family:'Share Tech Mono',monospace;font-size:12px;
+  color:var(--muted);letter-spacing:.2em;
+}
+.dot-pulse::after{
+  content:'...';
+  animation:dots 1.2s steps(4,end) infinite;
+}
+@keyframes dots{
+  0%,20%{content:'.'}
+  40%{content:'..'}
+  60%,100%{content:'...'}
+}
+
+/* ─── RESPONSIVE ─── */
+@media(max-width:600px){
+  #active-card{flex-direction:column;text-align:center;}
+  #active-info{width:100%;}
+  .stat-row{justify-content:center;}
+  #companions-grid{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));}
+  #inventory-grid{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="logo">
+    CapsMöns
+    <span>Viewer Panel</span>
+  </div>
+  <div id="header-auth">
+    <button id="login-btn" onclick="doLogin()">Connexion Twitch</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="loading"><span class="dot-pulse">Chargement</span></div>
+  <div id="login-wall" style="display:none">
+    <div class="login-wall-title">Connecte-toi</div>
+    <div class="login-wall-sub">Identifie-toi avec ton compte Twitch pour gérer ton CM et utiliser tes objets.</div>
+    <button class="login-wall-btn" onclick="doLogin()">Connexion avec Twitch</button>
+  </div>
+  <div id="content" style="display:none">
+    <!-- Active CM -->
+    <div id="active-card">
+      <div id="active-img-wrap">
+        <div id="active-img-placeholder"></div>
+      </div>
+      <div id="active-info">
+        <div id="active-label">CM actif</div>
+        <div id="active-name">—</div>
+        <div id="active-stage"></div>
+        <div class="stat-row">
+          <div class="stat-item">
+            <span class="stat-label">XP Total</span>
+            <span class="stat-val" id="stat-xp">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Bonheur</span>
+            <span class="stat-val" id="stat-happiness">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Stage</span>
+            <span class="stat-val" id="stat-stage">—</span>
+          </div>
+        </div>
+        <div class="xp-bar-wrap">
+          <div class="xp-bar-labels">
+            <span id="xp-current">0 XP</span>
+            <span id="xp-next">—</span>
+          </div>
+          <div class="xp-bar-track">
+            <div class="xp-bar-fill" id="xp-fill" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Companions -->
+    <div id="companions-section">
+      <div class="section-title">Mes CMs</div>
+      <div id="companions-grid"></div>
+    </div>
+
+    <!-- Inventory -->
+    <div id="inventory-section">
+      <div class="section-title">Inventaire</div>
+      <div id="inventory-grid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const BASE = '';
+const PAGE_ORIGIN = window.location.origin;
+
+// ─── XP thresholds (mirror du backend)
+const XP_THRESHOLDS = [0, 500, 1500, 3500, 7000, 12000, 20000, 30000, 45000, 65000, 90000];
+function xpForStage(stage){ return XP_THRESHOLDS[Math.min(stage, XP_THRESHOLDS.length-1)] || 0; }
+
+let gUser = null;
+let gData = null;
+
+// ─── Toast
+let _toastTimer = null;
+function toast(msg, type='ok'){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  if(_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(()=>{ el.className = ''; }, 3000);
+}
+
+// ─── Auth
+function doLogin(){
+  window.location.href = BASE + '/auth/twitch?next=/panel';
+}
+function doLogout(){
+  window.location.href = BASE + '/auth/logout';
+}
+
+// ─── Check session via /u/{login} (needs login from cookie first)
+// We detect login from cookie by hitting a lightweight endpoint
+async function detectSession(){
+  try {
+    const r = await fetch(BASE + '/u/whoami', {credentials:'include'});
+    if(r.ok){
+      const j = await r.json();
+      return j.login || null;
+    }
+  } catch(e){}
+  // Fallback: try parsing URL hash or query param (after OAuth redirect)
+  return null;
+}
+
+// ─── Load data
+async function loadData(login){
+  const url = BASE + '/u/' + encodeURIComponent(login) + '/data.json';
+  const r = await fetch(url, {credentials:'include'});
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}
+
+// Fallback: parse the user page HTML to extract JSON (since /u/{login} returns HTML)
+// Actually we use the page's embedded JSON data or the JSON endpoints
+async function loadUserData(login){
+  // Use inventory + companions endpoints — both available via internal API from session
+  // We also use the profile page which embeds all data as JSON in a <script> tag
+  // Instead, we call the dedicated JSON endpoint if it exists,
+  // otherwise we scrape the HTML (fragile). Let's rely on the existing endpoints.
+  
+  // companions
+  const cR = await fetch(BASE + '/u/' + login + '/companions.json', {credentials:'include'});
+  // inventory  
+  const iR = await fetch(BASE + '/u/' + login + '/inventory.json', {credentials:'include'});
+
+  // If these 404, fall back to the profile page JSON embed
+  if(!cR.ok || !iR.ok){
+    return await loadFromProfilePage(login);
+  }
+  const companions = await cR.json();
+  const inventory  = await iR.json();
+  return { companions, inventory };
+}
+
+async function loadFromProfilePage(login){
+  // The user page renders all data — we fetch it and parse the embedded data
+  const r = await fetch(BASE + '/u/' + login, {credentials:'include'});
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  const html = await r.text();
+
+  // Parse window.__PAGE_DATA__ or similar if it exists
+  const m = html.match(/window\.__PAGE_DATA__\s*=\s*(\{[\s\S]*?\});<\/script>/);
+  if(m){
+    try{ return JSON.parse(m[1]); } catch(e){}
+  }
+
+  // Fallback: extract owned_list and inventory from the HTML JSON blocks
+  // The page embeds these in the JS; let's try to extract them
+  const owned = html.match(/var\s+owned_list\s*=\s*(\[[\s\S]*?\]);/);
+  const inv   = html.match(/var\s+inventory\s*=\s*(\[[\s\S]*?\]);/);
+
+  const companions = owned ? JSON.parse(owned[1]) : [];
+  const inventory  = inv   ? JSON.parse(inv[1])   : [];
+  return { companions, inventory };
+}
+
+// ─── Render
+function renderActiveCM(cm){
+  const wrap = document.getElementById('active-img-wrap');
+  const ph   = document.getElementById('active-img-placeholder');
+
+  if(cm && cm.image_url){
+    ph.style.display = 'none';
+    let img = document.getElementById('active-img');
+    if(!img){
+      img = document.createElement('img');
+      img.id = 'active-img'; img.className = 'active-img';
+      wrap.appendChild(img);
+    }
+    img.src = cm.image_url;
+    img.alt = cm.name || cm.cm_key;
+    img.style.cssText = 'width:64px;height:64px;object-fit:contain;image-rendering:pixelated;';
+  } else {
+    ph.style.display = '';
+    const existing = document.getElementById('active-img');
+    if(existing) existing.remove();
+  }
+
+  const name = cm ? (cm.name || cm.cm_key || '?') : '—';
+  const stage = cm ? cm.stage : null;
+  const xp    = cm ? (cm.xp_total || 0) : 0;
+  const hap   = cm ? (cm.happiness || 0) : 0;
+
+  document.getElementById('active-name').textContent = name;
+  document.getElementById('active-stage').textContent = stage !== null ? 'Stage ' + stage : '';
+  document.getElementById('stat-xp').textContent = xp.toLocaleString('fr-FR') + ' XP';
+  document.getElementById('stat-happiness').textContent = hap + ' / 100';
+  document.getElementById('stat-stage').textContent = stage !== null ? stage : '—';
+
+  // XP bar
+  if(cm && stage !== null){
+    const cur  = xpForStage(stage);
+    const next = xpForStage(stage + 1);
+    const pct  = next > cur ? Math.min(100, Math.round((xp - cur) / (next - cur) * 100)) : 100;
+    document.getElementById('xp-current').textContent = xp.toLocaleString('fr-FR') + ' XP';
+    document.getElementById('xp-next').textContent = next > cur ? 'Next stage: ' + next.toLocaleString('fr-FR') + ' XP' : 'MAX';
+    document.getElementById('xp-fill').style.width = pct + '%';
+  }
+}
+
+function renderCompanions(list){
+  const grid = document.getElementById('companions-grid');
+  if(!list || !list.length){
+    grid.innerHTML = '<div class="empty">Aucun CM pour l\'instant</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  list.forEach(cm => {
+    const isEgg  = (cm.cm_key === 'egg' || cm.stage === 0);
+    const name   = cm.name || cm.cm_key || '?';
+    const sub    = isEgg ? 'Œuf' : 'Stage ' + cm.stage;
+    const imgUrl = cm.image_url || '';
+
+    const card = document.createElement('div');
+    card.className = 'cm-card' + (cm.is_active ? ' active' : '');
+    card.dataset.id = cm.creature_id;
+    card.innerHTML = `
+      <div class="cm-card-img-wrap">
+        ${imgUrl ? `<img class="cm-card-img" src="${escHtml(imgUrl)}" alt="${escHtml(name)}" loading="lazy">` : '<div style="width:40px;height:40px;background:var(--border);border-radius:6px;"></div>'}
+      </div>
+      <div class="cm-card-name">${escHtml(name)}</div>
+      <div class="cm-card-sub">${escHtml(sub)}</div>
+    `;
+    if(!cm.is_active){
+      card.addEventListener('click', () => handleSetActive(cm.creature_id, card, list));
+    }
+    grid.appendChild(card);
+  });
+}
+
+function renderInventory(inv){
+  const grid = document.getElementById('inventory-grid');
+  if(!inv || !inv.length){
+    grid.innerHTML = '<div class="empty">Inventaire vide</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  inv.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'item-card';
+    card.dataset.key = item.item_key;
+
+    const icon = item.icon_url
+      ? `<img class="item-icon" src="${escHtml(item.icon_url)}" alt="" loading="lazy">`
+      : `<span class="item-icon-fallback">📦</span>`;
+
+    card.innerHTML = `
+      <div class="item-icon-wrap">${icon}</div>
+      <div class="item-info">
+        <div class="item-name">${escHtml(item.name || item.item_key)}</div>
+        <div class="item-qty">x${item.qty}</div>
+      </div>
+      <button class="use-btn">Utiliser</button>
+    `;
+    card.querySelector('.use-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleUseItem(item.item_key, card);
+    });
+    grid.appendChild(card);
+  });
+}
+
+// ─── Actions
+async function handleSetActive(creatureId, card, allCards){
+  if(!creatureId) return;
+  // Optimistic UI
+  document.querySelectorAll('.cm-card').forEach(c => c.classList.remove('active'));
+  card.classList.add('active','selecting');
+
+  try {
+    const r = await fetch(BASE + '/u/set_active_cm', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({creature_id: parseInt(creatureId)})
+    });
+    const j = await r.json();
+    if(j.ok){
+      toast('CM actif changé !', 'ok');
+      card.classList.remove('selecting');
+      // Refresh data
+      await refreshData();
+    } else {
+      toast(j.error || 'Erreur', 'err');
+      card.classList.remove('selecting','active');
+    }
+  } catch(e){
+    toast('Erreur réseau', 'err');
+    card.classList.remove('selecting','active');
+  }
+}
+
+async function handleUseItem(itemKey, card){
+  card.classList.add('using');
+  try {
+    const r = await fetch(BASE + '/u/use_item', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({item_key: itemKey})
+    });
+    const j = await r.json();
+    if(j.ok){
+      const res = j.result || {};
+      let msg = 'Objet utilisé !';
+      if(res.happiness_gain > 0) msg = '+' + res.happiness_gain + ' bonheur !';
+      if(res.xp_gain > 0) msg += '  +' + res.xp_gain + ' XP';
+      toast(msg, 'ok');
+      await refreshData();
+    } else {
+      toast(j.error || 'Erreur', 'err');
+      card.classList.remove('using');
+    }
+  } catch(e){
+    toast('Erreur réseau', 'err');
+    card.classList.remove('using');
+  }
+}
+
+// ─── Refresh
+async function refreshData(){
+  if(!gUser) return;
+  try {
+    const data = await loadFromProfilePage(gUser);
+    gData = data;
+    applyData(data);
+  } catch(e){ console.warn('Refresh failed', e); }
+}
+
+function applyData(data){
+  // Find active CM
+  const companions = data.owned_list || data.companions || [];
+  const active = companions.find(c => c.is_active) || null;
+  renderActiveCM(active);
+  renderCompanions(companions);
+
+  const inventory = data.inventory || [];
+  renderInventory(inventory);
+}
+
+// ─── Init
+async function init(){
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('login-wall').style.display = 'none';
+
+  // Check if we have a session cookie by trying a credentialed fetch to /u/{login}
+  // We detect the logged-in username via a small trick: fetch the profile redirect
+  let login = null;
+
+  // Try to get login from the server — try a session-detection endpoint first
+  try {
+    const r = await fetch(BASE + '/u/me', {credentials:'include', redirect:'manual'});
+    // If the server redirects to /u/{login}, the login is in the location header
+    // Since we're in a cross-origin iframe on Twitch, cookies may not be available
+    // Let's just try to load /u/me and see what we get
+    if(r.ok || r.status === 200){
+      const j = await r.json().catch(()=>null);
+      if(j && j.login) login = j.login;
+    }
+  } catch(e){}
+
+  // Fallback: try loading from URL param (e.g. /panel?u=capsloque)
+  if(!login){
+    const params = new URLSearchParams(window.location.search);
+    const uParam = params.get('u') || params.get('login');
+    if(uParam) login = uParam.toLowerCase();
+  }
+
+  // No login found
+  if(!login){
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('login-wall').style.display = 'flex';
+    document.getElementById('login-btn').style.display = 'block';
+    document.getElementById('user-badge') && (document.getElementById('header-auth').innerHTML = '<button id="login-btn" onclick="doLogin()">Connexion Twitch</button>');
+    return;
+  }
+
+  gUser = login;
+
+  // Show user in header
+  document.getElementById('header-auth').innerHTML = `
+    <div id="user-badge">
+      <img id="user-avatar" src="https://avatar.glitch.me/${encodeURIComponent(login)}" alt="" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(login)}&background=1a2540&color=00e5ff&size=32'">
+      <span id="user-name">@${escHtml(login)}</span>
+      <button id="logout-btn" onclick="doLogout()">déconnexion</button>
+    </div>
+  `;
+
+  try {
+    const data = await loadFromProfilePage(login);
+    gData = data;
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+    applyData(data);
+  } catch(e){
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('login-wall').style.display = 'flex';
+  }
+}
+
+function escHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Handle OAuth redirect: if we come back from /auth/twitch/callback,
+// the cookie is set and we're redirected to /u/{login}
+// For the panel, we need to detect login from the cookie.
+// Since JS can't read httpOnly cookies, we rely on the /u/me endpoint.
+// If that doesn't exist yet, we can add it or parse the URL.
+
+// Check URL: if current path is /panel and there's a ?u= param, use it
+// Otherwise, try /u/me
+
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

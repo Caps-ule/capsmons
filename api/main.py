@@ -40,7 +40,8 @@ import urllib.parse
 import requests
 import psycopg
 import httpx
-
+import jwt as pyjwt
+import base64
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -59,6 +60,19 @@ TWITCH_CP_SCOPES = "channel:read:redemptions channel:manage:redemptions"
 # App / Static / Templates
 # =============================================================================
 app = FastAPI()
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://extension-files.twitch.tv",
+        "https://capsmons.devlooping.fr",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "x-extension-jwt"],
+)
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Créer le dossier uploads si inexistant
@@ -820,6 +834,10 @@ async def user_auth_callback(
             cur.execute(
                 "INSERT INTO users (twitch_login) VALUES (%s) ON CONFLICT DO NOTHING;",
                 (login,)
+            )
+            cur.execute(
+                "UPDATE users SET twitch_user_id = %s WHERE twitch_login = %s;",
+                (user_id, login)
             )
         conn.commit()
 
@@ -12868,3 +12886,186 @@ def user_quests_json(login: str):
             """, (login, week))
             quests = [{"key":r[0],"label":r[1],"type":r[2],"target":r[3],"progress":r[4],"completed":r[5],"rewarded":r[6],"reward_xp":r[7],"reward_item_key":r[8],"reward_item_qty":r[9]} for r in cur.fetchall()]
     return {"quests": quests, "rewards_given": rewards, "week_start": str(week)}
+
+
+# =============================================================================
+# TWITCH EXTENSION PANEL
+# =============================================================================
+
+def _verify_ext_jwt(token: str) -> dict:
+    ext_secret_b64 = os.environ.get("TWITCH_EXT_SECRET", "")
+    if not ext_secret_b64:
+        raise HTTPException(status_code=500, detail="TWITCH_EXT_SECRET not configured")
+    try:
+        secret = base64.b64decode(ext_secret_b64)
+        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_exp": True})
+        return payload
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="JWT expired")
+    except pyjwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"JWT invalid: {e}")
+
+
+def _get_twitch_login_from_user_id(twitch_user_id: str) -> str | None:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT twitch_login FROM users WHERE twitch_user_id = %s LIMIT 1;",
+                (twitch_user_id,)
+            )
+            row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _require_viewer_login(payload: dict) -> str:
+    opaque  = payload.get("opaque_user_id", "")
+    user_id = payload.get("user_id", "")
+    if opaque.startswith("A") or not user_id:
+        raise HTTPException(status_code=401, detail="Viewer identity not shared")
+    login = _get_twitch_login_from_user_id(str(user_id))
+    if not login:
+        raise HTTPException(status_code=404, detail="Viewer not found")
+    return login
+
+
+@app.post("/panel/bootstrap")
+async def panel_bootstrap(
+    request: Request,
+    x_extension_jwt: str | None = Header(default=None),
+):
+    if not x_extension_jwt:
+        raise HTTPException(status_code=401, detail="Missing x-extension-jwt header")
+    payload = _verify_ext_jwt(x_extension_jwt)
+    login   = _require_viewer_login(payload)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT c.id, c.cm_key, c.lineage_key, c.stage, c.xp_total,
+                       c.happiness, c.is_active,
+                       COALESCE(f.name, c.cm_key) AS cm_name,
+                       COALESCE(f.image_url, '') AS image_url
+                FROM creatures_v2 c
+                LEFT JOIN cm_forms f ON f.cm_key = c.cm_key AND f.stage = c.stage
+                WHERE c.twitch_login = %s
+                ORDER BY c.is_active DESC, c.stage DESC, c.xp_total DESC;
+            """, (login,))
+            rows = cur.fetchall()
+
+            egg_lineages = list({r[2] for r in rows if r[1] == 'egg' and r[2]})
+            egg_images = {}
+            if egg_lineages:
+                ph = ','.join(['%s'] * len(egg_lineages))
+                cur.execute(
+                    f"SELECT key, COALESCE(icon_url,'') FROM items WHERE key IN ({ph});",
+                    [f"egg_{lk}" for lk in egg_lineages]
+                )
+                for ikey, iurl in cur.fetchall():
+                    egg_images[ikey[4:]] = iurl
+
+            companions = []
+            for r in rows:
+                is_egg = (r[1] == 'egg' or int(r[3] or 0) == 0)
+                img    = r[8]
+                if is_egg and not img and r[2]:
+                    img = egg_images.get(r[2], '')
+                nm = r[7]
+                if is_egg and (not nm or nm == 'egg'):
+                    nm = f"Œuf {r[2].capitalize()}" if r[2] else "Œuf"
+                companions.append({
+                    "creature_id": int(r[0]),
+                    "cm_key":      r[1],
+                    "lineage_key": r[2],
+                    "stage":       int(r[3] or 0),
+                    "xp_total":    int(r[4] or 0),
+                    "happiness":   int(r[5] or 0),
+                    "is_active":   bool(r[6]),
+                    "name":        nm,
+                    "image_url":   img,
+                })
+
+            cur.execute("""
+                SELECT inv.item_key, inv.qty,
+                       COALESCE(it.name, inv.item_key),
+                       COALESCE(it.icon_url, '')
+                FROM inventory inv
+                LEFT JOIN items it ON it.key = inv.item_key
+                WHERE inv.twitch_login = %s AND inv.qty > 0
+                ORDER BY inv.item_key ASC;
+            """, (login,))
+            inventory = [
+                {"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3]}
+                for r in cur.fetchall()
+            ]
+
+    return {"ok": True, "twitch_login": login, "companions": companions, "inventory": inventory}
+
+
+@app.post("/panel/set-active")
+async def panel_set_active(
+    request: Request,
+    x_extension_jwt: str | None = Header(default=None),
+):
+    if not x_extension_jwt:
+        raise HTTPException(status_code=401, detail="Missing x-extension-jwt header")
+    payload     = _verify_ext_jwt(x_extension_jwt)
+    login       = _require_viewer_login(payload)
+    body        = await request.json()
+    creature_id = body.get("creature_id")
+    if not creature_id:
+        raise HTTPException(status_code=400, detail="creature_id manquant")
+    try:
+        creature_id = int(creature_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="creature_id invalide")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM creatures_v2 WHERE id = %s AND twitch_login = %s;",
+                (creature_id, login)
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Companion introuvable")
+            cur.execute(
+                "UPDATE creatures_v2 SET is_active = FALSE, updated_at = now() WHERE twitch_login = %s AND is_active = TRUE;",
+                (login,)
+            )
+            cur.execute(
+                "UPDATE creatures_v2 SET is_active = TRUE, updated_at = now() WHERE id = %s;",
+                (creature_id,)
+            )
+        conn.commit()
+
+    return {"ok": True}
+
+
+@app.post("/panel/use-item")
+async def panel_use_item(
+    request: Request,
+    x_extension_jwt: str | None = Header(default=None),
+):
+    if not x_extension_jwt:
+        raise HTTPException(status_code=401, detail="Missing x-extension-jwt header")
+    payload  = _verify_ext_jwt(x_extension_jwt)
+    login    = _require_viewer_login(payload)
+    body     = await request.json()
+    item_key = str(body.get("item_key", "")).strip().lower()
+    if not item_key:
+        raise HTTPException(status_code=400, detail="item_key manquant")
+    try:
+        result = internal_use_item(
+            payload={"twitch_login": login, "item_key": item_key},
+            x_api_key=os.environ.get("INTERNAL_API_KEY"),
+        )
+        return {"ok": True, "result": result}
+    except HTTPException as e:
+        return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status_code)
+
+
+@app.post("/panel/refresh")
+async def panel_refresh(
+    request: Request,
+    x_extension_jwt: str | None = Header(default=None),
+):
+    return await panel_bootstrap(request, x_extension_jwt)
