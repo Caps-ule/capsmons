@@ -17,11 +17,15 @@ import requests
 
 TWITCH_CLIENT_ID     = os.environ["TWITCH_CLIENT_ID"]
 TWITCH_CLIENT_SECRET = os.environ["TWITCH_CLIENT_SECRET"]
-DATABASE_URL         = os.environ.get("DATABASE_URL", "")
-
 # ─── DB connection (même logique que main.py) ─────────────────────────────────
 def get_db():
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+        host="db",
+        port=5432,
+    )
 
 # ─── Twitch app token ─────────────────────────────────────────────────────────
 def get_app_token():
