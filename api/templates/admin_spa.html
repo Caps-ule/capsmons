@@ -2547,6 +2547,7 @@
                 <th onclick="sortItemsTable(0)" style="cursor:pointer">KEY ↕</th>
                 <th onclick="sortItemsTable(1)" style="cursor:pointer">NOM ↕</th>
                 <th onclick="sortItemsTable(2)" style="cursor:pointer;text-align:center">DROP WEIGHT ↕</th>
+                <th style="text-align:center">CHANCE GRAB</th>
                 <th style="text-align:center">XP</th>
                 <th style="text-align:center">BONHEUR</th>
                 <th style="text-align:center">ICÔNE</th>
@@ -2555,7 +2556,7 @@
               </tr>
             </thead>
             <tbody id="items-tbody">
-              <tr><td colspan="8" class="muted mono" style="text-align:center;padding:16px">Chargement…</td></tr>
+              <tr><td colspan="9" class="muted mono" style="text-align:center;padding:16px">Chargement…</td></tr>
             </tbody>
           </table>
         </div>
@@ -2572,7 +2573,8 @@
             <span class="badge badge-warn">egg_*</span> key commençant par <code>egg_</code> + lignée (ex: <code>egg_biolab</code>) → crée un œuf de cette lignée<br>
             <span class="badge badge-info">xp_gain &gt; 0</span> ajoute de l'XP au CM actif via <code>!use</code><br>
             <span class="badge badge-ok">happiness_gain &gt; 0</span> ajoute du bonheur au CM actif via <code>!use</code><br>
-            <span class="badge badge-dim">drop_weight</span> poids dans le tirage aléatoire des drops (0 = jamais tiré)
+            <span class="badge badge-dim">drop_weight</span> poids dans le tirage aléatoire des drops (0 = jamais tiré)<br>
+            <span class="badge badge-cyan" style="background:rgba(0,229,255,.15);border:1px solid rgba(0,229,255,.3);color:var(--cyan)">grab_chance</span> % de chance que chaque participant reçoive l'item en mode <strong>Random</strong>
           </div>
         </div>
 
@@ -2598,6 +2600,18 @@
           <div class="form-group">
             <div class="form-label">HAPPINESS GAIN <span class="muted">(0 = pas d'effet)</span></div>
             <input type="number" id="item-happiness-gain" min="0" max="100" value="0" style="width:120px">
+          </div>
+        </div>
+        <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
+          <div class="form-group">
+            <div class="form-label">CHANCE DE GRAB <span class="muted">(mode Random — 0% à 100%)</span></div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <input type="range" id="item-grab-chance" min="0" max="100" step="5" value="50"
+                     oninput="document.getElementById('item-grab-pct').textContent=this.value+'%'"
+                     style="width:160px;accent-color:var(--cyan)">
+              <span id="item-grab-pct" class="mono" style="min-width:38px;color:var(--cyan)">50%</span>
+            </div>
+            <div class="muted mono" style="font-size:10px;margin-top:4px">Chaque participant a cette chance de recevoir l'item</div>
           </div>
         </div>
         <div class="form-row" style="gap:16px;flex-wrap:wrap;margin-top:4px">
@@ -2945,7 +2959,7 @@ async function loadItems() {
 function renderItemsTable(list) {
   const tbody = document.getElementById('items-tbody');
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted mono" style="text-align:center;padding:20px">Aucun item enregistré</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted mono" style="text-align:center;padding:20px">Aucun item enregistré</td></tr>';
     return;
   }
 
@@ -2980,6 +2994,14 @@ function renderItemsTable(list) {
         <td class="mono" style="font-size:12px">${_esc(it.key)}</td>
         <td>${_esc(it.name)}</td>
         <td style="text-align:center">${wBadge}</td>
+        <td style="text-align:center">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:center">
+            <div style="width:50px;height:6px;border-radius:3px;background:var(--bg3);overflow:hidden">
+              <div style="width:${Math.round((it.grab_chance??0.5)*100)}%;height:100%;background:${(it.grab_chance??0.5)>=0.7?'var(--green)':(it.grab_chance??0.5)>=0.4?'var(--amber)':'var(--magenta)'};border-radius:3px"></div>
+            </div>
+            <span class="mono" style="font-size:11px">${Math.round((it.grab_chance??0.5)*100)}%</span>
+          </div>
+        </td>
         <td style="text-align:center" class="mono">${it.xp_gain || 0}</td>
         <td style="text-align:center" class="mono">${it.happiness_gain || 0}</td>
         <td style="text-align:center">${icon}</td>
@@ -3081,6 +3103,8 @@ function openItemForm() {
   document.getElementById('item-drop-weight').value         = '100';
   document.getElementById('item-xp-gain').value             = '0';
   document.getElementById('item-happiness-gain').value      = '0';
+  document.getElementById('item-grab-chance').value         = '50';
+  document.getElementById('item-grab-pct').textContent      = '50%';
   document.getElementById('item-icon-url').value            = '';
   previewItemIcon('');
   document.getElementById('item-save-status').textContent   = '';
@@ -3097,6 +3121,9 @@ function editItem(it) {
   document.getElementById('item-drop-weight').value         = it.drop_weight;
   document.getElementById('item-xp-gain').value             = it.xp_gain;
   document.getElementById('item-happiness-gain').value      = it.happiness_gain;
+  const grabPct = Math.round((it.grab_chance ?? 0.5) * 100);
+  document.getElementById('item-grab-chance').value         = grabPct;
+  document.getElementById('item-grab-pct').textContent      = grabPct + '%';
   document.getElementById('item-icon-url').value            = it.icon_url || '';
   previewItemIcon(it.icon_url || '');
   document.getElementById('item-save-status').textContent   = '';
@@ -3138,6 +3165,7 @@ async function saveItem() {
     drop_weight:    parseInt(document.getElementById('item-drop-weight').value)    || 0,
     xp_gain:        parseInt(document.getElementById('item-xp-gain').value)        || 0,
     happiness_gain: parseInt(document.getElementById('item-happiness-gain').value) || 0,
+    grab_chance:    (parseInt(document.getElementById('item-grab-chance').value) || 50) / 100,
   };
   try {
     const r = await fetch('/admin/items/save', {
