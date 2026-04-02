@@ -9545,8 +9545,8 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 )
                 new_xp_total = int(cur.fetchone()[0])
 
-                stage_after = int(stage_from_xp(new_xp_total))
-                if stage_after != stage_before:
+                stage_after = max(stage_before, int(stage_from_xp(new_xp_total)))
+                if stage_after > stage_before:
                     cur.execute(
                         """
                         UPDATE creatures_v2
