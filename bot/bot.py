@@ -1797,18 +1797,9 @@ class Bot(commands.Bot):
                     )
                 
                 elif mode == "random":
-                    rp_key = "drop.win.random"
-                    line = await rp_get(rp_key) or "🎲 {viewer} remporte {title} !"
-                    viewer = f"@{winners[0]}" if winners else ""
-                    msg = rp_format(
-                        line,
-                        viewer=viewer,
-                        title=title,
-                        xp=xp_bonus,
-                        ticket_key=ticket_key,
-                        ticket_qty=ticket_qty,
-                        count=len(winners),
-                    )
+                    # L'annonce est déjà faite par _announce() dans resolve_drop (multi-gagnants).
+                    # On ne renvoie pas de second message ici pour éviter le doublon.
+                    msg = None
                 
                 else:
                     # COOP : l'annonce des gagnants et de l'XP est déjà faite par _announce()
