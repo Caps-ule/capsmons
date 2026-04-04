@@ -1538,7 +1538,7 @@ def _spawn_drop_db(cur, mode: str, title: str, media_url: str, duration: int, ti
     if not title or not media_url:
         raise HTTPException(status_code=400, detail="Missing title/media_url")
 
-    duration = max(5, min(duration, 30))
+    duration = max(5, min(duration, 300))
     ticket_qty = max(1, min(ticket_qty, 50))
     xp_bonus = max(0, min(xp_bonus, 1000))
 
@@ -2665,7 +2665,7 @@ def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     keys = [
         "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
-        "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
+        "auto_drop_duration_seconds",
         "auto_drop_pick_kind", "auto_drop_mode",
         "coop_drop_duration_seconds", "coop_drop_interval_seconds",
         "coop_xp_t1", "coop_xp_t2", "coop_xp_t3", "coop_xp_t4",
@@ -2683,8 +2683,7 @@ def admin_settings_save(payload: dict, credentials: HTTPBasicCredentials = Depen
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
         "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
-        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
-        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_seconds":     lambda v: str(max(5,    min(300,  int(v)))),
         "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
         "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
         "coop_drop_duration_seconds":     lambda v: str(max(10,   min(300,  int(v)))),
@@ -3432,8 +3431,7 @@ def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
         "auto_drop_enabled",
         "auto_drop_min_seconds",
         "auto_drop_max_seconds",
-        "auto_drop_duration_min_seconds",
-        "auto_drop_duration_max_seconds",
+        "auto_drop_duration_seconds",
         "auto_drop_pick_kind",
         "auto_drop_mode",
         "auto_drop_ticket_qty",
@@ -3456,8 +3454,7 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes","on") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
         "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
-        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
-        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_seconds":     lambda v: str(max(5,    min(300,  int(v)))),
         "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
         "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
         "auto_drop_ticket_qty":           lambda v: str(max(1,    min(50,   int(v)))),
@@ -3471,8 +3468,7 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
                     "enabled": "auto_drop_enabled",
                     "min_seconds": "auto_drop_min_seconds",
                     "max_seconds": "auto_drop_max_seconds",
-                    "duration_min": "auto_drop_duration_min_seconds",
-                    "duration_max": "auto_drop_duration_max_seconds",
+                    "duration_seconds": "auto_drop_duration_seconds",
                     "pick_kind": "auto_drop_pick_kind",
                     "mode": "auto_drop_mode",
                     "ticket_qty": "auto_drop_ticket_qty",
@@ -3498,8 +3494,7 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
         "auto_drop_pick_kind",
         "auto_drop_mode",
         "auto_drop_ticket_qty",
-        "auto_drop_duration_min_seconds",
-        "auto_drop_duration_max_seconds",
+        "auto_drop_duration_seconds",
         "auto_drop_fallback_media_url",
     ]
 
@@ -3518,11 +3513,7 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
     qty = int(cfg.get("auto_drop_ticket_qty") or 1)
     qty = max(1, min(qty, 50))
 
-    dmin = int(cfg.get("auto_drop_duration_min_seconds") or 10)
-    dmax = int(cfg.get("auto_drop_duration_max_seconds") or 20)
-    dmin = max(5, dmin)
-    dmax = max(dmin, dmax)
-    duration = random.randint(dmin, dmax)
+    duration = max(5, min(300, int(cfg.get("auto_drop_duration_seconds") or 30)))
 
     fallback = (cfg.get("auto_drop_fallback_media_url") or "").strip()
 
@@ -4218,7 +4209,7 @@ def auto_drop_get_config(x_api_key: str | None = Header(default=None)):
                 "mode": (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower(),
                 "min_seconds": as_int(kv_get(cur, "auto_drop_min_seconds", "900"), 900),
                 "max_seconds": as_int(kv_get(cur, "auto_drop_max_seconds", "1500"), 1500),
-                "duration_seconds": as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40),
+                "duration_seconds": as_int(kv_get(cur, "auto_drop_duration_seconds", "30"), 30),
                 "xp_bonus": as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0),
                 "ticket_qty": as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1),
                 "force_live": as_bool(kv_get(cur, "auto_drop_force_live", "false")),
@@ -4247,7 +4238,11 @@ def auto_drop_trigger_once(payload: dict | None = None, x_api_key: str | None = 
             # 2) lire config
             kind = override_kind or (kv_get(cur, "auto_drop_kind", "any") or "any").strip().lower()
             mode = override_mode or (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower()
-            duration = override_duration if override_duration is not None else as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40)
+
+            if override_duration is not None:
+                duration = int(override_duration)
+            else:
+                duration = as_int(kv_get(cur, "auto_drop_duration_seconds", "30"), 30)
 
             xp_bonus = as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0)
             ticket_qty = as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1)
@@ -4257,7 +4252,7 @@ def auto_drop_trigger_once(payload: dict | None = None, x_api_key: str | None = 
             if mode not in ("random", "first", "coop"):
                 mode = "random"
 
-            duration = max(5, min(60, int(duration)))
+            duration = max(5, min(300, int(duration)))
             xp_bonus = max(0, min(1000, int(xp_bonus)))
             ticket_qty = max(1, min(50, int(ticket_qty)))
 
@@ -7602,7 +7597,8 @@ const avatarsEl  = document.getElementById('avatars-strip');
 
 let showing = false;
 let lastDropId = null;
-let totalDuration = null;
+let totalDuration = null;   // durée initiale du drop courant
+let _dropDurations = {};    // cache par drop_id pour survivre aux rechargements
 let spawnedInitial = false;
 let _knownLogins = [];
 
@@ -7756,10 +7752,10 @@ async function tick() {
 
     const d = j.drop;
 
-    // Nouveau drop
+    // Nouveau drop détecté
     if (d.id && d.id !== lastDropId) {
       lastDropId = d.id;
-      totalDuration = d.remaining; // on capture la durée initiale
+      totalDuration = d.total_duration || d.remaining || 30;
       playDropSfx();
       showPanel();
     }
@@ -7777,9 +7773,9 @@ async function tick() {
     timerEl.textContent = remaining + 's';
     timerEl.className = urgent ? 'urgent' : '';
 
-    // Progress (basé sur le temps restant)
-    if (!totalDuration) totalDuration = remaining;
-    const pct = totalDuration > 0 ? Math.max(0, (remaining / totalDuration) * 100) : 0;
+    // Progress — basé sur la durée totale fournie par le serveur (stable même après rechargement)
+    const dur = d.total_duration || totalDuration || 30;
+    const pct = (dur > 0) ? Math.max(0, (remaining / dur) * 100) : 0;
     fillEl.style.width = pct + '%';
     fillEl.className = urgent ? 'urgent' : '';
 
@@ -9828,9 +9824,15 @@ def overlay_drop_state():
             logins = [r[0] for r in cur.fetchall()]
             count = len(logins)
 
-            # remaining seconds
-            cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
-            remaining = max(0, int(cur.fetchone()[0]))
+            # remaining seconds + total duration
+            cur.execute("""
+                SELECT EXTRACT(EPOCH FROM (%s - now()))::int,
+                       EXTRACT(EPOCH FROM (expires_at - created_at))::int
+                FROM drops WHERE id=%s;
+            """, (expires_at, drop_id))
+            row_time = cur.fetchone()
+            remaining = max(0, int(row_time[0]))
+            total_duration_s = max(1, int(row_time[1]))
 
     return {
         "show": True,
@@ -9840,6 +9842,7 @@ def overlay_drop_state():
             "title": title,
             "media": media_url,
             "remaining": remaining,
+            "total_duration": total_duration_s,
             "count": count,
             "logins": logins,
             "target": int(target_hits) if target_hits is not None else None,
@@ -11846,7 +11849,7 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
             # ── AUTODROP ──────────────────────────────────────────────────
             ad_keys = [
                 "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
-                "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
+                "auto_drop_duration_seconds",
                 "auto_drop_pick_kind", "auto_drop_mode", "auto_drop_ticket_qty",
                 "auto_drop_fallback_media_url",
             ]

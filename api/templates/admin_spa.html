@@ -1979,12 +1979,8 @@
             <input type="number" id="ad_max" min="60" value="1500" style="width:140px">
           </div>
           <div class="form-group">
-            <div class="form-label">DURÉE MIN (s)</div>
-            <input type="number" id="ad_dmin" min="5" value="10" style="width:140px">
-          </div>
-          <div class="form-group">
-            <div class="form-label">DURÉE MAX (s)</div>
-            <input type="number" id="ad_dmax" min="5" value="20" style="width:140px">
+            <div class="form-label">DURÉE (s)</div>
+            <input type="number" id="ad_dur" min="5" max="300" value="30" style="width:140px">
           </div>
         </div>
         <div class="form-row">
@@ -2475,11 +2471,8 @@
       <label>Intervalle max (s)</label>
       <input type="number" id="s_drop_max" min="60" max="7200" placeholder="1500">
 
-      <label>Durée min (s)</label>
-      <input type="number" id="s_dur_min" min="5" max="300" placeholder="20">
-
-      <label>Durée max (s)</label>
-      <input type="number" id="s_dur_max" min="5" max="300" placeholder="40">
+      <label>Durée (s)</label>
+      <input type="number" id="s_dur" min="5" max="300" placeholder="30">
 
       <label>Type d'objet</label>
       <select id="s_kind">
@@ -3054,8 +3047,7 @@ async function loadSettings() {
   g('s_drop_enabled').checked  = b(j.auto_drop_enabled);
   g('s_drop_min').value        = n(j.auto_drop_min_seconds, 900);
   g('s_drop_max').value        = n(j.auto_drop_max_seconds, 1500);
-  g('s_dur_min').value         = n(j.auto_drop_duration_min_seconds, 20);
-  g('s_dur_max').value         = n(j.auto_drop_duration_max_seconds, 40);
+  g('s_dur').value             = n(j.auto_drop_duration_seconds, 30);
   g('s_kind').value            = n(j.auto_drop_pick_kind, 'any');
   g('s_mode').value            = n(j.auto_drop_mode, 'random');
 
@@ -3075,8 +3067,7 @@ async function saveSettings() {
     auto_drop_enabled:              g('s_drop_enabled').checked,
     auto_drop_min_seconds:          parseInt(g('s_drop_min').value),
     auto_drop_max_seconds:          parseInt(g('s_drop_max').value),
-    auto_drop_duration_min_seconds: parseInt(g('s_dur_min').value),
-    auto_drop_duration_max_seconds: parseInt(g('s_dur_max').value),
+    auto_drop_duration_seconds: parseInt(g('s_dur').value),
     auto_drop_pick_kind:            g('s_kind').value,
     auto_drop_mode:                 g('s_mode').value,
     coop_drop_duration_seconds:     parseInt(g('s_coop_dur').value),
@@ -3723,8 +3714,7 @@ async function loadAutoDrop() {
   el('ad_enabled').checked = String(s.auto_drop_enabled || 'false') === 'true';
   el('ad_min').value   = s.auto_drop_min_seconds || 900;
   el('ad_max').value   = s.auto_drop_max_seconds || 1500;
-  el('ad_dmin').value  = s.auto_drop_duration_min_seconds || 10;
-  el('ad_dmax').value  = s.auto_drop_duration_max_seconds || 20;
+  el('ad_dur').value   = s.auto_drop_duration_seconds || 30;
   el('ad_kind').value  = s.auto_drop_pick_kind || 'any';
   el('ad_mode').value  = s.auto_drop_mode || 'random';
   el('ad_qty').value   = s.auto_drop_ticket_qty || 1;
@@ -3741,8 +3731,7 @@ async function saveAutoDrop() {
       enabled: el('ad_enabled').checked,
       min_seconds: el('ad_min').value,
       max_seconds: el('ad_max').value,
-      duration_min: el('ad_dmin').value,
-      duration_max: el('ad_dmax').value,
+      duration_seconds: el('ad_dur').value,
       pick_kind: el('ad_kind').value,
       mode: el('ad_mode').value,
       ticket_qty: el('ad_qty').value,
