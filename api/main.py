@@ -8005,47 +8005,64 @@ body {
     glitchEvent 5.2s linear infinite;
 }
 
-/* cycle unique : préparation -> distortion -> flash -> retour normal */
 @keyframes glitchEvent {
   0%, 78%, 100% {
     transform: translate3d(0,0,0) skewX(0deg) skewY(0deg) scale(1);
     filter: hue-rotate(0deg) brightness(1);
+    opacity: 1;
   }
 
   /* pré-signal : petite tension visible */
   79% {
     transform: translate3d(-1px,0,0) skewX(-1.2deg) scaleX(1.004) scaleY(.998);
     filter: hue-rotate(8deg) brightness(1.03);
+    opacity: 1;
   }
   80% {
     transform: translate3d(1px,0,0) skewX(1.4deg) scaleX(.996) scaleY(1.003);
     filter: hue-rotate(-8deg) brightness(1.05);
+    opacity: 0.985;
   }
 
-  /* distortion volontaire bien lisible */
+  /* distortion volontaire + léger clignotement */
   81% {
     transform: translate3d(-3px,0,0) skewX(-4deg) scaleX(1.012) scaleY(.992);
     filter: hue-rotate(16deg) brightness(1.08);
+    opacity: 0.92;
+  }
+  81.5% {
+    transform: translate3d(2px,0,0) skewX(2.4deg) scaleX(.995) scaleY(1.004);
+    filter: hue-rotate(-10deg) brightness(1.16);
+    opacity: 1;
   }
   82% {
     transform: translate3d(3px,0,0) skewX(4deg) scaleX(.988) scaleY(1.008);
     filter: hue-rotate(-14deg) brightness(1.10);
+    opacity: 0.9;
+  }
+  82.5% {
+    transform: translate3d(-1px,0,0) skewX(-1.4deg) scaleX(1.002) scaleY(.998);
+    filter: hue-rotate(6deg) brightness(1.15);
+    opacity: 1;
   }
 
   /* flash juste après la distortion */
   83% {
     transform: translate3d(0,0,0) skewX(0deg) scale(1.003);
     filter: hue-rotate(0deg) brightness(1.22);
+    opacity: 1;
   }
 
   /* petit résidu */
   84% {
     transform: translate3d(-1px,0,0) skewX(-1deg) scale(1);
     filter: brightness(1.05);
+    opacity: 0.98;
   }
   85% {
     transform: translate3d(0,0,0) skewX(0deg) scale(1);
     filter: brightness(1);
+    opacity: 1;
   }
 }
 @keyframes glitchIdlePulse {
@@ -8137,16 +8154,26 @@ body {
     transform: translateX(0);
   }
 
-  /* distortion overlay juste avant le flash */
+  /* distortion overlay + petit flicker synchronisé */
   81% {
-    opacity: .85;
+    opacity: .82;
     clip-path: polygon(0 0,100% 0,100% 28%,0 20%);
     transform: translateX(-3px);
   }
+  81.5% {
+    opacity: .98;
+    clip-path: polygon(0 8%,100% 2%,100% 34%,0 24%);
+    transform: translateX(2px);
+  }
   82% {
-    opacity: .92;
+    opacity: .76;
     clip-path: polygon(0 42%,100% 38%,100% 66%,0 58%);
     transform: translateX(3px);
+  }
+  82.5% {
+    opacity: .95;
+    clip-path: polygon(0 40%,100% 44%,100% 68%,0 60%);
+    transform: translateX(-1px);
   }
 
   /* flash bref */
