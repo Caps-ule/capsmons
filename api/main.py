@@ -8435,11 +8435,49 @@ body {
 
 /* ── GLITCH EFFECT (apparition) ── */
 @keyframes glitchIn {
-  0%   { clip-path: inset(40% 0 50% 0); transform: translate(-4px,0) skewX(-2deg); opacity:.8; }
-  10%  { clip-path: inset(10% 0 80% 0); transform: translate(4px,0)  skewX(2deg);  }
-  20%  { clip-path: inset(70% 0 10% 0); transform: translate(-2px,0); }
-  30%  { clip-path: inset(0% 0 0% 0);   transform: translate(0,0);   opacity:1; }
-  100% { clip-path: inset(0% 0 0% 0);   transform: translate(0,0);   opacity:1; }
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(.985);
+    filter: brightness(1.4) contrast(1.2);
+    clip-path: inset(42% 0 44% 0);
+  }
+  12% {
+    opacity: .9;
+    transform: translateX(-8px) scale(1);
+    clip-path: inset(8% 0 78% 0);
+  }
+  24% {
+    transform: translateX(7px) scale(1.002);
+    clip-path: inset(64% 0 10% 0);
+  }
+  36% {
+    transform: translateX(-4px) scale(1);
+    clip-path: inset(24% 0 46% 0);
+  }
+  48% {
+    transform: translateX(3px);
+    clip-path: inset(0 0 18% 0);
+  }
+  60% {
+    transform: translateX(-2px);
+    clip-path: inset(72% 0 0 0);
+  }
+  72% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    clip-path: inset(0 0 0 0);
+    filter: brightness(1.08) contrast(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    clip-path: inset(0 0 0 0);
+    filter: brightness(1) contrast(1);
+  }
+}
+
+.tcg-card.glitch-enter {
+  animation: glitchIn .52s steps(1) forwards;
 }
 .tcg-card.glitch-enter {
   animation: glitchIn 0.35s steps(1) forwards;
