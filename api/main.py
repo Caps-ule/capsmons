@@ -7833,7 +7833,7 @@ def overlay_show_page():
 <head>
 <meta charset="utf-8"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Orbitron:wght@700;900&family=Share+Tech+Mono&family=Audiowide&display=swap" rel="stylesheet">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -7921,49 +7921,289 @@ body {
   --frame-xp-color: #ffd700; --frame-hp-color: #ffaa00;
 }
 .tcg-card.frame-fire {
-  --frame-c1: rgba(255,80,20,0.5); --frame-c2: rgba(255,80,20,0.12);
-  --frame-glow1: rgba(255,60,0,0.35); --frame-glow2: rgba(255,120,0,0.15);
-  --frame-bg1: #0f0200; --frame-bg2: #1a0500; --frame-bg3: #120300;
-  --frame-holo1: rgba(255,80,20,.10); --frame-holo2: rgba(255,150,0,.08); --frame-holo3: rgba(255,200,50,.06);
-  --frame-name-glow: rgba(255,80,20,.7);
-  --frame-type-color: #ff4500; --frame-type-border: rgba(255,80,20,.4); --frame-type-bg: rgba(255,80,20,.08);
-  --frame-header-border: rgba(255,80,20,0.2);
-  --frame-corner-tl: #ff4500; --frame-corner-tr: #ff9900; --frame-corner-bl: #ff4500; --frame-corner-br: #ff9900;
-  --frame-xp-color: #ff4500; --frame-hp-color: #ff7700;
+  --frame-c1: rgba(255,90,24,0.58);
+  --frame-c2: rgba(255,120,30,0.16);
+  --frame-glow1: rgba(255,80,10,0.46);
+  --frame-glow2: rgba(255,170,50,0.18);
+  --frame-bg1: #120200;
+  --frame-bg2: #1d0600;
+  --frame-bg3: #140300;
+  --frame-holo1: rgba(255,90,24,.14);
+  --frame-holo2: rgba(255,170,40,.10);
+  --frame-holo3: rgba(255,220,120,.06);
+  --frame-name-glow: rgba(255,115,35,.88);
+  --frame-type-color: #ff7a1f;
+  --frame-type-border: rgba(255,120,30,.48);
+  --frame-type-bg: rgba(255,120,30,.08);
+  --frame-header-border: rgba(255,110,30,0.24);
+  --frame-corner-tl: #ff641f;
+  --frame-corner-tr: #ffb347;
+  --frame-corner-bl: #ff641f;
+  --frame-corner-br: #ffb347;
+  --frame-xp-color: #ff6d2d;
+  --frame-hp-color: #ffb347;
+  animation: fireFrameHeat 4.8s ease-in-out infinite;
 }
-.tcg-card.frame-void {
-  --frame-c1: rgba(160,50,255,0.5); --frame-c2: rgba(160,50,255,0.12);
-  --frame-glow1: rgba(130,0,255,0.35); --frame-glow2: rgba(200,50,255,0.15);
-  --frame-bg1: #060010; --frame-bg2: #0c0020; --frame-bg3: #080015;
-  --frame-holo1: rgba(160,50,255,.10); --frame-holo2: rgba(220,80,255,.08); --frame-holo3: rgba(100,0,255,.06);
-  --frame-name-glow: rgba(160,50,255,.7);
-  --frame-type-color: #b44dff; --frame-type-border: rgba(160,50,255,.4); --frame-type-bg: rgba(160,50,255,.08);
-  --frame-header-border: rgba(160,50,255,0.2);
-  --frame-corner-tl: #b44dff; --frame-corner-tr: #ff44ff; --frame-corner-bl: #b44dff; --frame-corner-br: #ff44ff;
-  --frame-xp-color: #b44dff; --frame-hp-color: #dd88ff;
+
+.tcg-card.frame-fire::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 18% 110%, rgba(255,130,20,.20) 0 0.8%, transparent 1.2%),
+    radial-gradient(circle at 36% 108%, rgba(255,190,90,.16) 0 0.7%, transparent 1.15%),
+    radial-gradient(circle at 58% 112%, rgba(255,110,30,.18) 0 0.75%, transparent 1.2%),
+    radial-gradient(circle at 76% 109%, rgba(255,210,120,.14) 0 0.65%, transparent 1.05%),
+    radial-gradient(circle at 24% 106%, rgba(255,150,60,.15) 0 0.6%, transparent 1%),
+    linear-gradient(180deg, transparent 0%, rgba(255,80,10,.04) 72%, rgba(255,60,0,.10) 100%);
+  mix-blend-mode: screen;
+  opacity: .95;
+  animation: fireEmbersRise 10s linear infinite;
 }
+
+.tcg-card.frame-fire .card-img-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    radial-gradient(circle at 20% 100%, rgba(255,150,40,.18) 0%, transparent 18%),
+    radial-gradient(circle at 80% 100%, rgba(255,90,10,.14) 0%, transparent 20%),
+    linear-gradient(180deg, transparent 0%, rgba(255,80,0,.05) 72%, rgba(255,120,20,.10) 100%);
+  animation: fireInnerGlow 3.2s ease-in-out infinite;
+}
+
 .tcg-card.frame-ice {
-  --frame-c1: rgba(140,220,255,0.5); --frame-c2: rgba(140,220,255,0.12);
-  --frame-glow1: rgba(100,200,255,0.35); --frame-glow2: rgba(180,240,255,0.15);
-  --frame-bg1: #000f18; --frame-bg2: #001c28; --frame-bg3: #001218;
-  --frame-holo1: rgba(140,220,255,.10); --frame-holo2: rgba(200,240,255,.08); --frame-holo3: rgba(80,200,255,.06);
-  --frame-name-glow: rgba(140,220,255,.7);
-  --frame-type-color: #7de8ff; --frame-type-border: rgba(140,220,255,.4); --frame-type-bg: rgba(140,220,255,.08);
-  --frame-header-border: rgba(140,220,255,0.2);
-  --frame-corner-tl: #7de8ff; --frame-corner-tr: #b0f4ff; --frame-corner-bl: #7de8ff; --frame-corner-br: #b0f4ff;
-  --frame-xp-color: #7de8ff; --frame-hp-color: #aaffee;
+  --frame-c1: rgba(182,235,255,0.62);
+  --frame-c2: rgba(182,235,255,0.14);
+  --frame-glow1: rgba(110,210,255,0.34);
+  --frame-glow2: rgba(220,248,255,0.18);
+  --frame-bg1: #02131d;
+  --frame-bg2: #072232;
+  --frame-bg3: #031722;
+  --frame-holo1: rgba(180,235,255,.16);
+  --frame-holo2: rgba(225,248,255,.10);
+  --frame-holo3: rgba(120,220,255,.08);
+  --frame-name-glow: rgba(205,245,255,.92);
+  --frame-type-color: #d8f6ff;
+  --frame-type-border: rgba(190,235,255,.55);
+  --frame-type-bg: rgba(200,240,255,.08);
+  --frame-header-border: rgba(190,235,255,0.28);
+  --frame-corner-tl: #d7f5ff;
+  --frame-corner-tr: #9feaff;
+  --frame-corner-bl: #d7f5ff;
+  --frame-corner-br: #9feaff;
+  --frame-xp-color: #c9f3ff;
+  --frame-hp-color: #9feaff;
+  animation: iceFrameShimmer 7s ease-in-out infinite;
 }
+
+.tcg-card.frame-ice::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(135deg,
+      transparent 0%,
+      rgba(220,245,255,.09) 18%,
+      transparent 28%,
+      rgba(220,245,255,.08) 42%,
+      transparent 52%,
+      rgba(170,230,255,.07) 66%,
+      transparent 76%,
+      rgba(235,250,255,.08) 100%),
+    linear-gradient(155deg,
+      transparent 0%,
+      transparent 46%,
+      rgba(215,245,255,.08) 47%,
+      rgba(215,245,255,.02) 49%,
+      transparent 52%,
+      transparent 100%);
+  mix-blend-mode: screen;
+  opacity: .9;
+}
+
+.tcg-card.frame-ice::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow:
+    inset 0 0 0 1px rgba(230,248,255,.28),
+    inset 0 0 22px rgba(180,235,255,.12),
+    inset 0 0 70px rgba(200,245,255,.05),
+    0 0 24px rgba(140,225,255,.08);
+}
+
+.tcg-card.frame-ice .card-img-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(135deg, rgba(230,248,255,.10) 0%, transparent 22%, transparent 100%),
+    linear-gradient(180deg, rgba(220,245,255,.05) 0%, transparent 16%, rgba(180,230,255,.03) 100%);
+  backdrop-filter: blur(1.6px);
+  -webkit-backdrop-filter: blur(1.6px);
+  animation: iceBreath 5.8s ease-in-out infinite;
+}
+
 .tcg-card.frame-nature {
-  --frame-c1: rgba(50,200,80,0.5); --frame-c2: rgba(50,200,80,0.12);
-  --frame-glow1: rgba(30,180,60,0.35); --frame-glow2: rgba(80,220,50,0.15);
-  --frame-bg1: #010f02; --frame-bg2: #021a04; --frame-bg3: #011203;
-  --frame-holo1: rgba(50,200,80,.10); --frame-holo2: rgba(100,220,50,.08); --frame-holo3: rgba(20,255,100,.06);
-  --frame-name-glow: rgba(50,200,80,.7);
-  --frame-type-color: #44cc55; --frame-type-border: rgba(50,200,80,.4); --frame-type-bg: rgba(50,200,80,.08);
-  --frame-header-border: rgba(50,200,80,0.2);
-  --frame-corner-tl: #44cc55; --frame-corner-tr: #88ff44; --frame-corner-bl: #44cc55; --frame-corner-br: #88ff44;
-  --frame-xp-color: #44cc55; --frame-hp-color: #88ff44;
+  --frame-c1: rgba(74,210,96,0.54);
+  --frame-c2: rgba(120,255,120,0.12);
+  --frame-glow1: rgba(40,190,70,0.34);
+  --frame-glow2: rgba(170,255,120,0.14);
+  --frame-bg1: #031005;
+  --frame-bg2: #07200a;
+  --frame-bg3: #041306;
+  --frame-holo1: rgba(70,220,90,.10);
+  --frame-holo2: rgba(150,255,110,.08);
+  --frame-holo3: rgba(70,255,170,.06);
+  --frame-name-glow: rgba(130,255,150,.80);
+  --frame-type-color: #8dff8f;
+  --frame-type-border: rgba(120,255,120,.40);
+  --frame-type-bg: rgba(120,255,120,.07);
+  --frame-header-border: rgba(100,230,110,0.22);
+  --frame-corner-tl: #65db72;
+  --frame-corner-tr: #b5ff84;
+  --frame-corner-bl: #65db72;
+  --frame-corner-br: #b5ff84;
+  --frame-xp-color: #69e07a;
+  --frame-hp-color: #b5ff84;
+  animation: natureBreath 6.2s ease-in-out infinite;
 }
+
+.tcg-card.frame-nature::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 110% 18%, rgba(180,255,120,.14) 0 0.8%, transparent 1.2%),
+    radial-gradient(circle at 112% 34%, rgba(120,255,170,.12) 0 0.7%, transparent 1.15%),
+    radial-gradient(circle at 108% 52%, rgba(170,255,120,.13) 0 0.75%, transparent 1.2%),
+    radial-gradient(circle at 114% 70%, rgba(120,240,120,.10) 0 0.7%, transparent 1.1%),
+    radial-gradient(circle at 109% 84%, rgba(210,255,170,.10) 0 0.65%, transparent 1.05%);
+  mix-blend-mode: screen;
+  opacity: .85;
+  animation: natureWindDots 14s linear infinite;
+}
+
+.tcg-card.frame-nature .card-img-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(165deg, transparent 0%, rgba(140,255,160,.04) 34%, transparent 42%, transparent 100%),
+    linear-gradient(178deg, transparent 0%, transparent 54%, rgba(200,255,180,.05) 72%, transparent 100%);
+  animation: natureVeil 8s linear infinite;
+}
+
+.tcg-card.frame-void {
+  --frame-c1: rgba(124,50,150,0.56);
+  --frame-c2: rgba(255,208,235,0.12);
+  --frame-glow1: rgba(83,20,108,0.40);
+  --frame-glow2: rgba(255,215,232,0.12);
+  --frame-bg1: #0a0311;
+  --frame-bg2: #13071d;
+  --frame-bg3: #09030f;
+  --frame-holo1: rgba(120,75,155,.10);
+  --frame-holo2: rgba(255,220,236,.07);
+  --frame-holo3: rgba(95,30,125,.06);
+  --frame-name-glow: rgba(255,225,238,.62);
+  --frame-type-color: #f8dce9;
+  --frame-type-border: rgba(248,220,233,.30);
+  --frame-type-bg: rgba(248,220,233,.05);
+  --frame-header-border: rgba(180,120,190,0.18);
+  --frame-corner-tl: #6f3f87;
+  --frame-corner-tr: #f2d7e5;
+  --frame-corner-bl: #6f3f87;
+  --frame-corner-br: #f2d7e5;
+  --frame-xp-color: #d7b6eb;
+  --frame-hp-color: #f2d7e5;
+  animation: voidPulse 8s ease-in-out infinite;
+}
+
+.tcg-card.frame-void::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    radial-gradient(circle at 16% 20%, rgba(248,220,233,.055) 0 0.65%, transparent 1%),
+    radial-gradient(circle at 84% 28%, rgba(248,220,233,.05) 0 0.55%, transparent 0.95%),
+    radial-gradient(circle at 72% 72%, rgba(210,170,230,.04) 0 0.45%, transparent 0.85%),
+    radial-gradient(circle at 28% 78%, rgba(248,220,233,.045) 0 0.45%, transparent 0.85%),
+    linear-gradient(135deg, rgba(255,220,235,.03) 0%, transparent 34%, rgba(120,70,150,.06) 68%, transparent 100%);
+  mix-blend-mode: screen;
+  opacity: .9;
+  animation: voidStarShift 14s linear infinite;
+}
+
+.tcg-card.frame-void::after {
+  content: '';
+  position: absolute;
+  inset: 10px;
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 3;
+  border: 1px solid rgba(248,220,233,.12);
+  box-shadow:
+    inset 0 0 24px rgba(248,220,233,.02),
+    0 0 40px rgba(90,20,120,.12);
+}
+
+.tcg-card.frame-void .card-header {
+  background:
+    linear-gradient(90deg, rgba(248,220,233,.05) 0%, rgba(110,55,140,.05) 50%, transparent 100%);
+}
+
+.tcg-card.frame-void .card-name {
+  font-family: 'Audiowide', 'Orbitron', sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #f7e6ef;
+  text-shadow:
+    0 0 10px rgba(248,220,233,.24),
+    0 0 22px rgba(110,55,140,.18);
+}
+
+.tcg-card.frame-void .card-type,
+.tcg-card.frame-void .tcg-badge,
+.tcg-card.frame-void .stat-label,
+.tcg-card.frame-void .stat-val {
+  font-family: 'Share Tech Mono', monospace;
+  letter-spacing: .16em;
+}
+
+.tcg-card.frame-void .card-img-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(180deg, rgba(255,220,235,.035) 0%, transparent 22%, transparent 100%),
+    radial-gradient(circle at 50% 20%, rgba(145,80,165,.10) 0%, transparent 40%);
+  animation: voidVeil 9s ease-in-out infinite;
+}
+
 .tcg-card.frame-shadow {
   --frame-c1: rgba(180,180,200,0.4); --frame-c2: rgba(180,180,200,0.10);
   --frame-glow1: rgba(150,150,170,0.25); --frame-glow2: rgba(80,80,100,0.10);
@@ -7974,6 +8214,111 @@ body {
   --frame-header-border: rgba(180,180,200,0.15);
   --frame-corner-tl: #aaaacc; --frame-corner-tr: #ccccee; --frame-corner-bl: #aaaacc; --frame-corner-br: #ccccee;
   --frame-xp-color: #aaaacc; --frame-hp-color: #ccccee;
+}
+
+/* FIRE */
+@keyframes fireFrameHeat {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow:
+      0 0 0 1px rgba(255,90,24,.18),
+      0 0 18px rgba(255,90,24,.10),
+      0 0 45px rgba(255,120,20,.04),
+      inset 0 0 30px rgba(255,90,24,.03);
+  }
+  50% {
+    transform: translateY(-0.5px) scale(1.002);
+    box-shadow:
+      0 0 0 1px rgba(255,90,24,.30),
+      0 0 24px rgba(255,110,24,.18),
+      0 0 65px rgba(255,160,40,.09),
+      inset 0 0 34px rgba(255,120,20,.05);
+  }
+}
+@keyframes fireEmbersRise {
+  0%   { transform: translateY(14px) scale(1); opacity: .55; }
+  50%  { opacity: .95; }
+  100% { transform: translateY(-24px) scale(1.03); opacity: .35; }
+}
+@keyframes fireInnerGlow {
+  0%, 100% { opacity: .45; filter: blur(0px); }
+  50%      { opacity: .82; filter: blur(1.1px); }
+}
+
+/* ICE */
+@keyframes iceFrameShimmer {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(200,240,255,.18),
+      0 0 14px rgba(150,225,255,.08),
+      inset 0 0 26px rgba(220,248,255,.03);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(225,248,255,.28),
+      0 0 24px rgba(180,235,255,.14),
+      0 0 46px rgba(170,230,255,.06),
+      inset 0 0 34px rgba(225,248,255,.05);
+  }
+}
+@keyframes iceBreath {
+  0%, 100% { opacity: .42; transform: translateX(0); }
+  50%      { opacity: .74; transform: translateX(2px); }
+}
+
+/* NATURE */
+@keyframes natureBreath {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(90,220,100,.16),
+      0 0 16px rgba(90,220,100,.08),
+      inset 0 0 24px rgba(130,255,150,.025);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(120,255,120,.26),
+      0 0 24px rgba(120,255,120,.12),
+      0 0 48px rgba(180,255,120,.05),
+      inset 0 0 30px rgba(170,255,140,.035);
+  }
+}
+@keyframes natureWindDots {
+  0%   { transform: translateX(18px); opacity: .18; }
+  10%  { opacity: .78; }
+  90%  { opacity: .72; }
+  100% { transform: translateX(-26px); opacity: .12; }
+}
+@keyframes natureVeil {
+  0%   { transform: translateX(20px); opacity: .22; }
+  50%  { opacity: .40; }
+  100% { transform: translateX(-18px); opacity: .18; }
+}
+
+/* VOID */
+@keyframes voidPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(110,55,140,.18),
+      0 0 16px rgba(110,55,140,.08),
+      0 0 34px rgba(248,220,233,.03),
+      inset 0 0 24px rgba(248,220,233,.015);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(140,85,170,.28),
+      0 0 26px rgba(120,60,150,.14),
+      0 0 58px rgba(248,220,233,.06),
+      inset 0 0 32px rgba(248,220,233,.025);
+  }
+}
+@keyframes voidStarShift {
+  0%   { transform: translateX(0) translateY(0); opacity: .58; }
+  50%  { transform: translateX(-3px) translateY(2px); opacity: .88; }
+  100% { transform: translateX(2px) translateY(-2px); opacity: .62; }
+}
+@keyframes voidVeil {
+  0%, 100% { opacity: .34; filter: blur(0px); }
+  50%      { opacity: .62; filter: blur(1.2px); }
 }
 /* GLITCH */
 .tcg-card.frame-glitch {
