@@ -9125,30 +9125,41 @@ def admin_cms_action(
 
 @app.get("/overlay/state")
 def overlay_state():
+    r = None
+    card_frame = None
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    id,
-                    twitch_login,
-                    viewer_display,
-                    viewer_avatar,
-                    cm_key,
-                    cm_name,
-                    cm_media_url,
-                    xp_total,
-                    stage,
-                    stage_start_xp,
-                    next_stage_xp,
-                    happiness,
-                    COALESCE(card_frame, ''),
-                    expires_at
-                FROM overlay_events
-                WHERE expires_at > now()
-                ORDER BY id DESC
-                LIMIT 1;
-            """)
-            r = cur.fetchone()
+            try:
+                cur.execute("""
+                    SELECT
+                        id, twitch_login, viewer_display, viewer_avatar,
+                        cm_key, cm_name, cm_media_url,
+                        xp_total, stage, stage_start_xp, next_stage_xp,
+                        happiness, COALESCE(card_frame, ''), expires_at
+                    FROM overlay_events
+                    WHERE expires_at > now()
+                    ORDER BY id DESC LIMIT 1;
+                """)
+                row = cur.fetchone()
+                if row:
+                    # row[12] = card_frame, row[13] = expires_at
+                    card_frame = row[12] or None
+                    r = row[:12] + (row[13],)
+            except Exception:
+                # Colonne card_frame absente (migration pas encore appliquée)
+                conn.rollback()
+                cur.execute("""
+                    SELECT
+                        id, twitch_login, viewer_display, viewer_avatar,
+                        cm_key, cm_name, cm_media_url,
+                        xp_total, stage, stage_start_xp, next_stage_xp,
+                        happiness, expires_at
+                    FROM overlay_events
+                    WHERE expires_at > now()
+                    ORDER BY id DESC LIMIT 1;
+                """)
+                r = cur.fetchone()
+                card_frame = None
 
     if not r:
         return {"show": False}
@@ -9166,7 +9177,6 @@ def overlay_state():
         stage_start_xp,
         next_stage_xp,
         happiness,
-        card_frame,
         expires_at,
     ) = r
 
