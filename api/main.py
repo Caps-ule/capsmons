@@ -7921,47 +7921,67 @@ body {
   --frame-xp-color: #ffd700; --frame-hp-color: #ffaa00;
 }
 .tcg-card.frame-fire {
-  --frame-c1: rgba(255,90,24,0.58);
-  --frame-c2: rgba(255,120,30,0.16);
-  --frame-glow1: rgba(255,80,10,0.46);
-  --frame-glow2: rgba(255,170,50,0.18);
-  --frame-bg1: #120200;
-  --frame-bg2: #1d0600;
-  --frame-bg3: #140300;
-  --frame-holo1: rgba(255,90,24,.14);
-  --frame-holo2: rgba(255,170,40,.10);
-  --frame-holo3: rgba(255,220,120,.06);
-  --frame-name-glow: rgba(255,115,35,.88);
-  --frame-type-color: #ff7a1f;
-  --frame-type-border: rgba(255,120,30,.48);
-  --frame-type-bg: rgba(255,120,30,.08);
-  --frame-header-border: rgba(255,110,30,0.24);
-  --frame-corner-tl: #ff641f;
-  --frame-corner-tr: #ffb347;
-  --frame-corner-bl: #ff641f;
-  --frame-corner-br: #ffb347;
-  --frame-xp-color: #ff6d2d;
-  --frame-hp-color: #ffb347;
-  animation: fireFrameHeat 4.8s ease-in-out infinite;
+  --frame-c1: rgba(220,30,10,0.75);
+  --frame-c2: rgba(255,60,10,0.22);
+  --frame-glow1: rgba(255,20,0,0.65);
+  --frame-glow2: rgba(255,120,20,0.30);
+  --frame-bg1: #180100;
+  --frame-bg2: #240300;
+  --frame-bg3: #1a0100;
+  --frame-holo1: rgba(255,40,0,.22);
+  --frame-holo2: rgba(255,140,20,.14);
+  --frame-holo3: rgba(255,80,0,.10);
+  --frame-name-glow: rgba(255,60,10,1.0);
+  --frame-type-color: #ff4010;
+  --frame-type-border: rgba(255,80,20,.65);
+  --frame-type-bg: rgba(255,50,10,.12);
+  --frame-header-border: rgba(255,50,10,0.40);
+  --frame-corner-tl: #ff2000;
+  --frame-corner-tr: #ff8020;
+  --frame-corner-bl: #ff2000;
+  --frame-corner-br: #ff8020;
+  --frame-xp-color: #ff3010;
+  --frame-hp-color: #ff7020;
+  animation: fireFrameHeat 2.4s ease-in-out infinite;
 }
 
+/* Lueur de braise intérieure sur toute la carte */
 .tcg-card.frame-fire::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 18px;
   pointer-events: none;
-  z-index: 1;
+  z-index: 22;
   background:
-    radial-gradient(circle at 18% 110%, rgba(255,130,20,.20) 0 0.8%, transparent 1.2%),
-    radial-gradient(circle at 36% 108%, rgba(255,190,90,.16) 0 0.7%, transparent 1.15%),
-    radial-gradient(circle at 58% 112%, rgba(255,110,30,.18) 0 0.75%, transparent 1.2%),
-    radial-gradient(circle at 76% 109%, rgba(255,210,120,.14) 0 0.65%, transparent 1.05%),
-    radial-gradient(circle at 24% 106%, rgba(255,150,60,.15) 0 0.6%, transparent 1%),
-    linear-gradient(180deg, transparent 0%, rgba(255,80,10,.04) 72%, rgba(255,60,0,.10) 100%);
-  mix-blend-mode: screen;
-  opacity: .95;
-  animation: fireEmbersRise 10s linear infinite;
+    radial-gradient(ellipse 80% 35% at 50% 105%, rgba(255,60,0,.55) 0%, rgba(255,100,0,.20) 45%, transparent 70%),
+    radial-gradient(ellipse 50% 20% at 20% 102%, rgba(255,30,0,.40) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 20% at 80% 102%, rgba(255,80,0,.35) 0%, transparent 60%),
+    linear-gradient(0deg, rgba(255,30,0,.18) 0%, rgba(255,60,0,.06) 30%, transparent 60%);
+  animation: fireBraiseGlow 2.2s ease-in-out infinite;
+}
+
+/* Particules ascendantes — vraies braises visibles */
+.tcg-card.frame-fire::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 0;
+  height: 100%;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 23;
+  background:
+    radial-gradient(circle 4px at 15% 90%, rgba(255,80,0,.90) 0%, transparent 100%),
+    radial-gradient(circle 3px at 28% 85%, rgba(255,150,20,.85) 0%, transparent 100%),
+    radial-gradient(circle 5px at 42% 92%, rgba(255,40,0,.95) 0%, transparent 100%),
+    radial-gradient(circle 3px at 58% 87%, rgba(255,180,30,.80) 0%, transparent 100%),
+    radial-gradient(circle 4px at 72% 91%, rgba(255,60,0,.90) 0%, transparent 100%),
+    radial-gradient(circle 3px at 85% 86%, rgba(255,120,10,.85) 0%, transparent 100%),
+    radial-gradient(circle 2px at 33% 75%, rgba(255,200,50,.70) 0%, transparent 100%),
+    radial-gradient(circle 2px at 65% 78%, rgba(255,160,30,.65) 0%, transparent 100%),
+    radial-gradient(circle 3px at 50% 70%, rgba(255,80,0,.60) 0%, transparent 100%);
+  animation: fireParticlesRise 3s ease-in infinite;
 }
 
 .tcg-card.frame-fire .card-img-wrap::before {
@@ -7969,93 +7989,96 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4;
   background:
-    radial-gradient(circle at 20% 100%, rgba(255,150,40,.18) 0%, transparent 18%),
-    radial-gradient(circle at 80% 100%, rgba(255,90,10,.14) 0%, transparent 20%),
-    linear-gradient(180deg, transparent 0%, rgba(255,80,0,.05) 72%, rgba(255,120,20,.10) 100%);
-  animation: fireInnerGlow 3.2s ease-in-out infinite;
+    radial-gradient(ellipse 90% 40% at 50% 100%, rgba(255,50,0,.35) 0%, rgba(255,80,0,.12) 50%, transparent 75%),
+    radial-gradient(ellipse 60% 25% at 25% 100%, rgba(255,20,0,.25) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 25% at 75% 100%, rgba(255,100,0,.22) 0%, transparent 60%);
+  animation: fireImgGlow 2.2s ease-in-out infinite;
 }
 
 .tcg-card.frame-ice {
-  --frame-c1: rgba(182,235,255,0.62);
-  --frame-c2: rgba(182,235,255,0.14);
-  --frame-glow1: rgba(110,210,255,0.34);
-  --frame-glow2: rgba(220,248,255,0.18);
-  --frame-bg1: #02131d;
-  --frame-bg2: #072232;
-  --frame-bg3: #031722;
-  --frame-holo1: rgba(180,235,255,.16);
-  --frame-holo2: rgba(225,248,255,.10);
-  --frame-holo3: rgba(120,220,255,.08);
-  --frame-name-glow: rgba(205,245,255,.92);
-  --frame-type-color: #d8f6ff;
-  --frame-type-border: rgba(190,235,255,.55);
-  --frame-type-bg: rgba(200,240,255,.08);
-  --frame-header-border: rgba(190,235,255,0.28);
-  --frame-corner-tl: #d7f5ff;
-  --frame-corner-tr: #9feaff;
-  --frame-corner-bl: #d7f5ff;
-  --frame-corner-br: #9feaff;
-  --frame-xp-color: #c9f3ff;
-  --frame-hp-color: #9feaff;
-  animation: iceFrameShimmer 7s ease-in-out infinite;
+  --frame-c1: rgba(100,190,255,0.70);
+  --frame-c2: rgba(160,220,255,0.20);
+  --frame-glow1: rgba(80,180,255,0.45);
+  --frame-glow2: rgba(200,235,255,0.25);
+  --frame-bg1: #e8f6ff;
+  --frame-bg2: #d0ecff;
+  --frame-bg3: #ddf2ff;
+  --frame-holo1: rgba(120,200,255,.18);
+  --frame-holo2: rgba(200,235,255,.14);
+  --frame-holo3: rgba(80,170,255,.10);
+  --frame-name-glow: rgba(0,120,220,.70);
+  --frame-type-color: #0080cc;
+  --frame-type-border: rgba(0,130,220,.50);
+  --frame-type-bg: rgba(100,190,255,.15);
+  --frame-header-border: rgba(80,170,255,0.35);
+  --frame-corner-tl: #2090dd;
+  --frame-corner-tr: #60c0ff;
+  --frame-corner-bl: #2090dd;
+  --frame-corner-br: #60c0ff;
+  --frame-xp-color: #0090dd;
+  --frame-hp-color: #40b0ff;
+  animation: iceFrameShimmer 6s ease-in-out infinite;
 }
 
+/* Reflet cristallin sur fond clair */
 .tcg-card.frame-ice::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 18px;
   pointer-events: none;
-  z-index: 2;
+  z-index: 22;
   background:
     linear-gradient(135deg,
-      transparent 0%,
-      rgba(220,245,255,.09) 18%,
-      transparent 28%,
-      rgba(220,245,255,.08) 42%,
-      transparent 52%,
-      rgba(170,230,255,.07) 66%,
-      transparent 76%,
-      rgba(235,250,255,.08) 100%),
+      rgba(255,255,255,.60) 0%,
+      rgba(220,240,255,.30) 15%,
+      transparent 30%),
+    linear-gradient(225deg,
+      rgba(255,255,255,.40) 0%,
+      transparent 25%),
     linear-gradient(155deg,
-      transparent 0%,
-      transparent 46%,
-      rgba(215,245,255,.08) 47%,
-      rgba(215,245,255,.02) 49%,
-      transparent 52%,
-      transparent 100%);
-  mix-blend-mode: screen;
-  opacity: .9;
+      transparent 40%,
+      rgba(180,220,255,.20) 50%,
+      transparent 60%);
 }
 
+/* Halo bleu autour + inset frost */
 .tcg-card.frame-ice::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 18px;
   pointer-events: none;
-  z-index: 3;
+  z-index: 23;
   box-shadow:
-    inset 0 0 0 1px rgba(230,248,255,.28),
-    inset 0 0 22px rgba(180,235,255,.12),
-    inset 0 0 70px rgba(200,245,255,.05),
-    0 0 24px rgba(140,225,255,.08);
+    inset 0 0 0 1px rgba(100,190,255,.50),
+    inset 0 0 30px rgba(120,200,255,.20),
+    inset 0 0 80px rgba(160,220,255,.10),
+    0 0 40px rgba(80,170,255,.25),
+    0 0 80px rgba(100,190,255,.10);
 }
 
+/* Givre sur l'image — fond givré translucide */
 .tcg-card.frame-ice .card-img-wrap::before {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4;
   background:
-    linear-gradient(135deg, rgba(230,248,255,.10) 0%, transparent 22%, transparent 100%),
-    linear-gradient(180deg, rgba(220,245,255,.05) 0%, transparent 16%, rgba(180,230,255,.03) 100%);
-  backdrop-filter: blur(1.6px);
-  -webkit-backdrop-filter: blur(1.6px);
+    linear-gradient(180deg, rgba(220,240,255,.30) 0%, rgba(200,230,255,.10) 30%, transparent 60%),
+    linear-gradient(0deg, rgba(220,240,255,.20) 0%, transparent 40%);
+  backdrop-filter: blur(0.8px);
+  -webkit-backdrop-filter: blur(0.8px);
   animation: iceBreath 5.8s ease-in-out infinite;
+}
+
+/* Texte sombre sur fond clair */
+.tcg-card.frame-ice .card-name {
+  color: #003870 !important;
+  text-shadow: 0 0 12px rgba(80,170,255,.60) !important;
 }
 
 .tcg-card.frame-nature {
@@ -8083,22 +8106,43 @@ body {
   animation: natureBreath 6.2s ease-in-out infinite;
 }
 
+/* Lueurs organiques sur les bords — pollen/spores */
 .tcg-card.frame-nature::before {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 18px;
   pointer-events: none;
-  z-index: 1;
+  z-index: 22;
   background:
-    radial-gradient(circle at 110% 18%, rgba(180,255,120,.14) 0 0.8%, transparent 1.2%),
-    radial-gradient(circle at 112% 34%, rgba(120,255,170,.12) 0 0.7%, transparent 1.15%),
-    radial-gradient(circle at 108% 52%, rgba(170,255,120,.13) 0 0.75%, transparent 1.2%),
-    radial-gradient(circle at 114% 70%, rgba(120,240,120,.10) 0 0.7%, transparent 1.1%),
-    radial-gradient(circle at 109% 84%, rgba(210,255,170,.10) 0 0.65%, transparent 1.05%);
-  mix-blend-mode: screen;
-  opacity: .85;
-  animation: natureWindDots 14s linear infinite;
+    radial-gradient(circle 8px at 8% 20%, rgba(180,255,100,.75) 0%, transparent 100%),
+    radial-gradient(circle 6px at 5% 38%, rgba(120,255,140,.65) 0%, transparent 100%),
+    radial-gradient(circle 9px at 7% 58%, rgba(200,255,120,.70) 0%, transparent 100%),
+    radial-gradient(circle 5px at 6% 76%, rgba(150,255,160,.60) 0%, transparent 100%),
+    radial-gradient(circle 7px at 9% 90%, rgba(180,255,100,.68) 0%, transparent 100%),
+    radial-gradient(circle 6px at 92% 15%, rgba(140,255,130,.65) 0%, transparent 100%),
+    radial-gradient(circle 8px at 94% 40%, rgba(200,255,110,.70) 0%, transparent 100%),
+    radial-gradient(circle 5px at 91% 62%, rgba(160,255,150,.60) 0%, transparent 100%),
+    radial-gradient(circle 7px at 93% 82%, rgba(180,255,120,.65) 0%, transparent 100%);
+  animation: natureSporesDrift 8s ease-in-out infinite;
+}
+
+/* Particules supplémentaires qui montent le long des bords */
+.tcg-card.frame-nature::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 21;
+  background:
+    radial-gradient(circle 4px at 12% 55%, rgba(100,255,120,.55) 0%, transparent 100%),
+    radial-gradient(circle 3px at 4% 48%, rgba(180,255,100,.50) 0%, transparent 100%),
+    radial-gradient(circle 5px at 88% 35%, rgba(120,255,140,.55) 0%, transparent 100%),
+    radial-gradient(circle 3px at 96% 52%, rgba(160,255,110,.50) 0%, transparent 100%),
+    radial-gradient(circle 4px at 15% 72%, rgba(200,255,130,.45) 0%, transparent 100%),
+    radial-gradient(circle 3px at 85% 68%, rgba(140,255,150,.48) 0%, transparent 100%);
+  animation: natureSporesDrift 12s ease-in-out infinite reverse;
 }
 
 .tcg-card.frame-nature .card-img-wrap::before {
@@ -8106,10 +8150,11 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4;
   background:
-    linear-gradient(165deg, transparent 0%, rgba(140,255,160,.04) 34%, transparent 42%, transparent 100%),
-    linear-gradient(178deg, transparent 0%, transparent 54%, rgba(200,255,180,.05) 72%, transparent 100%);
+    radial-gradient(ellipse 70% 30% at 50% 0%, rgba(120,255,140,.12) 0%, transparent 70%),
+    linear-gradient(180deg, rgba(80,220,100,.06) 0%, transparent 40%),
+    linear-gradient(0deg, rgba(100,255,120,.04) 0%, transparent 30%);
   animation: natureVeil 8s linear infinite;
 }
 
@@ -8174,14 +8219,15 @@ body {
     linear-gradient(90deg, rgba(248,220,233,.05) 0%, rgba(110,55,140,.05) 50%, transparent 100%);
 }
 
+/* !important pour surclasser .card-name global qui est déclaré après */
 .tcg-card.frame-void .card-name {
-  font-family: 'Audiowide', 'Orbitron', sans-serif;
-  letter-spacing: .12em;
+  font-family: 'Audiowide', 'Orbitron', sans-serif !important;
+  letter-spacing: .12em !important;
   text-transform: uppercase;
-  color: #f7e6ef;
+  color: #f7e6ef !important;
   text-shadow:
     0 0 10px rgba(248,220,233,.24),
-    0 0 22px rgba(110,55,140,.18);
+    0 0 22px rgba(110,55,140,.18) !important;
 }
 
 .tcg-card.frame-void .card-type,
@@ -8219,79 +8265,88 @@ body {
 /* FIRE */
 @keyframes fireFrameHeat {
   0%, 100% {
-    transform: translateY(0) scale(1);
     box-shadow:
-      0 0 0 1px rgba(255,90,24,.18),
-      0 0 18px rgba(255,90,24,.10),
-      0 0 45px rgba(255,120,20,.04),
-      inset 0 0 30px rgba(255,90,24,.03);
+      0 0 0 2px rgba(220,20,0,.55),
+      0 0 20px rgba(255,30,0,.40),
+      0 0 50px rgba(255,60,0,.20),
+      0 0 90px rgba(255,80,0,.08),
+      inset 0 0 40px rgba(255,40,0,.08);
   }
   50% {
-    transform: translateY(-0.5px) scale(1.002);
     box-shadow:
-      0 0 0 1px rgba(255,90,24,.30),
-      0 0 24px rgba(255,110,24,.18),
-      0 0 65px rgba(255,160,40,.09),
-      inset 0 0 34px rgba(255,120,20,.05);
+      0 0 0 2px rgba(255,40,0,.80),
+      0 0 35px rgba(255,30,0,.70),
+      0 0 80px rgba(255,80,0,.40),
+      0 0 140px rgba(255,100,10,.15),
+      inset 0 0 50px rgba(255,60,0,.15);
   }
 }
-@keyframes fireEmbersRise {
-  0%   { transform: translateY(14px) scale(1); opacity: .55; }
-  50%  { opacity: .95; }
-  100% { transform: translateY(-24px) scale(1.03); opacity: .35; }
+@keyframes fireBraiseGlow {
+  0%, 100% { opacity: .60; transform: scaleY(1); }
+  40%      { opacity: .90; transform: scaleY(1.06); }
+  70%      { opacity: .75; transform: scaleY(0.97); }
 }
-@keyframes fireInnerGlow {
-  0%, 100% { opacity: .45; filter: blur(0px); }
-  50%      { opacity: .82; filter: blur(1.1px); }
+@keyframes fireParticlesRise {
+  0%   { transform: translateY(0px); opacity: 1; }
+  60%  { opacity: .85; }
+  100% { transform: translateY(-520px); opacity: 0; }
+}
+@keyframes fireImgGlow {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: .90; }
 }
 
 /* ICE */
 @keyframes iceFrameShimmer {
   0%, 100% {
     box-shadow:
-      0 0 0 1px rgba(200,240,255,.18),
-      0 0 14px rgba(150,225,255,.08),
-      inset 0 0 26px rgba(220,248,255,.03);
+      0 0 0 1px rgba(100,190,255,.40),
+      0 0 20px rgba(80,180,255,.25),
+      0 0 50px rgba(120,200,255,.12),
+      inset 0 0 30px rgba(160,220,255,.08);
   }
   50% {
     box-shadow:
-      0 0 0 1px rgba(225,248,255,.28),
-      0 0 24px rgba(180,235,255,.14),
-      0 0 46px rgba(170,230,255,.06),
-      inset 0 0 34px rgba(225,248,255,.05);
+      0 0 0 2px rgba(120,200,255,.60),
+      0 0 35px rgba(80,180,255,.45),
+      0 0 80px rgba(100,190,255,.22),
+      0 0 120px rgba(160,220,255,.08),
+      inset 0 0 40px rgba(180,230,255,.12);
   }
 }
 @keyframes iceBreath {
-  0%, 100% { opacity: .42; transform: translateX(0); }
-  50%      { opacity: .74; transform: translateX(2px); }
+  0%, 100% { opacity: .50; }
+  50%      { opacity: .80; }
 }
 
 /* NATURE */
 @keyframes natureBreath {
   0%, 100% {
     box-shadow:
-      0 0 0 1px rgba(90,220,100,.16),
-      0 0 16px rgba(90,220,100,.08),
-      inset 0 0 24px rgba(130,255,150,.025);
+      0 0 0 1px rgba(90,220,100,.25),
+      0 0 18px rgba(90,220,100,.14),
+      0 0 40px rgba(130,255,120,.06),
+      inset 0 0 24px rgba(130,255,150,.04);
   }
   50% {
     box-shadow:
-      0 0 0 1px rgba(120,255,120,.26),
-      0 0 24px rgba(120,255,120,.12),
-      0 0 48px rgba(180,255,120,.05),
-      inset 0 0 30px rgba(170,255,140,.035);
+      0 0 0 1px rgba(120,255,120,.40),
+      0 0 30px rgba(120,255,120,.22),
+      0 0 65px rgba(180,255,120,.10),
+      inset 0 0 35px rgba(170,255,140,.06);
   }
 }
-@keyframes natureWindDots {
-  0%   { transform: translateX(18px); opacity: .18; }
-  10%  { opacity: .78; }
-  90%  { opacity: .72; }
-  100% { transform: translateX(-26px); opacity: .12; }
+@keyframes natureSporesDrift {
+  0%   { transform: translateY(0px) translateX(0px); opacity: .80; }
+  25%  { transform: translateY(-80px) translateX(4px); opacity: .90; }
+  50%  { transform: translateY(-160px) translateX(-3px); opacity: .70; }
+  75%  { transform: translateY(-260px) translateX(5px); opacity: .50; }
+  100% { transform: translateY(-380px) translateX(-2px); opacity: 0; }
 }
 @keyframes natureVeil {
-  0%   { transform: translateX(20px); opacity: .22; }
-  50%  { opacity: .40; }
-  100% { transform: translateX(-18px); opacity: .18; }
+  0%   { opacity: .30; }
+  50%  { opacity: .55; }
+  100% { opacity: .28; }
 }
 
 /* VOID */
