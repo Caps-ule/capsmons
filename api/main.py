@@ -3218,7 +3218,21 @@ def resolve_drop(drop_id: int):
 
             elif mode == 'random':
                 if participants:
-                    winners = [random.choice(participants)]
+                    # Récupérer la chance de grab de l'item du drop
+                    cur.execute(
+                        "SELECT COALESCE(grab_chance, 0.5) FROM items WHERE key=%s;",
+                        (ticket_key,),
+                    )
+                    row_chance = cur.fetchone()
+                    grab_chance = float(row_chance[0]) if row_chance else 0.5
+                    grab_chance = max(0.0, min(1.0, grab_chance))
+
+                    # Chaque participant tente sa chance indépendamment
+                    winners = [p for p in participants if random.random() < grab_chance]
+
+                    # Fallback : si personne n'a gagné, 1 gagnant garanti
+                    if not winners:
+                        winners = [random.choice(participants)]
 
             elif mode == 'coop':
                 # Tout le monde gagne, XP selon le nombre
@@ -3286,11 +3300,22 @@ def resolve_drop(drop_id: int):
                     winner_login = None  # pas de winner unique en coop
 
                 else:
-                    # first / random : comportement inchangé
+                    # first / random : distribuer l'item à tous les gagnants
                     for w in winners:
                         grant_xp(w, int(xp_bonus))
                         inv_add(w, ticket_key, int(ticket_qty))
-                    winner_login = winners[0] if mode in ('first', 'random') else None
+                    winner_login = winners[0] if winners else None
+
+                    # Annonce côté serveur pour random (multi-gagnants possible)
+                    if mode == 'random':
+                        if len(winners) == 1:
+                            _announce(f"🎲 Drop '{title}' terminé ! @{winners[0]} remporte l'item !")
+                        elif len(winners) <= 5:
+                            parts = ", ".join(f"@{w}" for w in winners)
+                            _announce(f"🎲 Drop '{title}' terminé ! {len(winners)} chanceux : {parts} remportent l'item !")
+                        else:
+                            parts = ", ".join(f"@{w}" for w in winners[:5])
+                            _announce(f"🎲 Drop '{title}' terminé ! {len(winners)} gagnants : {parts}... et plus !")
 
                 cur.execute(
                     """
@@ -3848,6 +3873,10 @@ def init_db():
             if not column_exists(cur, "active_event", "drop_launched"):
                 cur.execute(
                     "ALTER TABLE active_event ADD COLUMN drop_launched BOOLEAN DEFAULT FALSE;"
+                )
+            if not column_exists(cur, "items", "grab_chance"):
+                cur.execute(
+                    "ALTER TABLE items ADD COLUMN grab_chance FLOAT NOT NULL DEFAULT 0.5;"
                 )
             cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
@@ -12201,7 +12230,8 @@ def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT key, name, COALESCE(icon_url,''), drop_weight,
-                       COALESCE(xp_gain,0), COALESCE(happiness_gain,0)
+                       COALESCE(xp_gain,0), COALESCE(happiness_gain,0),
+                       COALESCE(grab_chance,0.5)
                 FROM items
                 ORDER BY key ASC;
             """)
@@ -12214,6 +12244,7 @@ def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
             "drop_weight":    int(r[3] or 0),
             "xp_gain":        int(r[4] or 0),
             "happiness_gain": int(r[5] or 0),
+            "grab_chance":    float(r[6] if r[6] is not None else 0.5),
         }
         for r in rows
     ]
@@ -12233,6 +12264,7 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
     drop_weight   = max(0, int(payload.get("drop_weight", 0) or 0))
     xp_gain       = max(0, int(payload.get("xp_gain", 0) or 0))
     happiness_gain = max(0, int(payload.get("happiness_gain", 0) or 0))
+    grab_chance    = max(0.0, min(1.0, float(payload.get("grab_chance", 0.5) or 0.5)))
 
     if not key:
         raise HTTPException(status_code=400, detail="key requis")
@@ -12248,10 +12280,27 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
         with conn.cursor() as cur:
             # Vérifier si la table items a bien les colonnes xp_gain et happiness_gain
             # (au cas où la table a été créée sans ces colonnes)
-            has_xp  = column_exists(cur, "items", "xp_gain")
-            has_hap = column_exists(cur, "items", "happiness_gain")
+            has_xp   = column_exists(cur, "items", "xp_gain")
+            has_hap  = column_exists(cur, "items", "happiness_gain")
+            has_grab = column_exists(cur, "items", "grab_chance")
 
-            if has_xp and has_hap:
+            if not has_grab:
+                cur.execute("ALTER TABLE items ADD COLUMN grab_chance FLOAT NOT NULL DEFAULT 0.5;")
+                has_grab = True
+
+            if has_xp and has_hap and has_grab:
+                cur.execute("""
+                    INSERT INTO items (key, name, icon_url, drop_weight, xp_gain, happiness_gain, grab_chance)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (key) DO UPDATE
+                      SET name           = EXCLUDED.name,
+                          icon_url       = EXCLUDED.icon_url,
+                          drop_weight    = EXCLUDED.drop_weight,
+                          xp_gain        = EXCLUDED.xp_gain,
+                          happiness_gain = EXCLUDED.happiness_gain,
+                          grab_chance    = EXCLUDED.grab_chance;
+                """, (key, name, icon_url or None, drop_weight, xp_gain, happiness_gain, grab_chance))
+            elif has_xp and has_hap:
                 cur.execute("""
                     INSERT INTO items (key, name, icon_url, drop_weight, xp_gain, happiness_gain)
                     VALUES (%s, %s, %s, %s, %s, %s)
@@ -12263,7 +12312,6 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
                           happiness_gain = EXCLUDED.happiness_gain;
                 """, (key, name, icon_url or None, drop_weight, xp_gain, happiness_gain))
             else:
-                # Fallback : colonnes minimales
                 cur.execute("""
                     INSERT INTO items (key, name, icon_url, drop_weight)
                     VALUES (%s, %s, %s, %s)
