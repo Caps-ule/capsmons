@@ -7977,221 +7977,249 @@ body {
 }
 /* GLITCH */
 .tcg-card.frame-glitch {
-  --frame-c1: rgba(0,255,200,0.55); --frame-c2: rgba(0,255,200,0.12);
-  --frame-glow1: rgba(0,255,180,0.35); --frame-glow2: rgba(255,0,200,0.15);
-  --frame-bg1: #010a06; --frame-bg2: #020f08; --frame-bg3: #010a06;
-  --frame-holo1: rgba(0,255,180,.14); --frame-holo2: rgba(255,0,200,.12); --frame-holo3: rgba(0,200,255,.10);
-  --frame-name-glow: rgba(0,255,180,.9);
-  --frame-type-color: #00ffb4; --frame-type-border: rgba(0,255,180,.5); --frame-type-bg: rgba(0,255,180,.09);
-  --frame-header-border: rgba(0,255,180,0.25);
-  --frame-corner-tl: #00ffb4; --frame-corner-tr: #ff00cc; --frame-corner-bl: #00ffb4; --frame-corner-br: #ff00cc;
-  --frame-xp-color: #00ffb4; --frame-hp-color: #ff00cc;
+  --frame-c1: rgba(0,255,200,0.50);
+  --frame-c2: rgba(0,255,200,0.10);
+  --frame-glow1: rgba(0,255,180,0.28);
+  --frame-glow2: rgba(255,0,200,0.14);
+  --frame-bg1: #020b08;
+  --frame-bg2: #04110d;
+  --frame-bg3: #020906;
+  --frame-holo1: rgba(0,255,180,.10);
+  --frame-holo2: rgba(255,0,200,.08);
+  --frame-holo3: rgba(0,200,255,.08);
+  --frame-name-glow: rgba(0,255,180,.75);
+  --frame-type-color: #00ffb4;
+  --frame-type-border: rgba(0,255,180,.38);
+  --frame-type-bg: rgba(0,255,180,.08);
+  --frame-header-border: rgba(0,255,180,0.18);
+  --frame-corner-tl: #00ffb4;
+  --frame-corner-tr: #ff00cc;
+  --frame-corner-bl: #00ffb4;
+  --frame-corner-br: #ff00cc;
+  --frame-xp-color: #00ffb4;
+  --frame-hp-color: #ff00cc;
+  isolation: isolate;
   animation:
-    framePulse 1.8s ease-in-out infinite,
-    frameGlitch 3s steps(1) infinite,
-    frameFlicker 0.12s steps(1) infinite;
+    glitchPulse 2.4s ease-in-out infinite,
+    glitchMicroJitter 6s steps(1) infinite,
+    glitchFlicker 0.9s steps(1) infinite;
 }
 
-/* Pulse intense — la carte respire de lumière */
-@keyframes framePulse {
-  0%,100% {
+@keyframes glitchPulse {
+  0%, 100% {
     box-shadow:
-      0 0 0 1px rgba(0,255,180,0.3),
-      0 0 12px rgba(0,255,180,0.20),
-      0 0 35px rgba(0,255,180,0.08),
-      inset 0 0 60px rgba(0,0,0,0.5);
+      0 0 0 1px rgba(0,255,180,0.20),
+      0 0 10px rgba(0,255,180,0.14),
+      0 0 30px rgba(0,255,180,0.05),
+      inset 0 0 40px rgba(0,0,0,0.45);
   }
-  40% {
+  50% {
     box-shadow:
-      0 0 0 2px rgba(0,255,180,0.8),
-      0 0 25px rgba(0,255,180,0.70),
-      0 0 60px rgba(255,0,200,0.35),
-      0 0 110px rgba(0,255,180,0.18),
-      0 0 160px rgba(0,200,255,0.08),
-      inset 0 0 40px rgba(0,255,180,0.04);
-  }
-  55% {
-    box-shadow:
-      0 0 0 1px rgba(255,0,200,0.6),
-      0 0 20px rgba(255,0,200,0.45),
-      0 0 55px rgba(0,255,180,0.20),
-      0 0 100px rgba(255,0,200,0.10),
-      inset 0 0 60px rgba(0,0,0,0.5);
+      0 0 0 1px rgba(0,255,180,0.45),
+      0 0 18px rgba(0,255,180,0.32),
+      0 0 48px rgba(255,0,200,0.14),
+      0 0 80px rgba(0,200,255,0.08),
+      inset 0 0 32px rgba(0,255,180,0.03);
   }
 }
 
-/* Flicker irrégulier très subtil */
-@keyframes frameFlicker {
-  0%,5%,10%,15%,20%,25%,30%,35%,40%,45%,50%,
-  55%,60%,65%,70%,75%,80%,85%,90%,95%,100% { opacity: 1; }
-  3%  { opacity: 0.92; }
-  17% { opacity: 0.96; }
-  42% { opacity: 0.88; }
-  67% { opacity: 0.94; }
-  83% { opacity: 0.90; }
+@keyframes glitchFlicker {
+  0%, 100% { opacity: 1; }
+  8%  { opacity: .985; }
+  9%  { opacity: .93; }
+  10% { opacity: 1; }
+  42% { opacity: .97; }
+  43% { opacity: .90; }
+  44% { opacity: 1; }
+  77% { opacity: .96; }
+  78% { opacity: .92; }
+  79% { opacity: 1; }
 }
 
-/* Glitch violent avec déchirures en tranches */
-@keyframes frameGlitch {
-  0%,79%,100% {
-    transform: translate(0,0) skewX(0deg);
+@keyframes glitchMicroJitter {
+  0%, 84%, 100% {
+    transform: translate3d(0,0,0);
     filter: hue-rotate(0deg) brightness(1);
-    clip-path: none;
   }
-  /* Déchirure 1 */
-  80% {
-    transform: translate(-5px, 0) skewX(-2deg);
-    filter: hue-rotate(90deg) brightness(1.5) saturate(2);
-    clip-path: inset(15% 0 60% 0);
+  85% {
+    transform: translate3d(-1px,0,0);
+    filter: hue-rotate(10deg) brightness(1.04);
   }
-  81% {
-    transform: translate(5px, 0) skewX(2deg);
-    filter: hue-rotate(-60deg) brightness(1.3);
-    clip-path: inset(40% 0 20% 0);
+  86% {
+    transform: translate3d(1px,0,0);
+    filter: hue-rotate(-8deg) brightness(1.06);
   }
-  82% {
-    transform: translate(-2px, 2px) skewX(0deg);
-    filter: hue-rotate(0deg) brightness(1.1);
-    clip-path: inset(0% 0 75% 0);
-  }
-  83% {
-    transform: translate(0,0);
+  87% {
+    transform: translate3d(0,0,0);
     filter: hue-rotate(0deg) brightness(1);
-    clip-path: none;
   }
-  /* Déchirure 2 plus tard */
+  92% {
+    transform: translate3d(0,-1px,0);
+    filter: hue-rotate(18deg) brightness(1.08);
+  }
+  93% {
+    transform: translate3d(0,1px,0);
+    filter: hue-rotate(-12deg) brightness(1.04);
+  }
+  94% {
+    transform: translate3d(0,0,0);
+    filter: hue-rotate(0deg) brightness(1);
+  }
+}
+
+/* Overlay RGB + tranches numériques */
+.tcg-card.frame-glitch::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+  z-index: 20;
+  background:
+    linear-gradient(90deg,
+      rgba(255,0,120,0.05) 0%,
+      transparent 18%,
+      rgba(0,255,180,0.05) 36%,
+      transparent 54%,
+      rgba(0,200,255,0.04) 72%,
+      transparent 100%),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 16px,
+      rgba(255,255,255,0.018) 16px 17px,
+      transparent 17px 34px
+    );
+  mix-blend-mode: screen;
+  animation:
+    glitchRGBDrift 2.8s steps(1) infinite,
+    glitchSliceFlash 5.6s steps(1) infinite;
+}
+
+@keyframes glitchRGBDrift {
+  0%, 100% { transform: translate(0,0); opacity: .70; }
+  20% { transform: translate(-1px,0); opacity: .82; }
+  21% { transform: translate(1px,0); opacity: .55; }
+  22% { transform: translate(0,0); opacity: .72; }
+  66% { transform: translate(1px,-1px); opacity: .78; }
+  67% { transform: translate(-1px,1px); opacity: .58; }
+  68% { transform: translate(0,0); opacity: .72; }
+}
+
+@keyframes glitchSliceFlash {
+  0%, 87%, 100% {
+    clip-path: inset(0 0 0 0);
+    opacity: .65;
+  }
   88% {
-    transform: translate(4px, -1px) skewX(1deg);
-    filter: hue-rotate(-90deg) brightness(1.4) saturate(1.8);
-    clip-path: inset(60% 0 5% 0);
+    clip-path: polygon(0 0,100% 0,100% 22%,0 18%);
+    opacity: .95;
   }
   89% {
-    transform: translate(-4px, 1px) skewX(-1deg);
-    filter: hue-rotate(45deg) brightness(1.2);
-    clip-path: inset(25% 0 50% 0);
+    clip-path: polygon(0 38%,100% 42%,100% 60%,0 55%);
+    opacity: .78;
   }
   90% {
-    transform: translate(0,0) skewX(0deg);
-    filter: hue-rotate(0deg) brightness(1);
-    clip-path: none;
+    clip-path: polygon(0 74%,100% 70%,100% 100%,0 100%);
+    opacity: .90;
+  }
+  91% {
+    clip-path: inset(0 0 0 0);
+    opacity: .65;
   }
 }
 
-/* Aberration chromatique sur la carte — pseudo shift RGB */
+/* Liseré du header qui décroche légèrement */
 .tcg-card.frame-glitch .card-header::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg,
-    rgba(255,0,100,0.04) 0%,
-    transparent 33%,
-    rgba(0,255,180,0.04) 66%,
-    transparent 100%);
-  mix-blend-mode: screen;
   pointer-events: none;
-  animation: chromaShift 2.1s steps(1) infinite;
   z-index: 10;
-}
-@keyframes chromaShift {
-  0%,60%,100% { transform: translate(0,0); opacity: 1; }
-  20%  { transform: translate(-2px, 0); opacity: 0.8; }
-  40%  { transform: translate(2px, 0);  opacity: 0.9; }
-  80%  { transform: translate(-1px, 1px); opacity: 0.7; }
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      rgba(255,0,200,.10) 28%,
+      rgba(255,255,255,.08) 50%,
+      rgba(0,255,180,.10) 72%,
+      transparent 100%);
+  mix-blend-mode: screen;
+  animation: glitchHeaderSkew 4.2s steps(1) infinite;
 }
 
-/* Deux lignes de scan en décalé */
+@keyframes glitchHeaderSkew {
+  0%, 89%, 100% {
+    transform: translateX(0) skewX(0deg);
+    opacity: .55;
+  }
+  90% {
+    transform: translateX(-2px) skewX(-6deg);
+    opacity: .95;
+  }
+  91% {
+    transform: translateX(2px) skewX(4deg);
+    opacity: .82;
+  }
+  92% {
+    transform: translateX(0) skewX(0deg);
+    opacity: .55;
+  }
+}
+
+/* Scanline fine rapide */
 .tcg-card.frame-glitch .card-img-wrap::before {
   content: '';
   position: absolute;
-  left: 0; right: 0;
+  left: 0;
+  right: 0;
+  top: -8%;
   height: 2px;
-  background: linear-gradient(90deg,
-    transparent 0%,
-    rgba(0,255,180,0.0) 10%,
-    rgba(0,255,180,0.9) 30%,
-    rgba(255,255,255,0.6) 50%,
-    rgba(255,0,200,0.9) 70%,
-    rgba(255,0,200,0.0) 90%,
-    transparent 100%);
+  pointer-events: none;
   z-index: 4;
-  pointer-events: none;
-  animation: scanLine1 2.2s linear infinite;
-  filter: blur(0.5px);
-}
-@keyframes scanLine1 {
-  0%   { top: -4px; opacity: 0; }
-  3%   { opacity: 1; }
-  97%  { opacity: 1; }
-  100% { top: 101%; opacity: 0; }
-}
-
-/* Deuxième ligne plus épaisse et décalée */
-.tcg-card.frame-glitch .card-img-wrap::after {
-  content: '' !important;
-  position: absolute !important;
-  left: 0; right: 0;
-  height: 5px !important;
-  top: 0 !important;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgba(255,0,200,0.5) 20%,
-    rgba(0,255,180,0.3) 50%,
-    rgba(255,0,200,0.5) 80%,
-    transparent 100%) !important;
-  z-index: 5 !important;
-  pointer-events: none !important;
-  animation: scanLine2 3.7s linear infinite 1.1s !important;
-  filter: blur(1px) !important;
-  /* Override du vignette ::after existant sur card-img-wrap */
-  border-radius: 0 !important;
-}
-@keyframes scanLine2 {
-  0%   { top: -8px; opacity: 0; }
-  4%   { opacity: 0.7; }
-  96%  { opacity: 0.7; }
-  100% { top: 101%; opacity: 0; }
+    rgba(0,255,180,0.0) 12%,
+    rgba(0,255,180,0.95) 35%,
+    rgba(255,255,255,0.75) 50%,
+    rgba(255,0,200,0.95) 65%,
+    rgba(255,0,200,0.0) 88%,
+    transparent 100%);
+  filter: blur(.4px);
+  animation: glitchScanFast 2.6s linear infinite;
 }
 
-/* Reflet holographique animé */
-.tcg-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 30%,
-    var(--frame-holo1) 40%,
-    var(--frame-holo2) 50%,
-    var(--frame-holo3) 60%,
-    transparent 70%
-  );
-  background-size: 200% 200%;
-  animation: holoShift 3s ease-in-out infinite;
-  border-radius: 18px;
-  pointer-events: none;
-  z-index: 20;
-}
-@keyframes holoShift {
-  0%   { background-position: 0% 0%; opacity: .6; }
-  50%  { background-position: 100% 100%; opacity: 1; }
-  100% { background-position: 0% 0%; opacity: .6; }
+@keyframes glitchScanFast {
+  0%   { top: -8%; opacity: 0; }
+  6%   { opacity: 1; }
+  94%  { opacity: 1; }
+  100% { top: 108%; opacity: 0; }
 }
 
-/* Scanlines */
-.tcg-card::after {
+/* Bande large occasionnelle */
+.tcg-card.frame-glitch .card-img-wrap::after {
   content: '';
   position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0,0,0,0.08) 2px,
-    rgba(0,0,0,0.08) 3px
-  );
+  left: 0;
+  right: 0;
+  top: -12%;
+  height: 8px;
   pointer-events: none;
-  z-index: 21;
-  border-radius: 18px;
+  z-index: 5;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,0,200,.35) 20%,
+    rgba(255,255,255,.22) 50%,
+    rgba(0,255,180,.35) 80%,
+    transparent 100%);
+  filter: blur(1.2px);
+  animation: glitchScanWide 4.8s linear infinite 1.1s;
+}
+
+@keyframes glitchScanWide {
+  0%, 70% { top: -12%; opacity: 0; }
+  72% { opacity: .85; }
+  96% { opacity: .85; }
+  100% { top: 112%; opacity: 0; }
 }
 
 /* ── HEADER CARTE ── */
