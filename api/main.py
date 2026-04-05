@@ -1538,7 +1538,7 @@ def _spawn_drop_db(cur, mode: str, title: str, media_url: str, duration: int, ti
     if not title or not media_url:
         raise HTTPException(status_code=400, detail="Missing title/media_url")
 
-    duration = max(5, min(duration, 300))
+    duration = max(5, min(duration, 30))
     ticket_qty = max(1, min(ticket_qty, 50))
     xp_bonus = max(0, min(xp_bonus, 1000))
 
@@ -2665,7 +2665,7 @@ def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
     require_admin(credentials)
     keys = [
         "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
-        "auto_drop_duration_seconds",
+        "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
         "auto_drop_pick_kind", "auto_drop_mode",
         "coop_drop_duration_seconds", "coop_drop_interval_seconds",
         "coop_xp_t1", "coop_xp_t2", "coop_xp_t3", "coop_xp_t4",
@@ -2683,7 +2683,8 @@ def admin_settings_save(payload: dict, credentials: HTTPBasicCredentials = Depen
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
         "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
-        "auto_drop_duration_seconds":     lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
         "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
         "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
         "coop_drop_duration_seconds":     lambda v: str(max(10,   min(300,  int(v)))),
@@ -3217,21 +3218,7 @@ def resolve_drop(drop_id: int):
 
             elif mode == 'random':
                 if participants:
-                    # Récupérer la chance de grab de l'item du drop
-                    cur.execute(
-                        "SELECT COALESCE(grab_chance, 0.5) FROM items WHERE key=%s;",
-                        (ticket_key,),
-                    )
-                    row_chance = cur.fetchone()
-                    grab_chance = float(row_chance[0]) if row_chance else 0.5
-                    grab_chance = max(0.0, min(1.0, grab_chance))
-
-                    # Chaque participant tente sa chance indépendamment
-                    winners = [p for p in participants if random.random() < grab_chance]
-
-                    # Fallback : si personne n'a eu de chance, on tire 1 gagnant quand même
-                    if not winners:
-                        winners = [random.choice(participants)]
+                    winners = [random.choice(participants)]
 
             elif mode == 'coop':
                 # Tout le monde gagne, XP selon le nombre
@@ -3299,22 +3286,11 @@ def resolve_drop(drop_id: int):
                     winner_login = None  # pas de winner unique en coop
 
                 else:
-                    # first / random : distribuer l'item à tous les gagnants
+                    # first / random : comportement inchangé
                     for w in winners:
                         grant_xp(w, int(xp_bonus))
                         inv_add(w, ticket_key, int(ticket_qty))
-                    winner_login = winners[0] if winners else None
-
-                    # Annonce différenciée selon le mode
-                    if mode == 'random':
-                        if len(winners) == 1:
-                            _announce(f"🎲 Drop '{title}' terminé ! @{winners[0]} remporte l'item !")
-                        elif len(winners) <= 5:
-                            parts = ", ".join(f"@{w}" for w in winners)
-                            _announce(f"🎲 Drop '{title}' terminé ! {len(winners)} chanceux : {parts} remportent l'item !")
-                        else:
-                            parts = ", ".join(f"@{w}" for w in winners[:5])
-                            _announce(f"🎲 Drop '{title}' terminé ! {len(winners)} gagnants : {parts}... et plus !")
+                    winner_login = winners[0] if mode in ('first', 'random') else None
 
                 cur.execute(
                     """
@@ -3431,7 +3407,8 @@ def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
         "auto_drop_enabled",
         "auto_drop_min_seconds",
         "auto_drop_max_seconds",
-        "auto_drop_duration_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
         "auto_drop_pick_kind",
         "auto_drop_mode",
         "auto_drop_ticket_qty",
@@ -3454,7 +3431,8 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes","on") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
         "auto_drop_max_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
-        "auto_drop_duration_seconds":     lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_min_seconds": lambda v: str(max(5,    min(300,  int(v)))),
+        "auto_drop_duration_max_seconds": lambda v: str(max(5,    min(300,  int(v)))),
         "auto_drop_pick_kind":            lambda v: v if v in ("any","ticket","egg") else "any",
         "auto_drop_mode":                 lambda v: v if v in ("first","random","coop") else "random",
         "auto_drop_ticket_qty":           lambda v: str(max(1,    min(50,   int(v)))),
@@ -3468,7 +3446,8 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
                     "enabled": "auto_drop_enabled",
                     "min_seconds": "auto_drop_min_seconds",
                     "max_seconds": "auto_drop_max_seconds",
-                    "duration_seconds": "auto_drop_duration_seconds",
+                    "duration_min": "auto_drop_duration_min_seconds",
+                    "duration_max": "auto_drop_duration_max_seconds",
                     "pick_kind": "auto_drop_pick_kind",
                     "mode": "auto_drop_mode",
                     "ticket_qty": "auto_drop_ticket_qty",
@@ -3494,7 +3473,8 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
         "auto_drop_pick_kind",
         "auto_drop_mode",
         "auto_drop_ticket_qty",
-        "auto_drop_duration_seconds",
+        "auto_drop_duration_min_seconds",
+        "auto_drop_duration_max_seconds",
         "auto_drop_fallback_media_url",
     ]
 
@@ -3513,7 +3493,11 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
     qty = int(cfg.get("auto_drop_ticket_qty") or 1)
     qty = max(1, min(qty, 50))
 
-    duration = max(5, min(300, int(cfg.get("auto_drop_duration_seconds") or 30)))
+    dmin = int(cfg.get("auto_drop_duration_min_seconds") or 10)
+    dmax = int(cfg.get("auto_drop_duration_max_seconds") or 20)
+    dmin = max(5, dmin)
+    dmax = max(dmin, dmax)
+    duration = random.randint(dmin, dmax)
 
     fallback = (cfg.get("auto_drop_fallback_media_url") or "").strip()
 
@@ -3865,10 +3849,6 @@ def init_db():
                 cur.execute(
                     "ALTER TABLE active_event ADD COLUMN drop_launched BOOLEAN DEFAULT FALSE;"
                 )
-            if not column_exists(cur, "items", "grab_chance"):
-                cur.execute(
-                    "ALTER TABLE items ADD COLUMN grab_chance FLOAT NOT NULL DEFAULT 0.5;"
-                )
             cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
               msg_id TEXT PRIMARY KEY,
@@ -3940,6 +3920,14 @@ def init_db():
                         CHECK (status IN ('active','resolving','resolved','expired'));
                 EXCEPTION WHEN others THEN NULL;
                 END $$;
+            """)
+
+            # Migration card_frame : cadre cosmétique par CM + dans les events overlay
+            cur.execute("""
+                ALTER TABLE creatures_v2
+                  ADD COLUMN IF NOT EXISTS card_frame TEXT DEFAULT NULL;
+                ALTER TABLE overlay_events
+                  ADD COLUMN IF NOT EXISTS card_frame TEXT DEFAULT NULL;
             """)
 
 
@@ -4209,7 +4197,7 @@ def auto_drop_get_config(x_api_key: str | None = Header(default=None)):
                 "mode": (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower(),
                 "min_seconds": as_int(kv_get(cur, "auto_drop_min_seconds", "900"), 900),
                 "max_seconds": as_int(kv_get(cur, "auto_drop_max_seconds", "1500"), 1500),
-                "duration_seconds": as_int(kv_get(cur, "auto_drop_duration_seconds", "30"), 30),
+                "duration_seconds": as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40),
                 "xp_bonus": as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0),
                 "ticket_qty": as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1),
                 "force_live": as_bool(kv_get(cur, "auto_drop_force_live", "false")),
@@ -4238,11 +4226,7 @@ def auto_drop_trigger_once(payload: dict | None = None, x_api_key: str | None = 
             # 2) lire config
             kind = override_kind or (kv_get(cur, "auto_drop_kind", "any") or "any").strip().lower()
             mode = override_mode or (kv_get(cur, "auto_drop_mode", "random") or "random").strip().lower()
-
-            if override_duration is not None:
-                duration = int(override_duration)
-            else:
-                duration = as_int(kv_get(cur, "auto_drop_duration_seconds", "30"), 30)
+            duration = override_duration if override_duration is not None else as_int(kv_get(cur, "auto_drop_duration_seconds", "40"), 40)
 
             xp_bonus = as_int(kv_get(cur, "auto_drop_xp_bonus", "0"), 0)
             ticket_qty = as_int(kv_get(cur, "auto_drop_ticket_qty", "1"), 1)
@@ -4252,7 +4236,7 @@ def auto_drop_trigger_once(payload: dict | None = None, x_api_key: str | None = 
             if mode not in ("random", "first", "coop"):
                 mode = "random"
 
-            duration = max(5, min(300, int(duration)))
+            duration = max(5, min(60, int(duration)))
             xp_bonus = max(0, min(1000, int(xp_bonus)))
             ticket_qty = max(1, min(50, int(ticket_qty)))
 
@@ -6354,10 +6338,10 @@ input[type=range] { flex:1; accent-color:var(--cyan); }
 .corner-tl, .corner-tr, .corner-bl, .corner-br {
   position: absolute; width: 14px; height: 14px; z-index: 4;
 }
-.corner-tl { top:6px; left:6px;   border-top:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
-.corner-tr { top:6px; right:6px;  border-top:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
-.corner-bl { bottom:6px; left:6px;  border-bottom:1.5px solid #00e5ff; border-left:1.5px solid #00e5ff; }
-.corner-br { bottom:6px; right:6px; border-bottom:1.5px solid #ff2d78; border-right:1.5px solid #ff2d78; }
+.corner-tl { top:6px; left:6px;   border-top:1.5px solid var(--frame-corner-tl); border-left:1.5px solid var(--frame-corner-tl); }
+.corner-tr { top:6px; right:6px;  border-top:1.5px solid var(--frame-corner-tr); border-right:1.5px solid var(--frame-corner-tr); }
+.corner-bl { bottom:6px; left:6px;  border-bottom:1.5px solid var(--frame-corner-bl); border-left:1.5px solid var(--frame-corner-bl); }
+.corner-br { bottom:6px; right:6px; border-bottom:1.5px solid var(--frame-corner-br); border-right:1.5px solid var(--frame-corner-br); }
 .viewer-badge {
   position: absolute;
   bottom: 10px; left: 10px; right: 10px;
@@ -7597,8 +7581,7 @@ const avatarsEl  = document.getElementById('avatars-strip');
 
 let showing = false;
 let lastDropId = null;
-let totalDuration = null;   // durée initiale du drop courant
-let _dropDurations = {};    // cache par drop_id pour survivre aux rechargements
+let totalDuration = null;
 let spawnedInitial = false;
 let _knownLogins = [];
 
@@ -7752,10 +7735,10 @@ async function tick() {
 
     const d = j.drop;
 
-    // Nouveau drop détecté
+    // Nouveau drop
     if (d.id && d.id !== lastDropId) {
       lastDropId = d.id;
-      totalDuration = d.total_duration || d.remaining || 30;
+      totalDuration = d.remaining; // on capture la durée initiale
       playDropSfx();
       showPanel();
     }
@@ -7773,9 +7756,9 @@ async function tick() {
     timerEl.textContent = remaining + 's';
     timerEl.className = urgent ? 'urgent' : '';
 
-    // Progress — basé sur la durée totale fournie par le serveur (stable même après rechargement)
-    const dur = d.total_duration || totalDuration || 30;
-    const pct = (dur > 0) ? Math.max(0, (remaining / dur) * 100) : 0;
+    // Progress (basé sur le temps restant)
+    if (!totalDuration) totalDuration = remaining;
+    const pct = totalDuration > 0 ? Math.max(0, (remaining / totalDuration) * 100) : 0;
     fillEl.style.width = pct + '%';
     fillEl.className = urgent ? 'urgent' : '';
 
@@ -7852,9 +7835,9 @@ body {
   display: none;
   flex-direction: column;
 
-  background: linear-gradient(160deg, #04090f 0%, #070e1d 40%, #050b18 100%);
+  background: linear-gradient(160deg, var(--frame-bg1) 0%, var(--frame-bg2) 40%, var(--frame-bg3) 100%);
   border-radius: 18px;
-  border: 1px solid rgba(0,229,255,0.3);
+  border: 1px solid var(--frame-c1);
   overflow: hidden;
 
   opacity: 0;
@@ -7863,14 +7846,105 @@ body {
   will-change: transform, opacity;
 
   box-shadow:
-    0 0 0 1px rgba(0,229,255,0.08),
-    0 0 30px rgba(0,229,255,0.15),
-    0 0 80px rgba(0,229,255,0.06),
+    0 0 0 1px var(--frame-c2),
+    0 0 30px var(--frame-glow1),
+    0 0 80px var(--frame-glow2),
     inset 0 0 60px rgba(0,0,0,0.5);
 }
 .tcg-card.showing {
   opacity: 1;
   transform: scale(1) rotateY(0deg);
+}
+
+/* ── THÈMES DE CADRES ── */
+:root {
+  --frame-c1: rgba(0,229,255,0.3);
+  --frame-c2: rgba(0,229,255,0.08);
+  --frame-glow1: rgba(0,229,255,0.15);
+  --frame-glow2: rgba(0,229,255,0.06);
+  --frame-bg1: #04090f;
+  --frame-bg2: #070e1d;
+  --frame-bg3: #050b18;
+  --frame-holo1: rgba(0,229,255,.06);
+  --frame-holo2: rgba(255,45,120,.06);
+  --frame-holo3: rgba(0,255,157,.05);
+  --frame-name-glow: rgba(0,229,255,.5);
+  --frame-type-color: #00e5ff;
+  --frame-type-border: rgba(0,229,255,.3);
+  --frame-type-bg: rgba(0,229,255,.06);
+  --frame-header-border: rgba(0,229,255,0.1);
+  --frame-corner-tl: #00e5ff;
+  --frame-corner-tr: #ff2d78;
+  --frame-corner-bl: #00e5ff;
+  --frame-corner-br: #ff2d78;
+  --frame-xp-color: #00e5ff;
+  --frame-hp-color: #00ff9d;
+}
+.tcg-card.frame-gold {
+  --frame-c1: rgba(255,200,50,0.5); --frame-c2: rgba(255,200,50,0.12);
+  --frame-glow1: rgba(255,180,0,0.35); --frame-glow2: rgba(255,140,0,0.15);
+  --frame-bg1: #0f0a01; --frame-bg2: #1a1100; --frame-bg3: #120d00;
+  --frame-holo1: rgba(255,200,50,.10); --frame-holo2: rgba(255,140,0,.08); --frame-holo3: rgba(255,220,80,.06);
+  --frame-name-glow: rgba(255,200,50,.7);
+  --frame-type-color: #ffd700; --frame-type-border: rgba(255,200,50,.4); --frame-type-bg: rgba(255,200,50,.08);
+  --frame-header-border: rgba(255,200,50,0.2);
+  --frame-corner-tl: #ffd700; --frame-corner-tr: #ff9900; --frame-corner-bl: #ffd700; --frame-corner-br: #ff9900;
+  --frame-xp-color: #ffd700; --frame-hp-color: #ffaa00;
+}
+.tcg-card.frame-fire {
+  --frame-c1: rgba(255,80,20,0.5); --frame-c2: rgba(255,80,20,0.12);
+  --frame-glow1: rgba(255,60,0,0.35); --frame-glow2: rgba(255,120,0,0.15);
+  --frame-bg1: #0f0200; --frame-bg2: #1a0500; --frame-bg3: #120300;
+  --frame-holo1: rgba(255,80,20,.10); --frame-holo2: rgba(255,150,0,.08); --frame-holo3: rgba(255,200,50,.06);
+  --frame-name-glow: rgba(255,80,20,.7);
+  --frame-type-color: #ff4500; --frame-type-border: rgba(255,80,20,.4); --frame-type-bg: rgba(255,80,20,.08);
+  --frame-header-border: rgba(255,80,20,0.2);
+  --frame-corner-tl: #ff4500; --frame-corner-tr: #ff9900; --frame-corner-bl: #ff4500; --frame-corner-br: #ff9900;
+  --frame-xp-color: #ff4500; --frame-hp-color: #ff7700;
+}
+.tcg-card.frame-void {
+  --frame-c1: rgba(160,50,255,0.5); --frame-c2: rgba(160,50,255,0.12);
+  --frame-glow1: rgba(130,0,255,0.35); --frame-glow2: rgba(200,50,255,0.15);
+  --frame-bg1: #060010; --frame-bg2: #0c0020; --frame-bg3: #080015;
+  --frame-holo1: rgba(160,50,255,.10); --frame-holo2: rgba(220,80,255,.08); --frame-holo3: rgba(100,0,255,.06);
+  --frame-name-glow: rgba(160,50,255,.7);
+  --frame-type-color: #b44dff; --frame-type-border: rgba(160,50,255,.4); --frame-type-bg: rgba(160,50,255,.08);
+  --frame-header-border: rgba(160,50,255,0.2);
+  --frame-corner-tl: #b44dff; --frame-corner-tr: #ff44ff; --frame-corner-bl: #b44dff; --frame-corner-br: #ff44ff;
+  --frame-xp-color: #b44dff; --frame-hp-color: #dd88ff;
+}
+.tcg-card.frame-ice {
+  --frame-c1: rgba(140,220,255,0.5); --frame-c2: rgba(140,220,255,0.12);
+  --frame-glow1: rgba(100,200,255,0.35); --frame-glow2: rgba(180,240,255,0.15);
+  --frame-bg1: #000f18; --frame-bg2: #001c28; --frame-bg3: #001218;
+  --frame-holo1: rgba(140,220,255,.10); --frame-holo2: rgba(200,240,255,.08); --frame-holo3: rgba(80,200,255,.06);
+  --frame-name-glow: rgba(140,220,255,.7);
+  --frame-type-color: #7de8ff; --frame-type-border: rgba(140,220,255,.4); --frame-type-bg: rgba(140,220,255,.08);
+  --frame-header-border: rgba(140,220,255,0.2);
+  --frame-corner-tl: #7de8ff; --frame-corner-tr: #b0f4ff; --frame-corner-bl: #7de8ff; --frame-corner-br: #b0f4ff;
+  --frame-xp-color: #7de8ff; --frame-hp-color: #aaffee;
+}
+.tcg-card.frame-nature {
+  --frame-c1: rgba(50,200,80,0.5); --frame-c2: rgba(50,200,80,0.12);
+  --frame-glow1: rgba(30,180,60,0.35); --frame-glow2: rgba(80,220,50,0.15);
+  --frame-bg1: #010f02; --frame-bg2: #021a04; --frame-bg3: #011203;
+  --frame-holo1: rgba(50,200,80,.10); --frame-holo2: rgba(100,220,50,.08); --frame-holo3: rgba(20,255,100,.06);
+  --frame-name-glow: rgba(50,200,80,.7);
+  --frame-type-color: #44cc55; --frame-type-border: rgba(50,200,80,.4); --frame-type-bg: rgba(50,200,80,.08);
+  --frame-header-border: rgba(50,200,80,0.2);
+  --frame-corner-tl: #44cc55; --frame-corner-tr: #88ff44; --frame-corner-bl: #44cc55; --frame-corner-br: #88ff44;
+  --frame-xp-color: #44cc55; --frame-hp-color: #88ff44;
+}
+.tcg-card.frame-shadow {
+  --frame-c1: rgba(180,180,200,0.4); --frame-c2: rgba(180,180,200,0.10);
+  --frame-glow1: rgba(150,150,170,0.25); --frame-glow2: rgba(80,80,100,0.10);
+  --frame-bg1: #040408; --frame-bg2: #08080f; --frame-bg3: #050508;
+  --frame-holo1: rgba(180,180,200,.08); --frame-holo2: rgba(140,140,160,.06); --frame-holo3: rgba(220,220,240,.04);
+  --frame-name-glow: rgba(180,180,200,.5);
+  --frame-type-color: #aaaacc; --frame-type-border: rgba(180,180,200,.3); --frame-type-bg: rgba(180,180,200,.06);
+  --frame-header-border: rgba(180,180,200,0.15);
+  --frame-corner-tl: #aaaacc; --frame-corner-tr: #ccccee; --frame-corner-bl: #aaaacc; --frame-corner-br: #ccccee;
+  --frame-xp-color: #aaaacc; --frame-hp-color: #ccccee;
 }
 
 /* Reflet holographique animé */
@@ -7881,9 +7955,9 @@ body {
   background: linear-gradient(
     115deg,
     transparent 30%,
-    rgba(0,229,255,.06) 40%,
-    rgba(255,45,120,.06) 50%,
-    rgba(0,255,157,.05) 60%,
+    var(--frame-holo1) 40%,
+    var(--frame-holo2) 50%,
+    var(--frame-holo3) 60%,
     transparent 70%
   );
   background-size: 200% 200%;
@@ -7923,7 +7997,7 @@ body {
   align-items: center;
   justify-content: space-between;
   z-index: 5;
-  border-bottom: 1px solid rgba(0,229,255,0.1);
+  border-bottom: 1px solid var(--frame-header-border);
   background: linear-gradient(90deg, rgba(0,229,255,.04) 0%, transparent 100%);
 }
 
@@ -7933,7 +8007,7 @@ body {
   font-weight: 900;
   color: #e8f4ff;
   letter-spacing: .06em;
-  text-shadow: 0 0 15px rgba(0,229,255,.5);
+  text-shadow: 0 0 15px var(--frame-name-glow);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7943,12 +8017,12 @@ body {
 .card-type {
   font-family: 'Share Tech Mono', monospace;
   font-size: 9px;
-  color: #00e5ff;
+  color: var(--frame-type-color);
   letter-spacing: .12em;
   padding: 2px 8px;
-  border: 1px solid rgba(0,229,255,.3);
+  border: 1px solid var(--frame-type-border);
   border-radius: 999px;
-  background: rgba(0,229,255,.06);
+  background: var(--frame-type-bg);
   white-space: nowrap;
 }
 
@@ -8371,8 +8445,19 @@ async function tick() {
     hpFill.style.width = hpPct + '%';
     hpVal.textContent  = hpPct + '%';
 
+    applyTheme(j.card_frame || null);
     showCard();
   } catch(e) {}
+}
+
+function applyTheme(frame) {
+  const FRAMES = ['gold','fire','void','ice','nature','shadow'];
+  // Retirer tous les thèmes existants
+  FRAMES.forEach(f => card.classList.remove('frame-' + f));
+  if (frame && frame.startsWith('card_frame_')) {
+    const name = frame.replace('card_frame_', '');
+    if (FRAMES.includes(name)) card.classList.add('frame-' + name);
+  }
 }
 
 setInterval(tick, 500);
@@ -9056,6 +9141,7 @@ def overlay_state():
                     stage_start_xp,
                     next_stage_xp,
                     happiness,
+                    COALESCE(card_frame, ''),
                     expires_at
                 FROM overlay_events
                 WHERE expires_at > now()
@@ -9080,6 +9166,7 @@ def overlay_state():
         stage_start_xp,
         next_stage_xp,
         happiness,
+        card_frame,
         expires_at,
     ) = r
 
@@ -9129,6 +9216,7 @@ def overlay_state():
         "happiness": {
             "pct": h_pct,
         },
+        "card_frame": card_frame or None,
     }
 
 
@@ -9570,8 +9658,8 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 )
                 new_xp_total = int(cur.fetchone()[0])
 
-                stage_after = max(stage_before, int(stage_from_xp(new_xp_total)))
-                if stage_after > stage_before:
+                stage_after = int(stage_from_xp(new_xp_total))
+                if stage_after != stage_before:
                     cur.execute(
                         """
                         UPDATE creatures_v2
@@ -9625,6 +9713,37 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
                 new_xp_total = active_xp
                 stage_after = stage_before
                 conn.commit()
+
+            elif item_key.startswith("card_frame_"):
+                # ── Cadre de carte cosmétique ──
+                VALID_FRAMES = {"card_frame_gold", "card_frame_fire", "card_frame_void",
+                                "card_frame_ice", "card_frame_nature", "card_frame_shadow"}
+                if item_key not in VALID_FRAMES:
+                    raise HTTPException(status_code=400, detail="Unknown card frame")
+                if not arow:
+                    raise HTTPException(status_code=400, detail="No active CM")
+                frame_name = item_key
+                cur.execute(
+                    """
+                    UPDATE creatures_v2
+                    SET card_frame=%s, updated_at=now()
+                    WHERE twitch_login=%s AND is_active=TRUE;
+                    """,
+                    (frame_name, login),
+                )
+                new_happiness = active_h
+                new_xp_total = active_xp
+                stage_after = stage_before
+                conn.commit()
+                return {
+                    "ok": True,
+                    "twitch_login": login,
+                    "cm_key": str(active_cm_key),
+                    "item_key": item_key,
+                    "item_name": item_name,
+                    "effect": "card_frame",
+                    "card_frame": frame_name,
+                }
 
             else:
                 # item sans effet défini : consommé sans effet
@@ -9689,7 +9808,8 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
         with conn.cursor() as cur:
             # 1️⃣ CM actif (creatures_v2)
             cur.execute("""
-                SELECT cm_key, stage, xp_total, happiness, COALESCE(lineage_key,'')
+                SELECT cm_key, stage, xp_total, happiness, COALESCE(lineage_key,''),
+                       COALESCE(card_frame, '')
                 FROM creatures_v2
                 WHERE twitch_login=%s AND is_active=true
                 LIMIT 1;
@@ -9698,8 +9818,8 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
             if not row:
                 raise HTTPException(status_code=400, detail="No active CM")
 
-            cm_key, stage, xp_total, happiness, lineage_key = (
-                row[0], int(row[1]), int(row[2]), int(row[3] or 0), row[4]
+            cm_key, stage, xp_total, happiness, lineage_key, card_frame = (
+                row[0], int(row[1]), int(row[2]), int(row[3] or 0), row[4], row[5] or None
             )
 
             # 2️⃣ Cas œuf : récupérer l'image via egg_{lineage_key}
@@ -9759,9 +9879,10 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                    stage_start_xp,
                    next_stage_xp,
                    happiness,
+                   card_frame,
                    expires_at)
                 VALUES
-                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                    now() + (%s || ' seconds')::interval);
             """, (
                 login,
@@ -9775,6 +9896,7 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
                 stage_start,
                 next_xp,
                 happiness,
+                card_frame,
                 duration,
             ))
         conn.commit()
@@ -9824,15 +9946,9 @@ def overlay_drop_state():
             logins = [r[0] for r in cur.fetchall()]
             count = len(logins)
 
-            # remaining seconds + total duration
-            cur.execute("""
-                SELECT EXTRACT(EPOCH FROM (%s - now()))::int,
-                       EXTRACT(EPOCH FROM (expires_at - created_at))::int
-                FROM drops WHERE id=%s;
-            """, (expires_at, drop_id))
-            row_time = cur.fetchone()
-            remaining = max(0, int(row_time[0]))
-            total_duration_s = max(1, int(row_time[1]))
+            # remaining seconds
+            cur.execute("SELECT EXTRACT(EPOCH FROM (%s - now()))::int;", (expires_at,))
+            remaining = max(0, int(cur.fetchone()[0]))
 
     return {
         "show": True,
@@ -9842,7 +9958,6 @@ def overlay_drop_state():
             "title": title,
             "media": media_url,
             "remaining": remaining,
-            "total_duration": total_duration_s,
             "count": count,
             "logins": logins,
             "target": int(target_hits) if target_hits is not None else None,
@@ -11849,7 +11964,7 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
             # ── AUTODROP ──────────────────────────────────────────────────
             ad_keys = [
                 "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
-                "auto_drop_duration_seconds",
+                "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
                 "auto_drop_pick_kind", "auto_drop_mode", "auto_drop_ticket_qty",
                 "auto_drop_fallback_media_url",
             ]
@@ -11899,8 +12014,7 @@ def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT key, name, COALESCE(icon_url,''), drop_weight,
-                       COALESCE(xp_gain,0), COALESCE(happiness_gain,0),
-                       COALESCE(grab_chance,0.5)
+                       COALESCE(xp_gain,0), COALESCE(happiness_gain,0)
                 FROM items
                 ORDER BY key ASC;
             """)
@@ -11913,7 +12027,6 @@ def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
             "drop_weight":    int(r[3] or 0),
             "xp_gain":        int(r[4] or 0),
             "happiness_gain": int(r[5] or 0),
-            "grab_chance":    float(r[6] if r[6] is not None else 0.5),
         }
         for r in rows
     ]
@@ -11933,7 +12046,6 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
     drop_weight   = max(0, int(payload.get("drop_weight", 0) or 0))
     xp_gain       = max(0, int(payload.get("xp_gain", 0) or 0))
     happiness_gain = max(0, int(payload.get("happiness_gain", 0) or 0))
-    grab_chance    = max(0.0, min(1.0, float(payload.get("grab_chance", 0.5) or 0.5)))
 
     if not key:
         raise HTTPException(status_code=400, detail="key requis")
@@ -11949,28 +12061,10 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
         with conn.cursor() as cur:
             # Vérifier si la table items a bien les colonnes xp_gain et happiness_gain
             # (au cas où la table a été créée sans ces colonnes)
-            has_xp   = column_exists(cur, "items", "xp_gain")
-            has_hap  = column_exists(cur, "items", "happiness_gain")
-            has_grab = column_exists(cur, "items", "grab_chance")
+            has_xp  = column_exists(cur, "items", "xp_gain")
+            has_hap = column_exists(cur, "items", "happiness_gain")
 
-            # Migration automatique si colonne manquante
-            if not has_grab:
-                cur.execute("ALTER TABLE items ADD COLUMN grab_chance FLOAT NOT NULL DEFAULT 0.5;")
-                has_grab = True
-
-            if has_xp and has_hap and has_grab:
-                cur.execute("""
-                    INSERT INTO items (key, name, icon_url, drop_weight, xp_gain, happiness_gain, grab_chance)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (key) DO UPDATE
-                      SET name           = EXCLUDED.name,
-                          icon_url       = EXCLUDED.icon_url,
-                          drop_weight    = EXCLUDED.drop_weight,
-                          xp_gain        = EXCLUDED.xp_gain,
-                          happiness_gain = EXCLUDED.happiness_gain,
-                          grab_chance    = EXCLUDED.grab_chance;
-                """, (key, name, icon_url or None, drop_weight, xp_gain, happiness_gain, grab_chance))
-            elif has_xp and has_hap:
+            if has_xp and has_hap:
                 cur.execute("""
                     INSERT INTO items (key, name, icon_url, drop_weight, xp_gain, happiness_gain)
                     VALUES (%s, %s, %s, %s, %s, %s)
