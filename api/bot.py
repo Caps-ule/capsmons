@@ -1192,6 +1192,7 @@ class Bot(commands.Bot):
                         'card_frame_ice':    ('❄️', 'Cadre Glace'),
                         'card_frame_nature': ('🌿', 'Cadre Nature'),
                         'card_frame_shadow': ('🌑', 'Cadre Ombre'),
+                        'card_frame_glitch': ('⚡', 'Cadre Glitch'),
                     }
                     emoji, label = _FRAME_LABELS.get(frame_key, ("🖼️", frame_key))
                     await ctx.send(f"@{ctx.author.name} {emoji} {label} appliqué à ton CM ! Fais !show pour voir le résultat ✨")

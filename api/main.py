@@ -7946,6 +7946,66 @@ body {
   --frame-corner-tl: #aaaacc; --frame-corner-tr: #ccccee; --frame-corner-bl: #aaaacc; --frame-corner-br: #ccccee;
   --frame-xp-color: #aaaacc; --frame-hp-color: #ccccee;
 }
+/* GLITCH */
+.tcg-card.frame-glitch {
+  --frame-c1: rgba(0,255,200,0.45); --frame-c2: rgba(0,255,200,0.10);
+  --frame-glow1: rgba(0,255,180,0.30); --frame-glow2: rgba(255,0,200,0.12);
+  --frame-bg1: #010a06; --frame-bg2: #020f08; --frame-bg3: #010a06;
+  --frame-holo1: rgba(0,255,180,.12); --frame-holo2: rgba(255,0,200,.10); --frame-holo3: rgba(0,200,255,.08);
+  --frame-name-glow: rgba(0,255,180,.8);
+  --frame-type-color: #00ffb4; --frame-type-border: rgba(0,255,180,.4); --frame-type-bg: rgba(0,255,180,.07);
+  --frame-header-border: rgba(0,255,180,0.2);
+  --frame-corner-tl: #00ffb4; --frame-corner-tr: #ff00cc; --frame-corner-bl: #00ffb4; --frame-corner-br: #ff00cc;
+  --frame-xp-color: #00ffb4; --frame-hp-color: #ff00cc;
+  animation: framePulse 2.4s ease-in-out infinite, frameGlitch 5s steps(1) infinite;
+}
+
+/* Pulse de lumière sur la bordure */
+@keyframes framePulse {
+  0%,100% {
+    box-shadow:
+      0 0 0 1px var(--frame-c2),
+      0 0 18px rgba(0,255,180,0.25),
+      0 0 50px rgba(0,255,180,0.08),
+      inset 0 0 60px rgba(0,0,0,0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(0,255,180,0.6),
+      0 0 35px rgba(0,255,180,0.55),
+      0 0 80px rgba(255,0,200,0.20),
+      0 0 120px rgba(0,255,180,0.10),
+      inset 0 0 60px rgba(0,0,0,0.5);
+  }
+}
+
+/* Micro-glitch aléatoire sur la carte entière */
+@keyframes frameGlitch {
+  0%,89%,100% { transform: translate(0,0) skewX(0deg); filter: hue-rotate(0deg); }
+  90%          { transform: translate(-3px,0) skewX(-1deg); filter: hue-rotate(30deg) brightness(1.3); }
+  91%          { transform: translate(3px,0)  skewX(1deg);  filter: hue-rotate(-20deg); }
+  92%          { transform: translate(-1px,1px) skewX(0deg); filter: hue-rotate(0deg) brightness(1.1); }
+  93%,99%      { transform: translate(0,0) skewX(0deg); filter: hue-rotate(0deg); }
+  94%          { transform: translate(2px,-1px) skewX(0.5deg); filter: hue-rotate(15deg); }
+}
+
+/* Ligne de scan glitch sur l'image */
+.tcg-card.frame-glitch .card-img-wrap::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,255,180,0.6) 30%, rgba(255,0,200,0.6) 70%, transparent 100%);
+  z-index: 4;
+  pointer-events: none;
+  animation: scanLine 3s linear infinite;
+}
+@keyframes scanLine {
+  0%   { top: -3px; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
 
 /* Reflet holographique animé */
 .tcg-card::before {
@@ -8451,7 +8511,7 @@ async function tick() {
 }
 
 function applyTheme(frame) {
-  const FRAMES = ['gold','fire','void','ice','nature','shadow'];
+  const FRAMES = ['gold','fire','void','ice','nature','shadow','glitch'];
   // Retirer tous les thèmes existants
   FRAMES.forEach(f => card.classList.remove('frame-' + f));
   if (frame && frame.startsWith('card_frame_')) {
@@ -9727,7 +9787,8 @@ def internal_use_item(payload: dict, x_api_key: str | None = Header(default=None
             elif item_key.startswith("card_frame_"):
                 # ── Cadre de carte cosmétique ──
                 VALID_FRAMES = {"card_frame_gold", "card_frame_fire", "card_frame_void",
-                                "card_frame_ice", "card_frame_nature", "card_frame_shadow"}
+                                "card_frame_ice", "card_frame_nature", "card_frame_shadow",
+                                "card_frame_glitch"}
                 if item_key not in VALID_FRAMES:
                     raise HTTPException(status_code=400, detail="Unknown card frame")
                 if not arow:
