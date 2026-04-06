@@ -983,7 +983,9 @@ async def mod_action(request: Request, payload: dict = Body(...)):
                 return {"ok": True, "msg": f"Drop {mode} lancé (id={drop_id})", "drop_id": drop_id}
 
     raise HTTPException(400, "Action inconnue")
-
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_page():
+    return HTMLResponse(open("privacy.html").read())
 
 @app.get("/mod/player/{login}")
 async def mod_player_info(login: str, request: Request):
