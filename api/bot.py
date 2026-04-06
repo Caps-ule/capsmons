@@ -1495,7 +1495,7 @@ class Bot(commands.Bot):
                 pb = requests.post(
                     API_STREAM_PRESENT_BATCH_URL,
                     headers={"X-API-Key": API_KEY},
-                    json={"logins": logins},
+                    json={"logins": logins, "tick_seconds": tick},
                     timeout=3,
                 )
                 if pb.status_code != 200:

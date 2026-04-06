@@ -12031,6 +12031,10 @@ def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=N
     if not isinstance(logins, list) or len(logins) > 800:
         raise HTTPException(status_code=400, detail="Invalid logins")
 
+    # tick_seconds : durée du tick de présence (envoyé par le bot, défaut 300s)
+    tick_seconds = int(payload.get("tick_seconds", 300))
+    tick_seconds = max(1, min(tick_seconds, 3600))  # garde-fou
+
     clean = [str(x).strip().lower() for x in logins if str(x).strip()]
     if not clean:
         return {"ok": True, "inserted": 0}
@@ -12055,6 +12059,14 @@ def stream_present_batch(payload: dict, x_api_key: str | None = Header(default=N
                         inserted += 1
                 except Exception:
                     pass
+
+            # Mise à jour quête présence pour tous les viewers ayant un CM actif
+            for u in clean:
+                try:
+                    _quest_progress(cur, u, 'presence', tick_seconds)
+                except Exception:
+                    pass
+
         conn.commit()
 
     return {"ok": True, "inserted": inserted, "session_id": session_id}
