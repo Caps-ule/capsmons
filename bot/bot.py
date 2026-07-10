@@ -197,6 +197,7 @@ class Bot(commands.Bot):
             prefix="!",
             initial_channels=[os.environ["TWITCH_CHANNEL"]],
         )
+        self._tasks_started = False
 
     # ------------------------------------------------------------------------
     # Commande: !inv
@@ -808,6 +809,15 @@ class Bot(commands.Bot):
     # ------------------------------------------------------------------------
     async def event_ready(self):
         print(f"[BOT] Connected as {self.nick} | Joined: {os.environ['TWITCH_CHANNEL']}", flush=True)
+
+        # twitchio rappelle event_ready() à CHAQUE reconnexion IRC (coupure réseau,
+        # ping-timeout Twitch...), pas seulement au démarrage. Sans ce garde-fou, chaque
+        # reconnexion faisait tourner une copie supplémentaire de chacune des boucles
+        # ci-dessous en permanence (les anciennes n'étaient jamais annulées), ce qui
+        # doublait (ou plus) les annonces de chat et les drops d'events spéciaux.
+        if self._tasks_started:
+            return
+        self._tasks_started = True
 
         # XP passive (si tu veux la loop)
         self.loop.create_task(self.presence_loop())
@@ -1551,8 +1561,13 @@ class Bot(commands.Bot):
             except Exception:
                 continue
 
-            # Récupérer la chance configurée (défaut 30%)
+            # Récupérer la config (chance + toggle auto). Le toggle "event_auto_enabled"
+            # de l'admin n'était jusqu'ici jamais lu ici -> désactiver la case à cocher
+            # n'avait aucun effet, les events auto continuaient à se déclencher. Défaut
+            # à "activé" si la clé n'a jamais été enregistrée (même comportement qu'avant
+            # ce fix pour ne pas couper silencieusement une fonctionnalité en place).
             chance_pct = 30
+            auto_enabled = True
             try:
                 import requests as _req
                 rc = _req.get(
@@ -1561,9 +1576,14 @@ class Bot(commands.Bot):
                     timeout=2,
                 )
                 if rc.ok:
-                    chance_pct = int(rc.json().get("config", {}).get("event_chance_pct", 30) or 30)
+                    cfg = rc.json().get("config", {}) or {}
+                    chance_pct = int(cfg.get("event_chance_pct", 30) or 30)
+                    auto_enabled = cfg.get("event_auto_enabled", "true") != "false"
             except Exception:
                 pass
+
+            if not auto_enabled:
+                continue  # events auto désactivés dans l'admin
 
             if random.randint(1, 100) > chance_pct:
                 continue  # pas de chance cette fois
@@ -1582,8 +1602,12 @@ class Bot(commands.Bot):
                 )
                 if r.ok:
                     data = r.json()
-                    # Si c'est un drop spécial, le lancer immédiatement
-                    await self._maybe_launch_event_drop(chosen)
+                    # Ne PAS appeler _maybe_launch_event_drop ici : event_sync_loop()
+                    # le fait déjà (via le flag drop_needed consommé côté API) dans les
+                    # ~5s qui suivent pour TOUS les events (auto ou déclenchés par points
+                    # de chaîne). L'appeler aussi ici doublait systématiquement le drop
+                    # bonus (pluie_etoiles/douce_chaleur/douce_brise/pluie_sucree) à
+                    # chaque déclenchement automatique d'event.
                     # Reset Golden Hour gains
                     if chosen == "golden_hour":
                         _golden_hour_gains = {}

@@ -1642,7 +1642,13 @@ def handle_channel_points_redemption(ev: dict) -> None:
                 conn.commit()
                 return
 
-            # Marque "processing" dès le départ pour éviter double traitement en cas de retry
+            # Marque "processing" dès le départ pour éviter double traitement en cas de retry.
+            # Le SELECT de dédup ci-dessus (ligne ~1608) ne suffit pas seul : deux livraisons
+            # quasi simultanées du même webhook (Twitch peut redélivrer) peuvent toutes les
+            # deux le passer avant qu'aucune n'ait inséré sa ligne. On vérifie donc rowcount
+            # ici : si l'INSERT n'a rien inséré (conflit), une autre requête a déjà gagné la
+            # course -> on s'arrête pour ne pas exécuter l'action une deuxième fois
+            # (ex: déclencher un événement spécial en double).
             cur.execute(
                 """
                 INSERT INTO cp_redemptions (redemption_id, user_login, reward_id, reward_title, cost, status, detail, action, created_at)
@@ -1651,6 +1657,9 @@ def handle_channel_points_redemption(ev: dict) -> None:
                 """,
                 (redemption_id, user_login, reward_id, reward_title, cost, json.dumps(action)),
             )
+            if cur.rowcount == 0:
+                conn.commit()
+                return
 
             # Exécute action
             try:
@@ -2962,12 +2971,17 @@ def internal_boss_hit(payload: dict, x_api_key: str | None = Header(default=None
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            # Trouver le boss actif
+            # Trouver le boss actif — FOR UPDATE pour sérialiser les hits concurrents :
+            # sans ce verrou, deux viewers frappant en même temps peuvent tous les deux
+            # lire le même hp_current, calculer chacun defeated=True, et déclencher
+            # chacun toute la distribution de récompenses (double XP -> double évolution
+            # -> notif overlay visuelle+sonore dupliquée).
             cur.execute("""
                 SELECT id, cm_name, hp_current, reward_type, reward_value, reward_item_key
                 FROM boss_raids
                 WHERE status='active' AND ends_at > now()
-                ORDER BY started_at DESC LIMIT 1;
+                ORDER BY started_at DESC LIMIT 1
+                FOR UPDATE;
             """)
             boss_row = cur.fetchone()
             if not boss_row:
@@ -3107,10 +3121,17 @@ def internal_event_active_and_drop_needed(x_api_key: str | None = Header(default
     if ev:
         with get_db() as conn:
             with conn.cursor() as cur:
+                # FOR UPDATE : ce endpoint est l'unique déclencheur du drop bonus d'un
+                # event (voir bot/bot.py event_sync_loop). Sans verrou, deux pollers
+                # concurrents (ex: boucles dupliquées après une reconnexion IRC) peuvent
+                # tous les deux lire drop_launched=FALSE avant que l'un des deux ait
+                # commité son UPDATE, et donc tous les deux recevoir drop_needed=True
+                # -> le bot lance le drop bonus deux fois.
                 cur.execute("""
                     SELECT drop_launched FROM active_event
                     WHERE ends_at > now()
-                    ORDER BY started_at DESC LIMIT 1;
+                    ORDER BY started_at DESC LIMIT 1
+                    FOR UPDATE;
                 """)
                 row = cur.fetchone()
                 if row and not row[0]:
@@ -5556,13 +5577,18 @@ def internal_announcements_poll(limit: int = 5, x_api_key: str | None = Header(d
     limit = max(1, min(int(limit or 5), 20))
     with get_db() as conn:
         with conn.cursor() as cur:
+            # FOR UPDATE SKIP LOCKED : si deux pollers tournent en même temps (ex: bug
+            # de boucles dupliquées après une reconnexion IRC), chacun verrouille et
+            # consomme un lot de lignes disjoint au lieu de pouvoir lire/renvoyer deux
+            # fois la même annonce avant que l'un des deux ait commité son UPDATE.
             cur.execute(
                 """
                 SELECT id, message
                 FROM bot_announcements
                 WHERE delivered_at IS NULL
                 ORDER BY id ASC
-                LIMIT %s;
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED;
                 """,
                 (limit,),
             )
@@ -9689,18 +9715,26 @@ function startSequence(data) {
 }
 
 // ── Polling ──────────────────────────────────────────────────
+let processing = false;
+
 async function tick() {
+  if (processing) return;
+  processing = true;
   try {
     const r = await fetch('/overlay/evolution_state', {cache:'no-store'});
     const d = await r.json();
-    if (!d.active) return;
+    if (!d.active) { processing = false; return; }
 
-    const sig = `${d.viewer.name}|${d.form.name}|${d.form.image}`;
-    if (sig !== lastSig) {
-      lastSig = sig;
+    // Dédup par id de ligne (fiable) : une signature de contenu ne distingue pas
+    // deux évolutions distinctes déclenchées coup sur coup pour le même viewer
+    // (ex: double octroi d'XP suite à une race condition côté serveur), ce qui
+    // faisait rejouer l'animation + le son deux fois.
+    if (d.id !== lastSig) {
+      lastSig = d.id;
       startSequence(d);
     }
   } catch(e) {}
+  processing = false;
 }
 
 setInterval(tick, 800);
@@ -10004,7 +10038,7 @@ def overlay_evolution_state():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,''),
+                SELECT id, viewer_display, viewer_avatar, name, image_url, COALESCE(sound_url,''),
                        COALESCE(prev_stage,0), COALESCE(prev_name,''), COALESCE(prev_image_url,'')
                 FROM overlay_evolutions
                 WHERE expires_at > now()
@@ -10016,9 +10050,10 @@ def overlay_evolution_state():
     if not row:
         return {"active": False}
 
-    viewer_display, viewer_avatar, name, image_url, sound_url, prev_stage, prev_name, prev_image = row
+    ev_id, viewer_display, viewer_avatar, name, image_url, sound_url, prev_stage, prev_name, prev_image = row
     return {
         "active": True,
+        "id": ev_id,
         "viewer": {"name": viewer_display or "", "avatar": viewer_avatar or ""},
         "form":   {"name": name, "image": image_url, "sound": sound_url or ""},
         "prev":   {"stage": prev_stage, "name": prev_name, "image": prev_image},
@@ -11589,6 +11624,10 @@ async function tick() {
         if (ev.ts > lastEventTs) lastEventTs = ev.ts;
 
         if (ev.defeated && !bossDefeated) {
+          // Flag posé tout de suite (pas dans le setTimeout de playDeathAnimation)
+          // pour ne jamais planifier l'animation de mort deux fois si le batch
+          // contient plusieurs events "defeated".
+          bossDefeated = true;
           // Petit délai pour laisser le dernier attaquant apparaître
           if (ev.viewer_img) {
             spawnAttacker(ev.viewer_img, ev.viewer_name || ev.login, ev.damage);
