@@ -1473,26 +1473,71 @@
       </div>
 
       <div class="card accent-g">
-        <div class="card-title">CRÉER UN CM</div>
-        <form method="post" action="/admin/cms/action" class="form-row">
-          <input type="hidden" name="action" value="add_cm">
-          <div class="form-group">
-            <div class="form-label">KEY</div>
-            <input type="text" name="cm_key" placeholder="biolab_04" required>
+        <div class="card-title">CRÉER UN CM COMPLET</div>
+        <div class="muted mono" style="margin-bottom:14px">// Le CM et ses formes de stage sont créés en une seule soumission. Stage 1 (éclosion) est obligatoire ; stages 2 et 3 sont optionnels si tu veux les compléter plus tard depuis la page FORMS.</div>
+        <form method="post" action="/admin/cms/create_full" class="col" style="gap:16px">
+          <div class="form-row">
+            <div class="form-group">
+              <div class="form-label">KEY</div>
+              <input type="text" name="cm_key" placeholder="biolab_04" required>
+            </div>
+            <div class="form-group">
+              <div class="form-label">NOM</div>
+              <input type="text" name="cm_name" placeholder="Biolab CM 04" required>
+            </div>
+            <div class="form-group">
+              <div class="form-label">LIGNÉE</div>
+              <select name="lineage_key" required>
+                {% for l in lineages %}
+                <option value="{{ l.key }}">{{ l.name }} ({{ l.key }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-group">
+              <div class="form-label">MEDIA URL (aperçu / pool)</div>
+              <div class="url-field-wrap">
+                <input type="text" name="media_url" placeholder="https://… (optionnel)" class="url-input">
+                <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader une image">
+                  ⬆
+                  <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, this.closest('.form-group').querySelector('.url-input'))">
+                </label>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <div class="form-label">NOM</div>
-            <input type="text" name="cm_name" placeholder="Biolab CM 04" required>
+
+          <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+            {% for st in [1, 2, 3] %}
+            <div style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+              <div class="form-label" style="margin-bottom:10px">STAGE {{ st }}{% if st == 1 %} (obligatoire){% endif %}</div>
+              <div class="form-group">
+                <div class="form-label">NOM</div>
+                <input type="text" name="stage{{ st }}_name" placeholder="Nom" {% if st == 1 %}required{% endif %}>
+              </div>
+              <div class="form-group">
+                <div class="form-label">IMAGE URL</div>
+                <div class="url-field-wrap">
+                  <input type="text" name="stage{{ st }}_image_url" placeholder="https://…" class="url-input" {% if st == 1 %}required{% endif %}>
+                  <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader une image">
+                    ⬆
+                    <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp" onchange="uploadInline(this, this.closest('.form-group').querySelector('.url-input'))">
+                  </label>
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="form-label">SOUND URL</div>
+                <div class="url-field-wrap">
+                  <input type="text" name="stage{{ st }}_sound_url" placeholder="https://… (optionnel)" class="url-input">
+                  <label class="btn btn-dim btn-sm btn-upload-inline" title="Uploader un son">
+                    ⬆
+                    <input type="file" accept=".mp3,.ogg,.wav" onchange="uploadInline(this, this.closest('.form-group').querySelector('.url-input'))">
+                  </label>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
           </div>
-          <div class="form-group">
-            <div class="form-label">LIGNÉE</div>
-            <select name="lineage_key" required>
-              {% for l in lineages %}
-              <option value="{{ l.key }}">{{ l.name }} ({{ l.key }})</option>
-              {% endfor %}
-            </select>
-          </div>
-          <button type="submit" class="btn btn-green">+ Créer</button>
+
+          <button type="submit" class="btn btn-green" style="align-self:flex-start">+ Créer le CM complet</button>
         </form>
       </div>
 

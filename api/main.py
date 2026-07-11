@@ -4650,12 +4650,18 @@ def trigger_evolution(payload: dict, x_api_key: str | None = Header(default=None
             prev_image = payload.get("prev_image_url", "")
             if not prev_name:
                 if prev_stage == 0:
-                    # Éclosion : l'état d'avant est l'œuf → utiliser cms.media_url
-                    cur.execute("SELECT name, media_url FROM cms WHERE key=%s LIMIT 1;", (cm_key,))
-                    prow = cur.fetchone()
-                    if prow:
-                        prev_name  = prow[0] or "Œuf"
-                        prev_image = prow[1] or ""
+                    # Éclosion : l'état d'avant est l'œuf → utiliser l'image d'œuf du
+                    # lineage du viewer (items.icon_url pour egg_{lineage_key}), pas
+                    # cms.media_url qui est l'image générique définie en admin dans
+                    # CM et pool lors de la création d'un nouveau Capsmons.
+                    cur.execute("""
+                        SELECT COALESCE(lineage_key, '') FROM creatures_v2
+                        WHERE twitch_login=%s AND is_active=true LIMIT 1;
+                    """, (login,))
+                    lrow = cur.fetchone()
+                    lineage_key = lrow[0] if lrow else ""
+                    prev_name  = "Œuf"
+                    prev_image = get_egg_image_url(cur, lineage_key)
                 else:
                     cur.execute("""
                         SELECT name, image_url FROM cm_forms
@@ -9920,6 +9926,93 @@ def admin_cms_action(
                 return go(f"CM supprimé: {key}")
 
     return go("Action inconnue", "err")
+
+
+@app.post("/admin/cms/create_full")
+def admin_cms_create_full(
+    cm_key: str = Form(...),
+    cm_name: str = Form(...),
+    lineage_key: str = Form(...),
+    media_url: str | None = Form(None),
+    stage1_name: str | None = Form(None),
+    stage1_image_url: str | None = Form(None),
+    stage1_sound_url: str | None = Form(None),
+    stage2_name: str | None = Form(None),
+    stage2_image_url: str | None = Form(None),
+    stage2_sound_url: str | None = Form(None),
+    stage3_name: str | None = Form(None),
+    stage3_image_url: str | None = Form(None),
+    stage3_sound_url: str | None = Form(None),
+    credentials: HTTPBasicCredentials = Depends(security),
+):
+    """Crée un CM et ses formes de stage en une seule soumission (au lieu de
+    créer le CM puis devoir revenir sur /admin/forms pour chaque stage)."""
+    require_admin(credentials)
+
+    def go(msg: str, kind: str = "ok"):
+        safe = msg.replace(" ", "%20")
+        return RedirectResponse(url=f"/admin/forms?flash_kind={kind}&flash={safe}", status_code=303)
+
+    cm_key = cm_key.strip().lower()
+    cm_name = cm_name.strip()
+    lineage_key = lineage_key.strip().lower()
+    media_url = (media_url or "").strip()
+
+    if not (cm_key and cm_name and lineage_key):
+        return go("Champs CM manquants", "err")
+
+    stages = {
+        1: (stage1_name, stage1_image_url, stage1_sound_url),
+        2: (stage2_name, stage2_image_url, stage2_sound_url),
+        3: (stage3_name, stage3_image_url, stage3_sound_url),
+    }
+
+    # Stage 1 obligatoire (nécessaire pour l'éclosion). Stages 2/3 optionnels,
+    # mais si l'un des deux champs nom/image est rempli, l'autre doit l'être aussi.
+    s1_name, s1_image, _ = stages[1]
+    if not ((s1_name or "").strip() and (s1_image or "").strip()):
+        return go("Stage 1 : nom et image obligatoires", "err")
+
+    for st, (name, image, _sound) in stages.items():
+        name_filled = bool((name or "").strip())
+        image_filled = bool((image or "").strip())
+        if name_filled != image_filled:
+            return go(f"Stage {st} : nom et image doivent être remplis ensemble", "err")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM lineages WHERE key=%s;", (lineage_key,))
+            if not cur.fetchone():
+                return go("Lignée inconnue", "err")
+
+            cur.execute("""
+                INSERT INTO cms (key, name, lineage_key, is_enabled, in_hatch_pool, media_url)
+                VALUES (%s, %s, %s, TRUE, FALSE, %s)
+                ON CONFLICT (key) DO UPDATE
+                SET name = EXCLUDED.name,
+                    lineage_key = EXCLUDED.lineage_key,
+                    media_url = EXCLUDED.media_url;
+            """, (cm_key, cm_name, lineage_key, media_url))
+
+            for st, (name, image, sound) in stages.items():
+                name = (name or "").strip()
+                image = (image or "").strip()
+                sound = (sound or "").strip()
+                if not (name and image):
+                    continue
+                cur.execute("""
+                    INSERT INTO cm_forms (cm_key, stage, name, image_url, sound_url)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (cm_key, stage) DO UPDATE
+                    SET name = EXCLUDED.name,
+                        image_url = EXCLUDED.image_url,
+                        sound_url = EXCLUDED.sound_url;
+                """, (cm_key, st, name, image, sound if sound else None))
+
+        conn.commit()
+
+    return go(f"CM créé avec ses formes : {cm_key}")
+
 
 # =============================================================================
 # ADMIN: admin Stats
