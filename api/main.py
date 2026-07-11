@@ -13426,7 +13426,8 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 else:
                     img_html  = '<div class="comp-img-egg">🥚</div>'
                 name_disp = "Œuf"
-                meta_html = '<span class="badge-pill egg-pill">EN INCUBATION</span>'
+                meta_html = (f'<span class="badge-pill tid" title="Numéro à utiliser avec !trade">n°{o["trade_num"]}</span>'
+                             '<span class="badge-pill egg-pill">EN INCUBATION</span>')
                 hatch_pct = min(100, int((o["xp_total"] / 600) * 100)) if o["xp_total"] else 0
                 xp_bar    = f'''<div class="comp-xp-row">
                   <div class="comp-xp-track"><div class="comp-xp-fill egg-fill" style="width:{hatch_pct}%"></div></div>
@@ -13436,7 +13437,8 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 img_html  = (f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy">'
                              if o.get("image_url") else '<div class="comp-img-ph">?</div>')
                 name_disp = o["name"]
-                meta_html = f'''<span class="badge-pill c">{(o["lineage_key"] or "").upper()}</span>
+                meta_html = f'''<span class="badge-pill tid" title="Numéro à utiliser avec !trade">n°{o["trade_num"]}</span>
+                  <span class="badge-pill c">{(o["lineage_key"] or "").upper()}</span>
                   <span class="badge-pill g">S{stage_lbl}</span>'''
                 xp_pct    = min(100, int((o["xp_total"] % 500) / 5))
                 xp_bar    = f'''<div class="comp-xp-row">
@@ -13523,6 +13525,7 @@ a{{color:var(--cyan);text-decoration:none}}
 .badge-pill{{font-family:var(--font-mono);font-size:9px;padding:2px 8px;border-radius:999px;border:1px solid}}
 .badge-pill.c{{color:var(--cyan);border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.06)}}
 .badge-pill.g{{color:var(--green);border-color:rgba(0,255,157,.3);background:rgba(0,255,157,.06)}}
+.badge-pill.tid{{color:var(--magenta);border-color:rgba(255,45,120,.35);background:rgba(255,45,120,.07);font-weight:700}}
 .stat-row{{display:flex;align-items:center;gap:8px;margin-bottom:6px}}
 .stat-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted);width:60px;flex-shrink:0}}
 .stat-track{{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
@@ -13822,6 +13825,20 @@ def user_profile_page(login: str, request: Request):
                 WHERE c.twitch_login=%s ORDER BY c.is_active DESC, c.xp_total DESC;
             """, (login,))
             owned_rows = cur.fetchall()
+
+            # Numéro !trade : le bot résout "!trade @pseudo <n>" en indexant (1-based)
+            # la liste renvoyée par /internal/collection/{login}, triée par
+            # is_active DESC, acquired_at DESC, id DESC (voir bot/bot.py _resolve_cm_number
+            # et api/main.py /internal/collection/{login}). Cet ordre est différent de
+            # celui utilisé pour l'affichage ci-dessus (par xp_total) -> on le recalcule
+            # séparément pour que le numéro affiché corresponde exactement à celui
+            # attendu par la commande, quel que soit l'ordre visuel de la grille.
+            cur.execute("""
+                SELECT id FROM creatures_v2
+                WHERE twitch_login=%s
+                ORDER BY is_active DESC, acquired_at DESC, id DESC;
+            """, (login,))
+            trade_num_by_id = {int(r[0]): i + 1 for i, r in enumerate(cur.fetchall())}
             # Récupérer les images egg en batch
             egg_lineages = list({r[2] for r in owned_rows if r[1] == 'egg' and r[2]})
             egg_images = {}
@@ -13843,7 +13860,7 @@ def user_profile_page(login: str, request: Request):
                 nm = r[6]
                 if is_egg and (not nm or nm == 'egg'):
                     nm = f"Œuf {r[2].capitalize()}" if r[2] else "Œuf"
-                owned_list.append({"creature_id":r[0],"cm_key":r[1],"lineage_key":r[2],"stage":int(r[3] or 0),"xp_total":int(r[4] or 0),"is_active":bool(r[5]),"name":nm,"image_url":img})
+                owned_list.append({"creature_id":r[0],"cm_key":r[1],"lineage_key":r[2],"stage":int(r[3] or 0),"xp_total":int(r[4] or 0),"is_active":bool(r[5]),"name":nm,"image_url":img,"trade_num":trade_num_by_id.get(int(r[0]))})
             cur.execute("""
                 SELECT c.key, c.name, c.lineage_key, l.name,
                        COALESCE(c.media_url,''),
