@@ -13314,7 +13314,8 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
         badges_html = "".join(
             (lambda info: (
                 f'<div class="badge-item" title="{info[2]}"><div class="badge-icon">{info[0]}</div>'
-                f'<div class="badge-name">{info[1]}</div><div class="badge-desc">{info[2]}</div></div>'
+                f'<div class="badge-text"><div class="badge-name">{info[1]}</div>'
+                f'<div class="badge-desc">{info[2]}</div></div></div>'
             ))(badge_labels.get(b["key"], ("🏅", b["key"], "")))
             for b in badges)
     else:
@@ -13615,11 +13616,12 @@ a{{color:var(--cyan);text-decoration:none}}
 .r-xp{{font-family:var(--font-mono);font-size:10px;color:var(--cyan);padding:2px 7px;border:1px solid rgba(0,229,255,.3);border-radius:999px}}
 .r-item{{font-family:var(--font-mono);font-size:10px;color:var(--amber);padding:2px 7px;border:1px solid rgba(255,209,102,.3);border-radius:999px}}
 .r-badge{{font-family:var(--font-mono);font-size:10px;color:var(--magenta);padding:2px 7px;border:1px solid rgba(255,45,120,.3);border-radius:999px}}
-.badges-row{{display:flex;gap:10px;flex-wrap:wrap}}
-.badge-item{{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;border:1px solid rgba(255,209,102,.2);border-radius:10px;background:rgba(255,209,102,.04);min-width:110px;max-width:170px;text-align:center}}
-.badge-icon{{font-size:22px}}
-.badge-name{{font-family:var(--font-mono);font-size:9px;color:var(--amber);letter-spacing:.08em}}
-.badge-desc{{font-family:var(--font-ui);font-size:10px;color:var(--muted);line-height:1.3}}
+.badges-row{{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}}
+.badge-item{{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(255,209,102,.2);border-radius:10px;background:rgba(255,209,102,.04);text-align:left;min-width:0}}
+.badge-icon{{font-size:18px;flex-shrink:0}}
+.badge-text{{min-width:0}}
+.badge-name{{font-family:var(--font-mono);font-size:9px;color:var(--amber);letter-spacing:.08em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.badge-desc{{font-family:var(--font-ui);font-size:9px;color:var(--muted);line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
 .muted-sm{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
 .album-section{{margin-bottom:24px}}
 .section-header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}}
