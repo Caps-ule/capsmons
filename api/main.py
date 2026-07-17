@@ -2548,6 +2548,41 @@ def get_xp_rank_weekly(cur, login: str) -> int | None:
     return int(row[0]) if row else None
 
 
+# (icône, nom, description de la condition d'obtention) — partagé entre la page
+# profil (/u/{login}) et la commande !profil du bot.
+BADGE_INFO = {
+    "badge_present":  ("⏱","Présent",   "Resté au moins 60 min en stream sur une semaine"),
+    "badge_grinder":  ("⚡","Grinder",   "Gagné 200 XP en une semaine"),
+    "badge_elite":    ("🏆","Élite",     "Atteint le top 10 du classement XP"),
+    "badge_coop":     ("🤝","Teamplayer","Participé à 2 drops COOP en une semaine"),
+    "badge_loyal":    ("💙","Fidèle",    "Resté au moins 2h en stream sur une semaine"),
+    "badge_gourmand": ("🍬","Gourmand",  "Fait manger 10 bonbons à son CM en une semaine"),
+    "badge_collector_5":  ("🐣","Collectionneur", "Posséder 5 espèces de CapsMön différentes"),
+    "badge_collector_10": ("🎒","Dresseur",        "Posséder 10 espèces de CapsMön différentes"),
+    "badge_collector_20": ("🌟","Expert",          "Posséder 20 espèces de CapsMön différentes"),
+    "badge_collector_30": ("👑","Légende",         "Posséder 30 espèces de CapsMön différentes"),
+}
+
+COLLECTOR_BADGE_THRESHOLDS = (
+    (5,  "badge_collector_5"),
+    (10, "badge_collector_10"),
+    (20, "badge_collector_20"),
+    (30, "badge_collector_30"),
+)
+
+
+def _award_collector_badges(cur, login: str, distinct_species: int) -> None:
+    """Badges de collection permanents (nombre d'espèces différentes possédées,
+    l'œuf ne compte pas). Attribution idempotente (ON CONFLICT DO NOTHING), hors
+    système de quêtes hebdomadaires. Appelé depuis la page profil ET !profil."""
+    for _thresh, _bkey in COLLECTOR_BADGE_THRESHOLDS:
+        if distinct_species >= _thresh:
+            cur.execute(
+                "INSERT INTO user_badges (twitch_login, badge_key) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
+                (login, _bkey),
+            )
+
+
 def _quest_check_top10(cur, login: str) -> None:
     rank = get_xp_rank(cur, login)
     if rank is not None and rank <= 10:
@@ -12341,6 +12376,59 @@ def internal_collection(login: str, x_api_key: str | None = Header(default=None)
     return {"ok": True, "twitch_login": login, "items": items}
 
 
+@app.get("/internal/profile_summary/{login}")
+def internal_profile_summary(login: str, x_api_key: str | None = Header(default=None)):
+    """Résumé de profil pour la commande !profil du bot : nombre de créatures,
+    nombre d'espèces différentes, XP total à vie, et badges obtenus."""
+    require_internal_key(x_api_key)
+
+    login = (login or "").strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing login")
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (login,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Viewer introuvable")
+
+            cur.execute("SELECT COUNT(*) FROM creatures_v2 WHERE twitch_login=%s;", (login,))
+            creatures_count = int(cur.fetchone()[0])
+
+            cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
+            owned_cms = {r[0] for r in cur.fetchall()}
+            distinct_species = len(owned_cms - {"egg"})
+
+            # Même attribution que la page profil, pour qu'un viewer qui n'utilise
+            # que le chat (jamais /u/{login}) débloque quand même ses badges.
+            _award_collector_badges(cur, login, distinct_species)
+
+            cur.execute(
+                "SELECT badge_key FROM user_badges WHERE twitch_login=%s ORDER BY earned_at DESC;",
+                (login,),
+            )
+            badge_keys = [r[0] for r in cur.fetchall()]
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE twitch_login=%s;", (login,))
+            xp_total = int(cur.fetchone()[0])
+
+        conn.commit()
+
+    badges = [
+        {"key": k, "icon": BADGE_INFO.get(k, ("🏅", k, ""))[0], "name": BADGE_INFO.get(k, ("🏅", k, ""))[1]}
+        for k in badge_keys
+    ]
+
+    return {
+        "ok": True,
+        "twitch_login": login,
+        "creatures_count": creatures_count,
+        "species_count": distinct_species,
+        "badges_count": len(badges),
+        "badges": badges,
+        "xp_total": xp_total,
+    }
+
 
 @app.post("/internal/companion/set")
 def internal_companion_set(payload: dict, x_api_key: str | None = Header(default=None)):
@@ -13379,26 +13467,13 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
           <div class="quest-rewards">{"".join(rewards)}</div>
         </div>"""
 
-    # (icône, nom, description de la condition d'obtention)
-    badge_labels = {
-        "badge_present":  ("⏱","Présent",   "Resté au moins 60 min en stream sur une semaine"),
-        "badge_grinder":  ("⚡","Grinder",   "Gagné 200 XP en une semaine"),
-        "badge_elite":    ("🏆","Élite",     "Atteint le top 10 du classement XP"),
-        "badge_coop":     ("🤝","Teamplayer","Participé à 2 drops COOP en une semaine"),
-        "badge_loyal":    ("💙","Fidèle",    "Resté au moins 2h en stream sur une semaine"),
-        "badge_gourmand": ("🍬","Gourmand",  "Fait manger 10 bonbons à son CM en une semaine"),
-        "badge_collector_5":  ("🐣","Collectionneur", "Posséder 5 espèces de CapsMön différentes"),
-        "badge_collector_10": ("🎒","Dresseur",        "Posséder 10 espèces de CapsMön différentes"),
-        "badge_collector_20": ("🌟","Expert",          "Posséder 20 espèces de CapsMön différentes"),
-        "badge_collector_30": ("👑","Légende",         "Posséder 30 espèces de CapsMön différentes"),
-    }
     if badges:
         badges_html = "".join(
             (lambda info: (
                 f'<div class="badge-item" title="{info[2]}"><div class="badge-icon">{info[0]}</div>'
                 f'<div class="badge-text"><div class="badge-name">{info[1]}</div>'
                 f'<div class="badge-desc">{info[2]}</div></div></div>'
-            ))(badge_labels.get(b["key"], ("🏅", b["key"], "")))
+            ))(BADGE_INFO.get(b["key"], ("🏅", b["key"], "")))
             for b in badges)
     else:
         badges_html = '<div class="muted-sm">Aucun badge pour l\'instant</div>'
@@ -14053,22 +14128,8 @@ def user_profile_page(login: str, request: Request):
             cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
             owned_cms = {r[0] for r in cur.fetchall()}
 
-            # Badges de collection : nombre d'espèces DIFFÉRENTES possédées (l'œuf ne
-            # compte pas comme une espèce). Attribution idempotente (ON CONFLICT DO
-            # NOTHING), hors système de quêtes hebdomadaires puisque c'est un jalon
-            # permanent, pas une progression qui reset chaque semaine.
             distinct_species = len(owned_cms - {"egg"})
-            for _thresh, _bkey in (
-                (5,  "badge_collector_5"),
-                (10, "badge_collector_10"),
-                (20, "badge_collector_20"),
-                (30, "badge_collector_30"),
-            ):
-                if distinct_species >= _thresh:
-                    cur.execute(
-                        "INSERT INTO user_badges (twitch_login, badge_key) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
-                        (login, _bkey),
-                    )
+            _award_collector_badges(cur, login, distinct_species)
 
             cur.execute("""
                 SELECT c.id, c.cm_key, c.lineage_key, c.stage, c.xp_total, c.is_active,

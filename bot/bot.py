@@ -25,6 +25,7 @@ API_HAPPINESS_DECAY_URL = "http://api:8000/internal/happiness/decay"
 API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
 API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
 API_COLLECTION_URL = "http://api:8000/internal/collection"
+API_PROFILE_SUMMARY_URL = "http://api:8000/internal/profile_summary"
 API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
 API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
 API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
@@ -228,6 +229,36 @@ class Bot(commands.Bot):
         # format compact : item xqty
         txt = ", ".join([f"{it['item_key']}×{it['qty']}" for it in items[:10]])
         await ctx.send(f"@{ctx.author.name} 🎒 {txt}")
+
+    # ------------------------------------------------------------------------
+    # Commande: !profil
+    # ------------------------------------------------------------------------
+    @commands.command(name="profil")
+    async def profil_cmd(self, ctx: commands.Context):
+        login = ctx.author.name.lower()
+
+        try:
+            r = requests.get(
+                f"{API_PROFILE_SUMMARY_URL}/{login}",
+                headers={"X-API-Key": API_KEY},
+                timeout=3,
+            )
+            if r.status_code != 200:
+                await ctx.send(f"@{ctx.author.name} ⚠️ Profil indisponible.")
+                return
+            d = r.json()
+        except Exception:
+            await ctx.send(f"@{ctx.author.name} ⚠️ Profil indisponible.")
+            return
+
+        badges = d.get("badges", []) or []
+        badges_txt = " ".join(b["icon"] for b in badges) if badges else "aucun"
+
+        await ctx.send(
+            f"@{ctx.author.name} 📋 Profil : 🐾 {d['creatures_count']} créatures · "
+            f"🧬 {d['species_count']} espèces · ⭐ {d['xp_total']} XP · "
+            f"🏅 {d['badges_count']} badges : {badges_txt}"
+        )
 
     # ------------------------------------------------------------------------
     # Commande: !cmlist (legacy / debug)
