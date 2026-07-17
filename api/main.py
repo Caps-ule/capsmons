@@ -13948,7 +13948,8 @@ def user_profile_page(login: str, request: Request):
                 LEFT JOIN cm_forms f1 ON f1.cm_key=c.key AND f1.stage=1
                 LEFT JOIN cm_forms f2 ON f2.cm_key=c.key AND f2.stage=2
                 LEFT JOIN cm_forms f3 ON f3.cm_key=c.key AND f3.stage=3
-                WHERE c.is_enabled=TRUE ORDER BY c.lineage_key, c.key;
+                WHERE c.is_enabled=TRUE AND c.lineage_key <> 'egg'
+                ORDER BY c.lineage_key, c.key;
             """)
             all_cms = cur.fetchall()
 
