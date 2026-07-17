@@ -908,6 +908,12 @@ async def mod_action(request: Request, payload: dict = Body(...)):
                     SET xp_total = GREATEST(0, xp_total - %s), updated_at = now()
                     WHERE twitch_login = %s AND is_active = TRUE;
                 """, (amount, target_login))
+                # Symétrique à add_xp : sans ça, le total XP à vie (xp_events, base du
+                # classement) ne baissait jamais alors que le rang, lui, chutait.
+                cur.execute("""
+                    INSERT INTO xp_events (twitch_login, amount, source)
+                    VALUES (%s, %s, 'mod_revoke');
+                """, (target_login, -amount))
                 conn.commit()
                 return {"ok": True, "msg": f"-{amount} XP → {target_login}"}
 
@@ -2488,15 +2494,28 @@ def _quest_progress(cur, login: str, quest_type: str, delta: int = 1) -> None:
           AND (SELECT type FROM quest_catalog WHERE key = qa.quest_key) = %s;
     """, (delta, delta, delta, login, week, quest_type))
 
-def _quest_check_top10(cur, login: str) -> None:
+def get_xp_rank(cur, login: str) -> int | None:
+    """Rang du joueur par XP total à vie (somme de xp_events), la même métrique
+    que le total affiché sur sa page profil. Ne PAS classer sur
+    creatures_v2.xp_total (XP de la seule créature active) : ce total change à
+    chaque changement de CM actif / éclosion d'œuf sans perte d'XP réelle, ce qui
+    faisait chuter le rang affiché indépendamment du total XP visible juste à côté."""
     cur.execute("""
         SELECT rank FROM (
-            SELECT twitch_login, RANK() OVER (ORDER BY xp_total DESC) as rank
-            FROM creatures_v2 WHERE is_active = TRUE
+            SELECT twitch_login, RANK() OVER (ORDER BY total_xp DESC) as rank
+            FROM (
+                SELECT twitch_login, COALESCE(SUM(amount),0) AS total_xp
+                FROM xp_events GROUP BY twitch_login
+            ) t
         ) r WHERE twitch_login = %s;
     """, (login,))
     row = cur.fetchone()
-    if row and int(row[0]) <= 10:
+    return int(row[0]) if row else None
+
+
+def _quest_check_top10(cur, login: str) -> None:
+    rank = get_xp_rank(cur, login)
+    if rank is not None and rank <= 10:
         _quest_progress(cur, login, 'top10', 1)
 
 def _quest_reward(cur, login: str) -> list:
@@ -3901,6 +3920,10 @@ def init_db():
                 cur.execute(
                     "ALTER TABLE items ADD COLUMN grab_chance FLOAT NOT NULL DEFAULT 0.5;"
                 )
+            if not column_exists(cur, "xp_events", "source"):
+                cur.execute(
+                    "ALTER TABLE xp_events ADD COLUMN source TEXT;"
+                )
             cur.execute("""
             CREATE TABLE IF NOT EXISTS eventsub_deliveries (
               msg_id TEXT PRIMARY KEY,
@@ -4576,8 +4599,10 @@ def admin_action(
                 return RedirectResponse(url=f"/admin/user/{login}?flash_kind=err&flash=Aucun%20CM%20actif", status_code=303)
             
             creature_id = int(arow[0])
-            
+
             if action == "reset":
+                cur.execute("SELECT xp_total FROM creatures_v2 WHERE id=%s;", (creature_id,))
+                old_xp = int(cur.fetchone()[0] or 0)
                 cur.execute("""
                     UPDATE creatures_v2
                     SET xp_total=0,
@@ -4587,16 +4612,25 @@ def admin_action(
                         updated_at=now()
                     WHERE id=%s;
                 """, (creature_id,))
+                # Journaliser la perte dans xp_events (base du classement/total à vie),
+                # sinon un reset admin faisait chuter le rang sans jamais faire bouger
+                # le total XP affiché au joueur.
+                if old_xp:
+                    cur.execute("""
+                        INSERT INTO xp_events (twitch_login, amount, source)
+                        VALUES (%s, %s, 'admin_reset');
+                    """, (login, -old_xp))
                 conn.commit()
                 return RedirectResponse(url=f"/admin/user/{login}?flash_kind=ok&flash=Reset%20CM%20actif", status_code=303)
-            
+
+            cur.execute("SELECT xp_total FROM creatures_v2 WHERE id=%s;", (creature_id,))
+            current = int(cur.fetchone()[0] or 0)
             if action == "set":
                 new_xp = max(0, int(amount))
             else:  # give
-                cur.execute("SELECT xp_total FROM creatures_v2 WHERE id=%s;", (creature_id,))
-                current = int(cur.fetchone()[0] or 0)
                 new_xp = current + max(0, int(amount))
-            
+            delta = new_xp - current
+
             new_stage = stage_from_xp(int(new_xp))
             cur.execute("""
                 UPDATE creatures_v2
@@ -4605,7 +4639,11 @@ def admin_action(
                     updated_at=now()
                 WHERE id=%s;
             """, (int(new_xp), int(new_stage), creature_id))
-
+            if delta:
+                cur.execute("""
+                    INSERT INTO xp_events (twitch_login, amount, source)
+                    VALUES (%s, %s, %s);
+                """, (login, delta, 'admin_set' if action == "set" else 'admin_give'))
 
         conn.commit()
 
@@ -10265,6 +10303,15 @@ def add_xp(payload: dict, x_api_key: str | None = Header(default=None)):
                         "sound_url":    sound_url,
                     }
 
+            # Progression des quêtes "Grind XP"/"Élite" : ce endpoint est la source
+            # normale et majoritaire d'XP (XP de chat via le bot), or ces appels
+            # manquaient ici alors qu'ils existent dans grant_xp() (récompenses
+            # boss/event) — ces deux quêtes ne progressaient donc quasiment jamais
+            # pour un viewer qui grind seulement en chattant.
+            _ensure_quests(cur, login)
+            _quest_progress(cur, login, 'xp', amount)
+            _quest_check_top10(cur, login)
+
         conn.commit()
 
     if evo_payload:
@@ -13706,7 +13753,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-val c">{stats['xp_total']:,}</div><div class="kpi-lbl">XP TOTAL</div></div>
     <div class="kpi-card"><div class="kpi-val g">{stats['drops_total']}</div><div class="kpi-lbl">DROPS</div></div>
-    <div class="kpi-card"><div class="kpi-val m">{rank_str}</div><div class="kpi-lbl">CLASSEMENT</div></div>
+    <a class="kpi-card" href="/classement" style="text-decoration:none;color:inherit;display:block"><div class="kpi-val m">{rank_str}</div><div class="kpi-lbl">CLASSEMENT</div></a>
   </div>
   <div class="grid-2">
     <div style="display:flex;flex-direction:column;gap:16px">
@@ -13850,6 +13897,73 @@ async def user_use_item(request: Request):
     except HTTPException as e:
         return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status_code)
 
+@app.get("/classement", response_class=HTMLResponse)
+def leaderboard_page():
+    """Top 50 par XP total à vie (xp_events) — même métrique que le rang
+    individuel affiché sur /u/{login} (get_xp_rank), pour rester cohérent."""
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT twitch_login, SUM(amount) AS total_xp
+                FROM xp_events
+                GROUP BY twitch_login
+                HAVING SUM(amount) > 0
+                ORDER BY total_xp DESC
+                LIMIT 50;
+            """)
+            rows = cur.fetchall()
+
+    medal = {1: "🥇", 2: "🥈", 3: "🥉"}
+    rows_html = ""
+    for i, (login, total_xp) in enumerate(rows, start=1):
+        rank_disp = medal.get(i, f"#{i}")
+        top_cls = f"top{i}" if i <= 3 else ""
+        rows_html += f"""
+        <a class="lb-row {top_cls}" href="/u/{login}">
+          <div class="lb-rank">{rank_disp}</div>
+          <div class="lb-login">@{login}</div>
+          <div class="lb-xp">{int(total_xp)} XP</div>
+        </a>"""
+
+    if not rows:
+        rows_html = '<div class="muted-sm" style="padding:20px;text-align:center">Personne n\'a encore gagné d\'XP.</div>'
+
+    html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Classement — CapsMöns</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{{--bg:#060b12;--panel:#0a1220;--border:rgba(0,229,255,.12);--cyan:#00e5ff;--magenta:#ff2d78;--green:#00ff9d;--amber:#ffd166;--text:#d8eaf8;--muted:#4a6a88;--font-head:'Orbitron',monospace;--font-ui:'Rajdhani',sans-serif;--font-mono:'Share Tech Mono',monospace}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;padding:24px 16px}}
+.wrap{{max-width:640px;margin:0 auto}}
+.title{{font-family:var(--font-head);font-size:20px;font-weight:900;color:var(--cyan);text-shadow:0 0 20px rgba(0,229,255,.3);letter-spacing:.08em;margin-bottom:4px}}
+.subtitle{{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:20px}}
+.lb-list{{display:flex;flex-direction:column;gap:6px}}
+.lb-row{{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 16px;text-decoration:none;color:var(--text);transition:border-color .2s}}
+.lb-row:hover{{border-color:rgba(0,229,255,.35)}}
+.lb-row.top1{{border-color:rgba(255,209,102,.4);background:rgba(255,209,102,.05)}}
+.lb-row.top2{{border-color:rgba(216,234,248,.3)}}
+.lb-row.top3{{border-color:rgba(255,159,90,.35)}}
+.lb-rank{{font-family:var(--font-head);font-size:15px;font-weight:900;width:38px;flex-shrink:0;text-align:center}}
+.lb-login{{flex:1;font-weight:700;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.lb-xp{{font-family:var(--font-mono);font-size:13px;color:var(--cyan);flex-shrink:0}}
+.muted-sm{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">🏆 CLASSEMENT</div>
+  <div class="subtitle">// Top 50 par XP total à vie</div>
+  <div class="lb-list">{rows_html}</div>
+</div>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
 @app.get("/u/{login}", response_class=HTMLResponse)
 def user_profile_page(login: str, request: Request):
     login = login.strip().lower()
@@ -13973,12 +14087,7 @@ def user_profile_page(login: str, request: Request):
             cur.execute("SELECT COUNT(DISTINCT drop_id) FROM drop_participants WHERE twitch_login=%s;", (login,))
             drops_total = int(cur.fetchone()[0])
 
-            cur.execute("""
-                SELECT rank FROM (SELECT twitch_login, RANK() OVER (ORDER BY xp_total DESC) as rank
-                FROM creatures_v2 WHERE is_active=TRUE) r WHERE twitch_login=%s;
-            """, (login,))
-            rank_row = cur.fetchone()
-            xp_rank = int(rank_row[0]) if rank_row else None
+            xp_rank = get_xp_rank(cur, login)
 
     from collections import defaultdict
     album_by_lineage = defaultdict(list)
