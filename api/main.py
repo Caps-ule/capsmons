@@ -2526,6 +2526,28 @@ def get_xp_rank(cur, login: str) -> int | None:
     return int(row[0]) if row else None
 
 
+def get_xp_rank_weekly(cur, login: str) -> int | None:
+    """Rang du joueur par XP gagné depuis le début de la semaine courante
+    (mêmes bornes que le système de quêtes, _current_week_start()). Même
+    exclusion RANKING_EXCLUDED_LOGINS que le classement à vie."""
+    if login in RANKING_EXCLUDED_LOGINS:
+        return None
+    week_start = _current_week_start()
+    cur.execute("""
+        SELECT rank FROM (
+            SELECT twitch_login, RANK() OVER (ORDER BY total_xp DESC) as rank
+            FROM (
+                SELECT twitch_login, COALESCE(SUM(amount),0) AS total_xp
+                FROM xp_events
+                WHERE twitch_login <> ALL(%s) AND created_at >= %s
+                GROUP BY twitch_login
+            ) t
+        ) r WHERE twitch_login = %s;
+    """, (list(RANKING_EXCLUDED_LOGINS), week_start, login))
+    row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
 def _quest_check_top10(cur, login: str) -> None:
     rank = get_xp_rank(cur, login)
     if rank is not None and rank <= 10:
@@ -13437,6 +13459,7 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
         </div>"""
 
     rank_str = f"#{stats['xp_rank']}" if stats['xp_rank'] else "—"
+    rank_weekly_str = f"#{stats['xp_rank_weekly']}" if stats['xp_rank_weekly'] else "—"
     week_str = _current_week_start().strftime("%d/%m/%Y")
 
     # Inventaire HTML
@@ -13651,7 +13674,7 @@ a{{color:var(--cyan);text-decoration:none}}
 .stat-fill.xp{{background:linear-gradient(90deg,#7aa2ff,var(--cyan));box-shadow:0 0 10px rgba(0,229,255,.55)}}
 .stat-fill.hp{{background:linear-gradient(90deg,#ff4fb3,var(--magenta));box-shadow:0 0 10px rgba(255,45,120,.55)}}
 .stat-val{{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text)}}
-.kpi-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}}
+.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}}
 .kpi-card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center}}
 .kpi-val{{font-family:var(--font-head);font-size:22px;font-weight:900;margin-bottom:4px}}
 .kpi-val.c{{color:var(--cyan);text-shadow:0 0 15px rgba(0,229,255,.4)}}
@@ -13767,6 +13790,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
     <div class="kpi-card"><div class="kpi-val c">{stats['xp_total']:,}</div><div class="kpi-lbl">XP TOTAL</div></div>
     <div class="kpi-card"><div class="kpi-val g">{stats['drops_total']}</div><div class="kpi-lbl">DROPS</div></div>
     <a class="kpi-card" href="/classement" style="text-decoration:none;color:inherit;display:block"><div class="kpi-val m">{rank_str}</div><div class="kpi-lbl">CLASSEMENT</div></a>
+    <a class="kpi-card" href="/classement?period=week" style="text-decoration:none;color:inherit;display:block"><div class="kpi-val m">{rank_weekly_str}</div><div class="kpi-lbl">CLASSEMENT SEMAINE</div></a>
   </div>
   <div class="grid-2">
     <div style="display:flex;flex-direction:column;gap:16px">
@@ -13911,20 +13935,34 @@ async def user_use_item(request: Request):
         return JSONResponse({"ok": False, "error": e.detail}, status_code=e.status_code)
 
 @app.get("/classement", response_class=HTMLResponse)
-def leaderboard_page():
-    """Top 50 par XP total à vie (xp_events) — même métrique que le rang
-    individuel affiché sur /u/{login} (get_xp_rank), pour rester cohérent."""
+def leaderboard_page(period: str = "all"):
+    """Top 50 par XP (xp_events) — même métrique que get_xp_rank()/
+    get_xp_rank_weekly() utilisés sur /u/{login}, pour rester cohérent.
+    period=all -> à vie ; period=week -> depuis le début de la semaine courante
+    (mêmes bornes que le système de quêtes, _current_week_start())."""
+    period = period if period in ("all", "week") else "all"
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT twitch_login, SUM(amount) AS total_xp
-                FROM xp_events
-                WHERE twitch_login <> ALL(%s)
-                GROUP BY twitch_login
-                HAVING SUM(amount) > 0
-                ORDER BY total_xp DESC
-                LIMIT 50;
-            """, (list(RANKING_EXCLUDED_LOGINS),))
+            if period == "week":
+                cur.execute("""
+                    SELECT twitch_login, SUM(amount) AS total_xp
+                    FROM xp_events
+                    WHERE twitch_login <> ALL(%s) AND created_at >= %s
+                    GROUP BY twitch_login
+                    HAVING SUM(amount) > 0
+                    ORDER BY total_xp DESC
+                    LIMIT 50;
+                """, (list(RANKING_EXCLUDED_LOGINS), _current_week_start()))
+            else:
+                cur.execute("""
+                    SELECT twitch_login, SUM(amount) AS total_xp
+                    FROM xp_events
+                    WHERE twitch_login <> ALL(%s)
+                    GROUP BY twitch_login
+                    HAVING SUM(amount) > 0
+                    ORDER BY total_xp DESC
+                    LIMIT 50;
+                """, (list(RANKING_EXCLUDED_LOGINS),))
             rows = cur.fetchall()
 
     medal = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -13965,12 +14003,20 @@ body{{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-heig
 .lb-login{{flex:1;font-weight:700;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .lb-xp{{font-family:var(--font-mono);font-size:13px;color:var(--cyan);flex-shrink:0}}
 .muted-sm{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
+.lb-tabs{{display:flex;gap:8px;margin-bottom:20px}}
+.lb-tab{{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;padding:7px 14px;border-radius:999px;border:1px solid var(--border);color:var(--muted);text-decoration:none;transition:border-color .2s,color .2s}}
+.lb-tab:hover{{color:var(--text)}}
+.lb-tab.on{{border-color:var(--cyan);color:var(--cyan);background:rgba(0,229,255,.08)}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="title">🏆 CLASSEMENT</div>
-  <div class="subtitle">// Top 50 par XP total à vie</div>
+  <div class="subtitle">// Top 50 par XP {'gagné cette semaine' if period == 'week' else 'total à vie'}</div>
+  <div class="lb-tabs">
+    <a class="lb-tab {'on' if period == 'all' else ''}" href="/classement?period=all">À VIE</a>
+    <a class="lb-tab {'on' if period == 'week' else ''}" href="/classement?period=week">CETTE SEMAINE</a>
+  </div>
   <div class="lb-list">{rows_html}</div>
 </div>
 </body>
@@ -14102,6 +14148,7 @@ def user_profile_page(login: str, request: Request):
             drops_total = int(cur.fetchone()[0])
 
             xp_rank = get_xp_rank(cur, login)
+            xp_rank_weekly = get_xp_rank_weekly(cur, login)
 
     from collections import defaultdict
     album_by_lineage = defaultdict(list)
@@ -14164,7 +14211,7 @@ def user_profile_page(login: str, request: Request):
     page_data = {
         "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
         "album_sections": album_sections, "total_cms": total_cms, "owned_total": owned_total,
-        "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank},
+        "stats": {"xp_total": xp_total_all, "drops_total": drops_total, "xp_rank": xp_rank, "xp_rank_weekly": xp_rank_weekly},
         "inventory": inventory,
         "owned_list": owned_list,
     }
