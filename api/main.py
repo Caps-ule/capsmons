@@ -13481,18 +13481,20 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 )
             comp_cards += f"""
             <div class="comp-card {act_cls}">
-              <div class="comp-img-wrap">
-                {img_html}
-                {act_lbl}
-              </div>
-              <div class="comp-info">
-                <div class="comp-name">{name_disp}</div>
-                <div class="comp-meta">
-                  {meta_html}
+              <div class="comp-top">
+                <div class="comp-img-wrap">
+                  {img_html}
+                  {act_lbl}
                 </div>
-                {xp_bar}
-                {act_btn}
+                <div class="comp-info">
+                  <div class="comp-name">{name_disp}</div>
+                  <div class="comp-meta">
+                    {meta_html}
+                  </div>
+                  {act_btn}
+                </div>
               </div>
+              {xp_bar}
             </div>"""
 
         companions_section = f"""
@@ -13639,9 +13641,10 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .silhouette-ph{{font-size:22px;color:rgba(74,106,136,.4)}}
 /* ── Section companions ── */
 .companions-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:4px}}
-.comp-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:12px;display:flex;gap:12px;align-items:flex-start;transition:border-color .2s,box-shadow .2s}}
+.comp-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s,box-shadow .2s}}
 .comp-card:hover{{border-color:rgba(0,229,255,.2)}}
 .comp-card.comp-active{{border-color:rgba(0,255,157,.35);background:rgba(0,255,157,.04);box-shadow:0 0 14px rgba(0,255,157,.1)}}
+.comp-top{{display:flex;gap:12px;align-items:flex-start;width:100%}}
 .comp-img-wrap{{position:relative;flex-shrink:0;width:64px;height:64px}}
 .comp-img{{width:64px;height:64px;border-radius:10px;object-fit:contain;background:rgba(255,255,255,.04);border:1px solid var(--border);display:block;image-rendering:pixelated}}
 .comp-img-ph{{width:64px;height:64px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--muted)}}
@@ -13649,7 +13652,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .comp-info{{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}}
 .comp-name{{font-family:var(--font-ui);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .comp-meta{{display:flex;gap:5px;flex-wrap:wrap}}
-.comp-xp-row{{display:flex;align-items:center;gap:8px;margin:6px 0}}
+.comp-xp-row{{display:flex;align-items:center;gap:8px;width:100%}}
 .comp-xp-track{{flex:1;height:10px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
 .comp-xp-fill{{height:100%;background:linear-gradient(90deg,#7aa2ff,var(--cyan));border-radius:999px;transition:width .5s;box-shadow:0 0 8px rgba(0,229,255,.5)}}
 .comp-xp-val{{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--text);white-space:nowrap;flex-shrink:0}}
