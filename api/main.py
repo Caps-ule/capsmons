@@ -13257,14 +13257,12 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
               <span class="badge-pill g">STAGE {_stage_roman(active['stage'])}</span>
             </div>
             <div class="stat-row" style="margin-top:10px">
-              <div class="stat-lbl">XP</div>
+              <div class="stat-head"><span class="stat-lbl">XP</span><span class="stat-val">{_active_xp_val}</span></div>
               <div class="stat-track"><div class="stat-fill xp" style="width:{_active_xp_pct}%"></div></div>
-              <div class="stat-val">{_active_xp_val}</div>
             </div>
             <div class="stat-row">
-              <div class="stat-lbl">BONHEUR</div>
+              <div class="stat-head"><span class="stat-lbl">BONHEUR</span><span class="stat-val">{active['happiness']}%</span></div>
               <div class="stat-track"><div class="stat-fill hp" style="width:{active['happiness']}%"></div></div>
-              <div class="stat-val">{active['happiness']}%</div>
             </div>
           </div>
         </div>"""
@@ -13556,13 +13554,15 @@ a{{color:var(--cyan);text-decoration:none}}
 .badge-pill.c{{color:var(--cyan);border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.06)}}
 .badge-pill.g{{color:var(--green);border-color:rgba(0,255,157,.3);background:rgba(0,255,157,.06)}}
 .badge-pill.tid{{color:var(--magenta);border-color:rgba(255,45,120,.35);background:rgba(255,45,120,.07);font-weight:700}}
-.stat-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
-.stat-lbl{{font-family:var(--font-mono);font-size:10px;color:var(--muted);width:60px;flex-shrink:0;letter-spacing:.05em}}
-.stat-track{{flex:1;height:12px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
+.stat-row{{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}}
+.stat-row:last-child{{margin-bottom:0}}
+.stat-head{{display:flex;align-items:baseline;justify-content:space-between}}
+.stat-lbl{{font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:.05em}}
+.stat-track{{width:100%;height:12px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
 .stat-fill{{height:100%;border-radius:999px;transition:width .5s ease}}
 .stat-fill.xp{{background:linear-gradient(90deg,#7aa2ff,var(--cyan));box-shadow:0 0 10px rgba(0,229,255,.55)}}
 .stat-fill.hp{{background:linear-gradient(90deg,#ff4fb3,var(--magenta));box-shadow:0 0 10px rgba(255,45,120,.55)}}
-.stat-val{{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);width:auto;min-width:50px;text-align:right}}
+.stat-val{{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text)}}
 .kpi-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}}
 .kpi-card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center}}
 .kpi-val{{font-family:var(--font-head);font-size:22px;font-weight:900;margin-bottom:4px}}
