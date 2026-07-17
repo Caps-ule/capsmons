@@ -13301,6 +13301,8 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
         "badge_present":  ("⏱","Présent"),  "badge_grinder": ("⚡","Grinder"),
         "badge_elite":    ("🏆","Élite"),    "badge_coop":    ("🤝","Teamplayer"),
         "badge_loyal":    ("💙","Fidèle"),   "badge_gourmand":("🍬","Gourmand"),
+        "badge_collector_5":  ("🐣","Collectionneur"), "badge_collector_10": ("🎒","Dresseur"),
+        "badge_collector_20": ("🌟","Expert"),         "badge_collector_30": ("👑","Légende"),
     }
     if badges:
         badges_html = "".join(
@@ -13848,6 +13850,23 @@ def user_profile_page(login: str, request: Request):
 
             cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
             owned_cms = {r[0] for r in cur.fetchall()}
+
+            # Badges de collection : nombre d'espèces DIFFÉRENTES possédées (l'œuf ne
+            # compte pas comme une espèce). Attribution idempotente (ON CONFLICT DO
+            # NOTHING), hors système de quêtes hebdomadaires puisque c'est un jalon
+            # permanent, pas une progression qui reset chaque semaine.
+            distinct_species = len(owned_cms - {"egg"})
+            for _thresh, _bkey in (
+                (5,  "badge_collector_5"),
+                (10, "badge_collector_10"),
+                (20, "badge_collector_20"),
+                (30, "badge_collector_30"),
+            ):
+                if distinct_species >= _thresh:
+                    cur.execute(
+                        "INSERT INTO user_badges (twitch_login, badge_key) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
+                        (login, _bkey),
+                    )
 
             cur.execute("""
                 SELECT c.id, c.cm_key, c.lineage_key, c.stage, c.xp_total, c.is_active,
