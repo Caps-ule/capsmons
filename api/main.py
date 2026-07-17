@@ -2494,21 +2494,34 @@ def _quest_progress(cur, login: str, quest_type: str, delta: int = 1) -> None:
           AND (SELECT type FROM quest_catalog WHERE key = qa.quest_key) = %s;
     """, (delta, delta, delta, login, week, quest_type))
 
+# Comptes exclus du classement XP (streamer/staff) : ils gagnent de l'XP
+# comme tout le monde (drops, chat...) mais ne doivent jamais apparaître dans
+# le rang individuel ni sur /classement.
+RANKING_EXCLUDED_LOGINS = {"capsloque"}
+
+
 def get_xp_rank(cur, login: str) -> int | None:
     """Rang du joueur par XP total à vie (somme de xp_events), la même métrique
     que le total affiché sur sa page profil. Ne PAS classer sur
     creatures_v2.xp_total (XP de la seule créature active) : ce total change à
     chaque changement de CM actif / éclosion d'œuf sans perte d'XP réelle, ce qui
-    faisait chuter le rang affiché indépendamment du total XP visible juste à côté."""
+    faisait chuter le rang affiché indépendamment du total XP visible juste à côté.
+
+    Retourne None pour un login dans RANKING_EXCLUDED_LOGINS (ne rentre pas
+    dans le classement, quel que soit son XP)."""
+    if login in RANKING_EXCLUDED_LOGINS:
+        return None
     cur.execute("""
         SELECT rank FROM (
             SELECT twitch_login, RANK() OVER (ORDER BY total_xp DESC) as rank
             FROM (
                 SELECT twitch_login, COALESCE(SUM(amount),0) AS total_xp
-                FROM xp_events GROUP BY twitch_login
+                FROM xp_events
+                WHERE twitch_login <> ALL(%s)
+                GROUP BY twitch_login
             ) t
         ) r WHERE twitch_login = %s;
-    """, (login,))
+    """, (list(RANKING_EXCLUDED_LOGINS), login))
     row = cur.fetchone()
     return int(row[0]) if row else None
 
@@ -13906,11 +13919,12 @@ def leaderboard_page():
             cur.execute("""
                 SELECT twitch_login, SUM(amount) AS total_xp
                 FROM xp_events
+                WHERE twitch_login <> ALL(%s)
                 GROUP BY twitch_login
                 HAVING SUM(amount) > 0
                 ORDER BY total_xp DESC
                 LIMIT 50;
-            """)
+            """, (list(RANKING_EXCLUDED_LOGINS),))
             rows = cur.fetchall()
 
     medal = {1: "🥇", 2: "🥈", 3: "🥉"}
