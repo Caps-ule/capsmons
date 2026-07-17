@@ -13491,10 +13491,12 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                   <div class="comp-meta">
                     {meta_html}
                   </div>
-                  {act_btn}
                 </div>
               </div>
-              {xp_bar}
+              <div class="comp-bottom">
+                {act_btn}
+                {xp_bar}
+              </div>
             </div>"""
 
         companions_section = f"""
@@ -13645,6 +13647,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .comp-card:hover{{border-color:rgba(0,229,255,.2)}}
 .comp-card.comp-active{{border-color:rgba(0,255,157,.35);background:rgba(0,255,157,.04);box-shadow:0 0 14px rgba(0,255,157,.1)}}
 .comp-top{{display:flex;gap:12px;align-items:flex-start;width:100%}}
+.comp-bottom{{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:auto}}
 .comp-img-wrap{{position:relative;flex-shrink:0;width:64px;height:64px}}
 .comp-img{{width:64px;height:64px;border-radius:10px;object-fit:contain;background:rgba(255,255,255,.04);border:1px solid var(--border);display:block;image-rendering:pixelated}}
 .comp-img-ph{{width:64px;height:64px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--muted)}}
