@@ -13297,17 +13297,25 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
           <div class="quest-rewards">{"".join(rewards)}</div>
         </div>"""
 
+    # (icône, nom, description de la condition d'obtention)
     badge_labels = {
-        "badge_present":  ("⏱","Présent"),  "badge_grinder": ("⚡","Grinder"),
-        "badge_elite":    ("🏆","Élite"),    "badge_coop":    ("🤝","Teamplayer"),
-        "badge_loyal":    ("💙","Fidèle"),   "badge_gourmand":("🍬","Gourmand"),
-        "badge_collector_5":  ("🐣","Collectionneur"), "badge_collector_10": ("🎒","Dresseur"),
-        "badge_collector_20": ("🌟","Expert"),         "badge_collector_30": ("👑","Légende"),
+        "badge_present":  ("⏱","Présent",   "Resté au moins 60 min en stream sur une semaine"),
+        "badge_grinder":  ("⚡","Grinder",   "Gagné 200 XP en une semaine"),
+        "badge_elite":    ("🏆","Élite",     "Atteint le top 10 du classement XP"),
+        "badge_coop":     ("🤝","Teamplayer","Participé à 2 drops COOP en une semaine"),
+        "badge_loyal":    ("💙","Fidèle",    "Resté au moins 2h en stream sur une semaine"),
+        "badge_gourmand": ("🍬","Gourmand",  "Fait manger 10 bonbons à son CM en une semaine"),
+        "badge_collector_5":  ("🐣","Collectionneur", "Posséder 5 espèces de CapsMön différentes"),
+        "badge_collector_10": ("🎒","Dresseur",        "Posséder 10 espèces de CapsMön différentes"),
+        "badge_collector_20": ("🌟","Expert",          "Posséder 20 espèces de CapsMön différentes"),
+        "badge_collector_30": ("👑","Légende",         "Posséder 30 espèces de CapsMön différentes"),
     }
     if badges:
         badges_html = "".join(
-            f'<div class="badge-item"><div class="badge-icon">{badge_labels.get(b["key"],("🏅",b["key"]))[0]}</div>'
-            f'<div class="badge-name">{badge_labels.get(b["key"],("🏅",b["key"]))[1]}</div></div>'
+            (lambda info: (
+                f'<div class="badge-item" title="{info[2]}"><div class="badge-icon">{info[0]}</div>'
+                f'<div class="badge-name">{info[1]}</div><div class="badge-desc">{info[2]}</div></div>'
+            ))(badge_labels.get(b["key"], ("🏅", b["key"], "")))
             for b in badges)
     else:
         badges_html = '<div class="muted-sm">Aucun badge pour l\'instant</div>'
@@ -13388,6 +13396,23 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
             name     = it["name"] or key
             icon_url = it["icon_url"]
             qty      = it["qty"]
+
+            # Description de l'effet au !use, dérivée des mêmes règles que
+            # internal_use_item (priorité œuf > XP > bonheur, cf. commentaire
+            # "Colonnes de la table items" plus haut dans ce fichier).
+            if key.startswith("egg_"):
+                item_desc = f"Fait éclore un œuf {key[4:].capitalize()}"
+            elif key.startswith("__event_"):
+                item_desc = "Objet spécial d'un event en cours"
+            elif it.get("xp_gain", 0) > 0 and it.get("happiness_gain", 0) > 0:
+                item_desc = f"+{it['xp_gain']} XP et +{it['happiness_gain']} bonheur à ton CM actif"
+            elif it.get("xp_gain", 0) > 0:
+                item_desc = f"+{it['xp_gain']} XP à ton CM actif"
+            elif it.get("happiness_gain", 0) > 0:
+                item_desc = f"+{it['happiness_gain']} bonheur à ton CM actif"
+            else:
+                item_desc = "Objet de collection"
+
             if icon_url:
                 icon_html = f'<img src="{icon_url}" class="inv-icon" alt="{name}">'
             else:
@@ -13410,7 +13435,7 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
           {icon_html}
           <div class="inv-info">
             <div class="inv-name">{name}</div>
-            <div class="inv-key">{key}</div>
+            <div class="inv-desc">{item_desc}</div>
           </div>
           <div class="inv-qty" id="qty-{key}">×{qty}</div>
           {use_btn}
@@ -13591,9 +13616,10 @@ a{{color:var(--cyan);text-decoration:none}}
 .r-item{{font-family:var(--font-mono);font-size:10px;color:var(--amber);padding:2px 7px;border:1px solid rgba(255,209,102,.3);border-radius:999px}}
 .r-badge{{font-family:var(--font-mono);font-size:10px;color:var(--magenta);padding:2px 7px;border:1px solid rgba(255,45,120,.3);border-radius:999px}}
 .badges-row{{display:flex;gap:10px;flex-wrap:wrap}}
-.badge-item{{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;border:1px solid rgba(255,209,102,.2);border-radius:10px;background:rgba(255,209,102,.04);min-width:60px}}
+.badge-item{{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 12px;border:1px solid rgba(255,209,102,.2);border-radius:10px;background:rgba(255,209,102,.04);min-width:110px;max-width:170px;text-align:center}}
 .badge-icon{{font-size:22px}}
 .badge-name{{font-family:var(--font-mono);font-size:9px;color:var(--amber);letter-spacing:.08em}}
+.badge-desc{{font-family:var(--font-ui);font-size:10px;color:var(--muted);line-height:1.3}}
 .muted-sm{{font-family:var(--font-mono);font-size:11px;color:var(--muted)}}
 .album-section{{margin-bottom:24px}}
 .section-header{{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}}
@@ -13624,7 +13650,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .inv-icon-ph{{width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;background:rgba(255,209,102,.08);border-radius:6px}}
 .inv-info{{display:flex;flex-direction:column;gap:1px;min-width:0}}
 .inv-name{{font-family:var(--font-ui);font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.inv-key{{font-family:var(--font-mono);font-size:9px;color:var(--muted)}}
+.inv-desc{{font-family:var(--font-ui);font-size:11px;color:var(--muted);line-height:1.3}}
 .inv-use-btn{{font-family:var(--font-mono);font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--cyan);background:rgba(0,229,255,.08);color:var(--cyan);cursor:pointer;margin-top:6px;transition:background .2s}}
 .inv-use-btn:hover{{background:rgba(0,229,255,.18)}}
 .inv-use-btn:disabled{{opacity:.35;cursor:not-allowed}}
@@ -13999,13 +14025,15 @@ def user_profile_page(login: str, request: Request):
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT inv.item_key, inv.qty, COALESCE(it.name, inv.item_key), COALESCE(it.icon_url, '')
+                SELECT inv.item_key, inv.qty, COALESCE(it.name, inv.item_key), COALESCE(it.icon_url, ''),
+                       COALESCE(it.xp_gain,0), COALESCE(it.happiness_gain,0)
                 FROM inventory inv
                 LEFT JOIN items it ON it.key = inv.item_key
                 WHERE inv.twitch_login=%s AND inv.qty > 0
                 ORDER BY inv.item_key ASC;
             """, (login,))
-            inventory = [{"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3]} for r in cur.fetchall()]
+            inventory = [{"item_key": r[0], "qty": int(r[1]), "name": r[2], "icon_url": r[3],
+                          "xp_gain": int(r[4] or 0), "happiness_gain": int(r[5] or 0)} for r in cur.fetchall()]
 
     page_data = {
         "login": login, "active_cm": active_cm, "quests": quests, "badges": badges,
