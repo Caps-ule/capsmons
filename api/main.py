@@ -13552,13 +13552,13 @@ a{{color:var(--cyan);text-decoration:none}}
 .badge-pill.c{{color:var(--cyan);border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.06)}}
 .badge-pill.g{{color:var(--green);border-color:rgba(0,255,157,.3);background:rgba(0,255,157,.06)}}
 .badge-pill.tid{{color:var(--magenta);border-color:rgba(255,45,120,.35);background:rgba(255,45,120,.07);font-weight:700}}
-.stat-row{{display:flex;align-items:center;gap:8px;margin-bottom:6px}}
-.stat-lbl{{font-family:var(--font-mono);font-size:9px;color:var(--muted);width:60px;flex-shrink:0}}
-.stat-track{{flex:1;height:5px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+.stat-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
+.stat-lbl{{font-family:var(--font-mono);font-size:10px;color:var(--muted);width:60px;flex-shrink:0;letter-spacing:.05em}}
+.stat-track{{flex:1;height:12px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
 .stat-fill{{height:100%;border-radius:999px;transition:width .5s ease}}
-.stat-fill.xp{{background:linear-gradient(90deg,#7aa2ff,var(--cyan))}}
-.stat-fill.hp{{background:linear-gradient(90deg,#ff4fb3,var(--magenta))}}
-.stat-val{{font-family:var(--font-mono);font-size:10px;color:var(--muted);width:50px;text-align:right}}
+.stat-fill.xp{{background:linear-gradient(90deg,#7aa2ff,var(--cyan));box-shadow:0 0 10px rgba(0,229,255,.55)}}
+.stat-fill.hp{{background:linear-gradient(90deg,#ff4fb3,var(--magenta));box-shadow:0 0 10px rgba(255,45,120,.55)}}
+.stat-val{{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text);width:auto;min-width:50px;text-align:right}}
 .kpi-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}}
 .kpi-card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center}}
 .kpi-val{{font-family:var(--font-head);font-size:22px;font-weight:900;margin-bottom:4px}}
@@ -13649,16 +13649,16 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .comp-info{{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}}
 .comp-name{{font-family:var(--font-ui);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .comp-meta{{display:flex;gap:5px;flex-wrap:wrap}}
-.comp-xp-row{{display:flex;align-items:center;gap:6px}}
-.comp-xp-track{{flex:1;height:4px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
-.comp-xp-fill{{height:100%;background:linear-gradient(90deg,#7aa2ff,var(--cyan));border-radius:999px;transition:width .5s}}
-.comp-xp-val{{font-family:var(--font-mono);font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0}}
+.comp-xp-row{{display:flex;align-items:center;gap:8px;margin:6px 0}}
+.comp-xp-track{{flex:1;height:10px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
+.comp-xp-fill{{height:100%;background:linear-gradient(90deg,#7aa2ff,var(--cyan));border-radius:999px;transition:width .5s;box-shadow:0 0 8px rgba(0,229,255,.5)}}
+.comp-xp-val{{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--text);white-space:nowrap;flex-shrink:0}}
 .comp-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;transition:background .2s;width:100%}}
 .comp-activate-btn:hover{{background:rgba(255,209,102,.2)}}
 .comp-act-state{{font-family:var(--font-mono);font-size:10px;color:var(--green);padding:4px 0;text-align:center;letter-spacing:.06em}}
 .comp-img-egg{{width:64px;height:64px;border-radius:10px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.06);display:flex;align-items:center;justify-content:center;font-size:32px}}
 .badge-pill.egg-pill{{color:var(--amber);border-color:rgba(255,209,102,.35);background:rgba(255,209,102,.07);font-size:8px}}
-.comp-xp-fill.egg-fill{{background:linear-gradient(90deg,#ff9d2d,var(--amber))}}
+.comp-xp-fill.egg-fill{{background:linear-gradient(90deg,#ff9d2d,var(--amber));box-shadow:0 0 8px rgba(255,209,102,.5)}}
 </style></head>
 <body>
 <div class="wrap">
