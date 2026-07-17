@@ -13233,6 +13233,17 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
     owned_list = d.get("owned_list", [])
 
     if active and active.get("image_url"):
+        # Mêmes vrais seuils par stage que pour les cartes de collection plus bas,
+        # au lieu du raccourci "% 500 / 5" qui ne correspondait pas aux paliers réels.
+        _active_start, _active_next = stage_bounds(active["stage"])
+        if _active_next is None or _active_next <= _active_start:
+            _active_xp_pct = 100
+            _active_xp_val = f'{active["xp_total"]} (MAX)'
+        else:
+            _active_span = max(1, _active_next - _active_start)
+            _active_cur  = max(0, min(_active_span, active["xp_total"] - _active_start))
+            _active_xp_pct = int(round((_active_cur / _active_span) * 100))
+            _active_xp_val = f'{active["xp_total"]} / {_active_next}'
         cm_card = f"""
         <div class="cm-active-card">
           <div class="cm-active-img-wrap">
@@ -13247,8 +13258,8 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
             </div>
             <div class="stat-row" style="margin-top:10px">
               <div class="stat-lbl">XP</div>
-              <div class="stat-track"><div class="stat-fill xp" style="width:{min(100, int((active['xp_total'] % 500)/5))}%"></div></div>
-              <div class="stat-val">{active['xp_total']}</div>
+              <div class="stat-track"><div class="stat-fill xp" style="width:{_active_xp_pct}%"></div></div>
+              <div class="stat-val">{_active_xp_val}</div>
             </div>
             <div class="stat-row">
               <div class="stat-lbl">BONHEUR</div>
@@ -13428,10 +13439,14 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 name_disp = "Œuf"
                 meta_html = (f'<span class="badge-pill tid" title="Numéro à utiliser avec !trade">n°{o["trade_num"]}</span>'
                              '<span class="badge-pill egg-pill">EN INCUBATION</span>')
-                hatch_pct = min(100, int((o["xp_total"] / 600) * 100)) if o["xp_total"] else 0
+                # Seuils réels (configurables en admin, cf. thresholds()/stage_bounds()) au
+                # lieu d'un "600" en dur : la barre reflétait un palier qui ne correspondait
+                # plus forcément au vrai seuil d'éclosion configuré.
+                _stage_start, _hatch = stage_bounds(0)
+                hatch_pct = min(100, int((o["xp_total"] / _hatch) * 100)) if _hatch else 0
                 xp_bar    = f'''<div class="comp-xp-row">
                   <div class="comp-xp-track"><div class="comp-xp-fill egg-fill" style="width:{hatch_pct}%"></div></div>
-                  <span class="comp-xp-val">{o["xp_total"]} / 600 XP</span>
+                  <span class="comp-xp-val">{o["xp_total"]} / {_hatch} XP</span>
                 </div>'''
             else:
                 img_html  = (f'<img src="{o["image_url"]}" alt="{o["name"]}" class="comp-img" loading="lazy">'
@@ -13440,10 +13455,21 @@ def _render_user_page(login: str, d: dict, is_owner: bool = False) -> str:
                 meta_html = f'''<span class="badge-pill tid" title="Numéro à utiliser avec !trade">n°{o["trade_num"]}</span>
                   <span class="badge-pill c">{(o["lineage_key"] or "").upper()}</span>
                   <span class="badge-pill g">S{stage_lbl}</span>'''
-                xp_pct    = min(100, int((o["xp_total"] % 500) / 5))
+                # Idem : "% 500 / 5" était un raccourci arbitraire, décorrélé des vrais
+                # paliers par stage (souvent différents, ex 600 -> 2000 -> 5000), donc la
+                # barre pouvait afficher 100% alors qu'il manquait beaucoup d'XP réel.
+                _stage_start, _stage_next = stage_bounds(o["stage"])
+                if _stage_next is None or _stage_next <= _stage_start:
+                    xp_pct  = 100
+                    xp_val_lbl = f'{o["xp_total"]} XP (MAX)'
+                else:
+                    _span = max(1, _stage_next - _stage_start)
+                    _cur_in_stage = max(0, min(_span, o["xp_total"] - _stage_start))
+                    xp_pct = int(round((_cur_in_stage / _span) * 100))
+                    xp_val_lbl = f'{o["xp_total"]} / {_stage_next} XP'
                 xp_bar    = f'''<div class="comp-xp-row">
                   <div class="comp-xp-track"><div class="comp-xp-fill" style="width:{xp_pct}%"></div></div>
-                  <span class="comp-xp-val">{o["xp_total"]} XP</span>
+                  <span class="comp-xp-val">{xp_val_lbl}</span>
                 </div>'''
 
             if is_act:
