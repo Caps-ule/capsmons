@@ -13642,18 +13642,18 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .sil-img{{width:100%;height:100%;object-fit:contain;filter:brightness(0) invert(0.18) sepia(0.4) hue-rotate(180deg);image-rendering:pixelated}}
 .silhouette-ph{{font-size:22px;color:rgba(74,106,136,.4)}}
 /* ── Section companions ── */
-.companions-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:4px}}
-.comp-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s,box-shadow .2s}}
+.companions-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:4px}}
+.comp-card{{background:rgba(0,229,255,.03);border:1px solid rgba(0,229,255,.08);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;transition:border-color .2s,box-shadow .2s}}
 .comp-card:hover{{border-color:rgba(0,229,255,.2)}}
 .comp-card.comp-active{{border-color:rgba(0,255,157,.35);background:rgba(0,255,157,.04);box-shadow:0 0 14px rgba(0,255,157,.1)}}
-.comp-top{{display:flex;gap:12px;align-items:flex-start;width:100%}}
+.comp-top{{display:flex;gap:14px;align-items:flex-start;width:100%}}
 .comp-bottom{{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:auto}}
-.comp-img-wrap{{position:relative;flex-shrink:0;width:64px;height:64px}}
-.comp-img{{width:64px;height:64px;border-radius:10px;object-fit:contain;background:rgba(255,255,255,.04);border:1px solid var(--border);display:block;image-rendering:pixelated}}
-.comp-img-ph{{width:64px;height:64px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--muted)}}
+.comp-img-wrap{{position:relative;flex-shrink:0;width:92px;height:92px}}
+.comp-img{{width:92px;height:92px;border-radius:12px;object-fit:contain;background:rgba(255,255,255,.04);border:1px solid var(--border);display:block;image-rendering:pixelated}}
+.comp-img-ph{{width:92px;height:92px;border-radius:12px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:32px;color:var(--muted)}}
 .comp-act-badge{{position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:8px;white-space:nowrap;padding:2px 6px;border-radius:999px;background:var(--green);color:#000;font-weight:700;letter-spacing:.06em}}
 .comp-info{{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}}
-.comp-name{{font-family:var(--font-ui);font-size:13px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.comp-name{{font-family:var(--font-ui);font-size:14px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
 .comp-meta{{display:flex;gap:5px;flex-wrap:wrap}}
 .comp-xp-row{{display:flex;align-items:center;gap:8px;width:100%}}
 .comp-xp-track{{flex:1;height:10px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,.05)}}
@@ -13662,7 +13662,7 @@ body::before{{content:'';position:fixed;inset:0;pointer-events:none;background:r
 .comp-activate-btn{{font-family:var(--font-mono);font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--amber);background:rgba(255,209,102,.08);color:var(--amber);cursor:pointer;transition:background .2s;width:100%}}
 .comp-activate-btn:hover{{background:rgba(255,209,102,.2)}}
 .comp-act-state{{font-family:var(--font-mono);font-size:10px;color:var(--green);padding:4px 0;text-align:center;letter-spacing:.06em}}
-.comp-img-egg{{width:64px;height:64px;border-radius:10px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.06);display:flex;align-items:center;justify-content:center;font-size:32px}}
+.comp-img-egg{{width:92px;height:92px;border-radius:12px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.06);display:flex;align-items:center;justify-content:center;font-size:44px}}
 .badge-pill.egg-pill{{color:var(--amber);border-color:rgba(255,209,102,.35);background:rgba(255,209,102,.07);font-size:8px}}
 .comp-xp-fill.egg-fill{{background:linear-gradient(90deg,#ff9d2d,var(--amber));box-shadow:0 0 8px rgba(255,209,102,.5)}}
 </style></head>
