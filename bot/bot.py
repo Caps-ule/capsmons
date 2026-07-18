@@ -26,6 +26,7 @@ API_STREAM_PRESENT_BATCH_URL = "http://api:8000/internal/stream/present_batch"
 API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
 API_COLLECTION_URL = "http://api:8000/internal/collection"
 API_PROFILE_SUMMARY_URL = "http://api:8000/internal/profile_summary"
+API_PROFIL_OVERLAY_URL = "http://api:8000/internal/trigger_profil_overlay"
 API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
 API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
 API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
@@ -259,6 +260,18 @@ class Bot(commands.Bot):
             f"🧬 {d['species_count']} espèces · ⭐ {d['xp_total']} XP · "
             f"🏅 {d['badges_count']} badges : {badges_txt}"
         )
+
+        # Même overlay que !show (kind='profil'), pour éviter d'ajouter une
+        # page overlay dédiée juste pour !profil.
+        try:
+            requests.post(
+                API_PROFIL_OVERLAY_URL,
+                headers={"X-API-Key": API_KEY},
+                json={"twitch_login": login},
+                timeout=3,
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------------
     # Commande: !cmlist (legacy / debug)

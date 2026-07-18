@@ -4075,6 +4075,16 @@ def init_db():
                   ADD COLUMN IF NOT EXISTS card_frame TEXT DEFAULT NULL;
             """)
 
+            # Migration kind/extra_data : permet à overlay_events de porter d'autres
+            # contenus que la fiche CM (!show), ex. le résumé !profil, sur la même
+            # carte overlay plutôt que d'ajouter une page overlay dédiée.
+            cur.execute("""
+                ALTER TABLE overlay_events
+                  ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'show';
+                ALTER TABLE overlay_events
+                  ADD COLUMN IF NOT EXISTS extra_data JSONB;
+            """)
+
 
         conn.commit()
 
@@ -9162,7 +9172,7 @@ body {
         <img id="avatar" src="" alt="">
         <div class="viewer-info">
           <div id="viewer-name">@viewer</div>
-          <div class="viewer-sub">// !show</div>
+          <div class="viewer-sub" id="viewer-sub">// !show</div>
         </div>
       </div>
     </div>
@@ -9170,12 +9180,12 @@ body {
     <!-- Stats -->
     <div class="card-stats">
       <div class="stat-row">
-        <div class="stat-label">XP</div>
+        <div class="stat-label" id="xp-label">XP</div>
         <div class="stat-track"><div id="xp-fill"  class="stat-fill xp"  style="width:0%"></div></div>
         <div class="stat-val"  id="xp-val">0 XP</div>
       </div>
       <div class="stat-row">
-        <div class="stat-label">BONHEUR</div>
+        <div class="stat-label" id="hp-label">BONHEUR</div>
         <div class="stat-track"><div id="hp-fill" class="stat-fill hp" style="width:0%"></div></div>
         <div class="stat-val" id="hp-val">0%</div>
       </div>
@@ -9204,6 +9214,9 @@ const hpFill    = document.getElementById('hp-fill');
 const hpVal     = document.getElementById('hp-val');
 const lineageBadge = document.getElementById('lineage-badge');
 const stageBadge   = document.getElementById('stage-badge');
+const xpLabel   = document.getElementById('xp-label');
+const hpLabel   = document.getElementById('hp-label');
+const viewerSub = document.getElementById('viewer-sub');
 const sfx       = document.getElementById('sfx');
 const pcanvas   = document.getElementById('pcanvas');
 const pctx      = pcanvas.getContext('2d');
@@ -9320,7 +9333,8 @@ async function tick() {
 
     if (!j.show) return;
 
-    const sig = `${j.viewer?.name}|${j.cm?.name}|${j.xp?.total}|${j.happiness?.pct ?? 0}`;
+    const kind = j.kind || 'show';
+    const sig = `${kind}|${j.viewer?.name}|${j.cm?.name}|${j.xp?.total}|${j.happiness?.pct ?? 0}|${j.profil ? JSON.stringify(j.profil) : ''}`;
     if (sig !== lastSig) {
       lastSig = sig;
       playSfx();
@@ -9330,29 +9344,50 @@ async function tick() {
     viewerName.textContent = '@' + (j.viewer?.name || '?');
     avatar.src = j.viewer?.avatar || '';
 
-    // CM
+    // CM (habillage visuel : réutilisé tel quel même en mode !profil)
     cmImg.src  = j.cm?.media || '';
     cmName.textContent = (j.cm?.name || 'CAPSMÖNS').toUpperCase();
 
     const stage = j.cm?.stage ?? 0;
     const lineage = j.cm?.lineage_key || '—';
-    lineageBadge.textContent = lineage.toUpperCase();
-    stageBadge.textContent   = stageLabel(stage);
-    cmType.textContent       = `${lineage.toUpperCase()} · ${stageLabel(stage)}`;
 
-    // XP
-    const xpPct = j.xp?.pct ?? 100;
-    const xpTotal = j.xp?.total ?? 0;
-    const toNext  = j.xp?.to_next;
-    xpFill.style.width = xpPct + '%';
-    xpVal.textContent  = toNext
-      ? `${xpTotal} / ${xpTotal + toNext}`
-      : `${xpTotal} MAX`;
+    if (kind === 'profil' && j.profil) {
+      // ── Contenu !profil : réutilise la même carte/le même son que !show,
+      // mais remplace les stats par le résumé de profil.
+      const p = j.profil;
+      viewerSub.textContent = '// !profil';
+      cmType.textContent    = 'PROFIL JOUEUR';
 
-    // Bonheur
-    const hpPct = j.happiness?.pct ?? 0;
-    hpFill.style.width = hpPct + '%';
-    hpVal.textContent  = hpPct + '%';
+      xpLabel.textContent = 'CRÉATURES';
+      xpFill.style.width  = '100%';
+      xpVal.textContent   = `${p.creatures_count} (${p.species_count} esp.)`;
+
+      hpLabel.textContent = 'BADGES';
+      hpFill.style.width  = Math.min(100, p.badges_count * 20) + '%';
+      hpVal.textContent   = `${p.badges_count}`;
+
+      lineageBadge.textContent = `⭐ ${p.xp_total} XP`;
+      stageBadge.textContent   = (p.badges || []).map(b => b.icon).join(' ') || '—';
+    } else {
+      viewerSub.textContent = '// !show';
+      lineageBadge.textContent = lineage.toUpperCase();
+      stageBadge.textContent   = stageLabel(stage);
+      cmType.textContent       = `${lineage.toUpperCase()} · ${stageLabel(stage)}`;
+
+      xpLabel.textContent = 'XP';
+      const xpPct = j.xp?.pct ?? 100;
+      const xpTotal = j.xp?.total ?? 0;
+      const toNext  = j.xp?.to_next;
+      xpFill.style.width = xpPct + '%';
+      xpVal.textContent  = toNext
+        ? `${xpTotal} / ${xpTotal + toNext}`
+        : `${xpTotal} MAX`;
+
+      hpLabel.textContent = 'BONHEUR';
+      const hpPct = j.happiness?.pct ?? 0;
+      hpFill.style.width = hpPct + '%';
+      hpVal.textContent  = hpPct + '%';
+    }
 
     applyTheme(j.card_frame || null);
     showCard();
@@ -10131,6 +10166,8 @@ def admin_cms_create_full(
 def overlay_state():
     r = None
     card_frame = None
+    kind = "show"
+    extra_data = None
     with get_db() as conn:
         with conn.cursor() as cur:
             try:
@@ -10139,18 +10176,21 @@ def overlay_state():
                         id, twitch_login, viewer_display, viewer_avatar,
                         cm_key, cm_name, cm_media_url,
                         xp_total, stage, stage_start_xp, next_stage_xp,
-                        happiness, COALESCE(card_frame, ''), expires_at
+                        happiness, COALESCE(card_frame, ''), expires_at,
+                        kind, extra_data
                     FROM overlay_events
                     WHERE expires_at > now()
                     ORDER BY id DESC LIMIT 1;
                 """)
                 row = cur.fetchone()
                 if row:
-                    # row[12] = card_frame, row[13] = expires_at
+                    # row[12] = card_frame, row[13] = expires_at, row[14] = kind, row[15] = extra_data
                     card_frame = row[12] or None
+                    kind = row[14] or "show"
+                    extra_data = row[15]
                     r = row[:12] + (row[13],)
             except Exception:
-                # Colonne card_frame absente (migration pas encore appliquée)
+                # Colonnes card_frame/kind/extra_data absentes (migration pas encore appliquée)
                 conn.rollback()
                 cur.execute("""
                     SELECT
@@ -10231,6 +10271,8 @@ def overlay_state():
             "pct": h_pct,
         },
         "card_frame": card_frame or None,
+        "kind": kind,
+        "profil": extra_data if kind == "profil" else None,
     }
 
 
@@ -10934,6 +10976,86 @@ def trigger_show(payload: dict, x_api_key: str | None = Header(default=None)):
         conn.commit()
 
     return {"ok": True}
+
+
+@app.post("/internal/trigger_profil_overlay")
+def trigger_profil_overlay(payload: dict, x_api_key: str | None = Header(default=None)):
+    """Affiche le résumé !profil sur l'overlay !show (kind='profil') au lieu
+    d'ajouter une page overlay dédiée — même carte, même son, contenu différent."""
+    require_internal_key(x_api_key)
+
+    login = str(payload.get("twitch_login", "")).strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Missing twitch_login")
+
+    duration = int(os.environ.get("SHOW_DURATION_SECONDS", "8"))
+    duration = max(2, min(duration, 8))
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            summary = _compute_profile_summary(cur, login)
+            if summary is None:
+                raise HTTPException(status_code=404, detail="Viewer introuvable")
+
+            # CM actif réutilisé comme habillage visuel (image/nom/cadre), mais
+            # les stats affichées sont celles du profil, pas celles de ce CM.
+            cur.execute("""
+                SELECT cm_key, stage, happiness, COALESCE(lineage_key,''),
+                       COALESCE(card_frame, '')
+                FROM creatures_v2
+                WHERE twitch_login=%s AND is_active=true
+                LIMIT 1;
+            """, (login,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No active CM")
+            cm_key, stage, happiness, lineage_key, card_frame = (
+                row[0], int(row[1]), int(row[2] or 0), row[3], row[4] or None
+            )
+
+            if cm_key == "egg" or stage == 0:
+                cm_name = f"Œuf {lineage_key.capitalize()}" if lineage_key else "Œuf"
+                media_url = get_egg_image_url(cur, lineage_key)
+            else:
+                cur.execute("""
+                    SELECT name, image_url FROM cm_forms
+                    WHERE cm_key=%s AND stage=%s;
+                """, (cm_key, stage))
+                f = cur.fetchone()
+                if f and f[0] and f[1]:
+                    cm_name, media_url = f[0], f[1]
+                else:
+                    cur.execute("SELECT name, COALESCE(media_url,'') FROM cms WHERE key=%s;", (cm_key,))
+                    cmrow = cur.fetchone()
+                    cm_name, media_url = cmrow if cmrow else (cm_key, "")
+        conn.commit()
+
+    display, avatar = twitch_user_profile(login)
+    stage_start, next_xp = stage_bounds(stage)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO overlay_events
+                  (twitch_login, viewer_display, viewer_avatar,
+                   cm_key, cm_name, cm_media_url,
+                   xp_total, stage, stage_start_xp, next_stage_xp,
+                   happiness, card_frame, kind, extra_data, expires_at)
+                VALUES
+                  (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'profil',%s,
+                   now() + (%s || ' seconds')::interval);
+            """, (
+                login, display, avatar,
+                cm_key, cm_name, media_url or "",
+                0, stage, stage_start, next_xp,
+                happiness, card_frame,
+                json.dumps(summary),
+                duration,
+            ))
+        conn.commit()
+
+    return {"ok": True}
+
 
 # =============================================================================
 # ADMIN: Item Use (creatures_v2 only)
@@ -12376,10 +12498,53 @@ def internal_collection(login: str, x_api_key: str | None = Header(default=None)
     return {"ok": True, "twitch_login": login, "items": items}
 
 
+def _compute_profile_summary(cur, login: str) -> dict | None:
+    """Nombre de créatures, nombre d'espèces différentes, XP total à vie et
+    badges obtenus. Retourne None si le viewer est inconnu. Utilisé par
+    /internal/profile_summary (commande !profil) et par le déclenchement de
+    l'overlay !profil, pour ne calculer ça qu'à un seul endroit."""
+    cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (login,))
+    if not cur.fetchone():
+        return None
+
+    cur.execute("SELECT COUNT(*) FROM creatures_v2 WHERE twitch_login=%s;", (login,))
+    creatures_count = int(cur.fetchone()[0])
+
+    cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
+    owned_cms = {r[0] for r in cur.fetchall()}
+    distinct_species = len(owned_cms - {"egg"})
+
+    # Même attribution que la page profil, pour qu'un viewer qui n'utilise
+    # que le chat (jamais /u/{login}) débloque quand même ses badges.
+    _award_collector_badges(cur, login, distinct_species)
+
+    cur.execute(
+        "SELECT badge_key FROM user_badges WHERE twitch_login=%s ORDER BY earned_at DESC;",
+        (login,),
+    )
+    badge_keys = [r[0] for r in cur.fetchall()]
+
+    cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE twitch_login=%s;", (login,))
+    xp_total = int(cur.fetchone()[0])
+
+    badges = [
+        {"key": k, "icon": BADGE_INFO.get(k, ("🏅", k, ""))[0], "name": BADGE_INFO.get(k, ("🏅", k, ""))[1]}
+        for k in badge_keys
+    ]
+
+    return {
+        "twitch_login": login,
+        "creatures_count": creatures_count,
+        "species_count": distinct_species,
+        "badges_count": len(badges),
+        "badges": badges,
+        "xp_total": xp_total,
+    }
+
+
 @app.get("/internal/profile_summary/{login}")
 def internal_profile_summary(login: str, x_api_key: str | None = Header(default=None)):
-    """Résumé de profil pour la commande !profil du bot : nombre de créatures,
-    nombre d'espèces différentes, XP total à vie, et badges obtenus."""
+    """Résumé de profil pour la commande !profil du bot."""
     require_internal_key(x_api_key)
 
     login = (login or "").strip().lower()
@@ -12388,46 +12553,12 @@ def internal_profile_summary(login: str, x_api_key: str | None = Header(default=
 
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM users WHERE twitch_login=%s;", (login,))
-            if not cur.fetchone():
+            summary = _compute_profile_summary(cur, login)
+            if summary is None:
                 raise HTTPException(status_code=404, detail="Viewer introuvable")
-
-            cur.execute("SELECT COUNT(*) FROM creatures_v2 WHERE twitch_login=%s;", (login,))
-            creatures_count = int(cur.fetchone()[0])
-
-            cur.execute("SELECT cm_key FROM creatures_v2 WHERE twitch_login=%s;", (login,))
-            owned_cms = {r[0] for r in cur.fetchall()}
-            distinct_species = len(owned_cms - {"egg"})
-
-            # Même attribution que la page profil, pour qu'un viewer qui n'utilise
-            # que le chat (jamais /u/{login}) débloque quand même ses badges.
-            _award_collector_badges(cur, login, distinct_species)
-
-            cur.execute(
-                "SELECT badge_key FROM user_badges WHERE twitch_login=%s ORDER BY earned_at DESC;",
-                (login,),
-            )
-            badge_keys = [r[0] for r in cur.fetchall()]
-
-            cur.execute("SELECT COALESCE(SUM(amount),0) FROM xp_events WHERE twitch_login=%s;", (login,))
-            xp_total = int(cur.fetchone()[0])
-
         conn.commit()
 
-    badges = [
-        {"key": k, "icon": BADGE_INFO.get(k, ("🏅", k, ""))[0], "name": BADGE_INFO.get(k, ("🏅", k, ""))[1]}
-        for k in badge_keys
-    ]
-
-    return {
-        "ok": True,
-        "twitch_login": login,
-        "creatures_count": creatures_count,
-        "species_count": distinct_species,
-        "badges_count": len(badges),
-        "badges": badges,
-        "xp_total": xp_total,
-    }
+    return {"ok": True, **summary}
 
 
 @app.post("/internal/companion/set")
