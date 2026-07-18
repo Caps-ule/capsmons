@@ -988,6 +988,11 @@ async def mod_action(request: Request, payload: dict = Body(...)):
                 conn.commit()
                 return {"ok": True, "msg": f"Drop {mode} lancé (id={drop_id})", "drop_id": drop_id}
 
+            # ── Redémarrer le bot Twitch ─────────────────────────────────
+            if action == "restart_bot":
+                _request_bot_restart()
+                return {"ok": True, "msg": "Redémarrage du bot demandé"}
+
     raise HTTPException(400, "Action inconnue")
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_page():
@@ -1201,6 +1206,15 @@ select{{background:var(--panel2);border:1px solid var(--border);border-radius:8p
     <div class="status" id="dropStatus"></div>
   </div>
 
+  <!-- Bot -->
+  <div class="card">
+    <div class="card-title">🤖 Bot Twitch</div>
+    <div class="action-row">
+      <button class="btn btn-magenta" onclick="restartBot()">⟳ Redémarrer le bot</button>
+    </div>
+    <div class="status" id="botStatus"></div>
+  </div>
+
 </div>
 
 <script>
@@ -1302,6 +1316,11 @@ async function spawnDrop() {{
     duration: parseInt(document.getElementById('dropDuration').value) || 20,
   }};
   await postAction(body, 'dropStatus');
+}}
+
+async function restartBot() {{
+  if (!confirm('Redémarrer le bot Twitch ? Il sera indisponible quelques secondes.')) return;
+  await postAction({{ action: 'restart_bot', login: '_mod' }}, 'botStatus');
 }}
 
 async function postAction(body, statusId) {{
@@ -3689,6 +3708,16 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
     out = drop_spawn(payload, x_api_key=os.environ.get("INTERNAL_API_KEY"))
     return {"ok": True, "picked": {"item_key": item_key, "item_name": item_name, "media_url": media_url}, "drop": out}
 
+
+@app.post("/admin/bot/restart")
+def admin_bot_restart(credentials: HTTPBasicCredentials = Depends(security)):
+    """Demande un redémarrage du bot Twitch (crash/blocage). Pas d'accès au
+    socket Docker depuis ce conteneur : pose un flag que le bot poll et sur
+    lequel il s'auto-termine, docker-compose (restart: unless-stopped) le relance."""
+    require_admin(credentials)
+    _request_bot_restart()
+    return {"ok": True, "msg": "Redémarrage du bot demandé"}
+
 # =============================================================================
 # DB init (ne pas dupliquer les tables)
 # =============================================================================
@@ -4261,6 +4290,28 @@ def internal_is_live(x_api_key: str | None = Header(default=None)):
             cur.execute("SELECT value FROM kv WHERE key='is_live';")
             row = cur.fetchone()
     return {"is_live": (row and row[0] == 'true')}
+
+
+def _request_bot_restart() -> None:
+    """Pose un flag (timestamp epoch) que le bot poll périodiquement. Pas
+    d'accès au socket Docker depuis ce conteneur -> le bot se termine
+    lui-même (os._exit) quand il voit un flag plus récent que son propre
+    démarrage, et `restart: unless-stopped` (docker-compose) le relance."""
+    kv_set("bot_restart_requested_at", str(time.time()))
+
+
+@app.get('/internal/bot/restart_status')
+def internal_bot_restart_status(x_api_key: str | None = Header(default=None)):
+    require_internal_key(x_api_key)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM kv WHERE key='bot_restart_requested_at';")
+            row = cur.fetchone()
+    try:
+        requested_at = float(row[0]) if row and row[0] else None
+    except (TypeError, ValueError):
+        requested_at = None
+    return {"requested_at": requested_at}
 
 # =============================================================================
 # Drops endpoints (A)

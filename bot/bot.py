@@ -27,6 +27,7 @@ API_ITEM_PICK_URL = "http://api:8000/internal/items/pick"
 API_COLLECTION_URL = "http://api:8000/internal/collection"
 API_PROFILE_SUMMARY_URL = "http://api:8000/internal/profile_summary"
 API_PROFIL_OVERLAY_URL = "http://api:8000/internal/trigger_profil_overlay"
+API_BOT_RESTART_STATUS_URL = "http://api:8000/internal/bot/restart_status"
 API_COMPANION_SET_URL = "http://api:8000/internal/companion/set"
 API_COMPANIONS_LIST_URL = "http://api:8000/internal/companions"
 API_COMPANIONS_SET_ACTIVE_URL = "http://api:8000/internal/companions/set_active"
@@ -200,6 +201,7 @@ class Bot(commands.Bot):
             initial_channels=[os.environ["TWITCH_CHANNEL"]],
         )
         self._tasks_started = False
+        self._started_at = time.time()
 
     # ------------------------------------------------------------------------
     # Commande: !inv
@@ -882,6 +884,8 @@ class Bot(commands.Bot):
         self.loop.create_task(self.event_loop())
         self.loop.create_task(self.event_sync_loop())
         self.loop.create_task(self.event_drop_loop())
+        # Redémarrage à distance (bouton admin/mod)
+        self.loop.create_task(self.restart_watch_loop())
 
     # ------------------------------------------------------------------------
     # Commande !drop
@@ -1313,6 +1317,33 @@ class Bot(commands.Bot):
     
             except Exception as e:
                 print("[BOT] announcements_loop error:", e, flush=True)
+
+    # ------------------------------------------------------------------------
+    # Redémarrage à distance (bouton admin/mod) : pas d'accès Docker depuis
+    # l'API, donc on poll un flag KV et on se termine nous-mêmes si un
+    # redémarrage a été demandé après notre propre démarrage. `restart:
+    # unless-stopped` (docker-compose) relance alors le conteneur.
+    # ------------------------------------------------------------------------
+    async def restart_watch_loop(self):
+        await asyncio.sleep(10)
+
+        while True:
+            await asyncio.sleep(7)
+
+            try:
+                r = requests.get(
+                    API_BOT_RESTART_STATUS_URL,
+                    headers={"X-API-Key": API_KEY},
+                    timeout=2,
+                )
+                if r.status_code != 200:
+                    continue
+                requested_at = r.json().get("requested_at")
+                if requested_at and float(requested_at) > self._started_at:
+                    print("[BOT] Redémarrage demandé via admin/mod -> arrêt du process.", flush=True)
+                    os._exit(1)
+            except Exception as e:
+                print("[BOT] restart_watch_loop error:", e, flush=True)
 
     # ------------------------------------------------------------------------
     # Happiness decay loop

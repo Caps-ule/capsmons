@@ -2001,6 +2001,16 @@
           <div class="status-line" id="ad_test_status"></div>
         </div>
       </div>
+
+      <!-- BOT TWITCH -->
+      <div class="card accent-m">
+        <div class="card-title">🤖 BOT TWITCH</div>
+        <div class="muted" style="margin-bottom:12px">En cas de crash ou de blocage du bot (plus de réponse aux commandes chat).</div>
+        <div class="row">
+          <button class="btn btn-magenta" onclick="restartBot('bot_restart_status')">⟳ Redémarrer le bot</button>
+          <div class="status-line" id="bot_restart_status"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ══════════ PAGE: AUTODROP ══════════ -->
@@ -3794,6 +3804,14 @@ async function testAutoDrop(statusId) {
   if (!r.ok) { setStatus(statusId, `⛔ ${JSON.stringify(j)}`, false); return; }
   const p = j.picked || {};
   setStatus(statusId, `✓ Drop lancé : ${p.item_name || p.item_key || '?'}`, true);
+}
+
+async function restartBot(statusId) {
+  if (!confirm('Redémarrer le bot Twitch ? Il sera indisponible quelques secondes.')) return;
+  setStatus(statusId, '…');
+  const r = await fetch('/admin/bot/restart', { method: 'POST' });
+  const j = await r.json().catch(() => ({}));
+  setStatus(statusId, r.ok ? `✓ ${j.msg || 'Redémarrage demandé'}` : `⛔ ${JSON.stringify(j)}`, r.ok);
 }
 
 /* ─── CHANNEL POINTS ────────────────────────────────────── */
