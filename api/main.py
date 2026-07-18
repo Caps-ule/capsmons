@@ -9138,6 +9138,109 @@ body {
   pointer-events: none;
   z-index: 30;
 }
+
+/* ── VIGNETTE !profil (distincte de la fiche CM) ── */
+.profil-card {
+  position: relative;
+  width: 420px;
+  padding: 34px 30px 28px;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+
+  background: linear-gradient(160deg, #04090f 0%, #070e1d 45%, #050b18 100%);
+  border-radius: 20px;
+  border: 1px solid rgba(0,229,255,0.3);
+  box-shadow:
+    0 0 0 1px rgba(0,229,255,0.08),
+    0 0 40px rgba(0,229,255,0.15),
+    0 0 100px rgba(0,229,255,0.06),
+    inset 0 0 60px rgba(0,0,0,0.5);
+
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.34,1.56,0.64,1);
+}
+.profil-card.showing {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.profil-avatar-wrap {
+  width: 120px; height: 120px;
+  border-radius: 50%;
+  border: 3px solid #00e5ff;
+  box-shadow: 0 0 20px rgba(0,229,255,0.6), 0 0 50px rgba(0,229,255,0.3);
+  overflow: hidden;
+  margin-bottom: 16px;
+  background: #0a0d18;
+  flex-shrink: 0;
+}
+.profil-avatar-wrap img { width: 100%; height: 100%; object-fit: cover; }
+
+.profil-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 26px;
+  font-weight: 900;
+  color: #e8f4ff;
+  text-shadow: 0 0 20px rgba(0,229,255,0.5);
+  text-align: center;
+  margin-bottom: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profil-tag {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: #00e5ff;
+  margin-bottom: 22px;
+}
+
+.profil-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  width: 100%;
+  margin-bottom: 20px;
+}
+.profil-stat {
+  background: rgba(0,229,255,0.05);
+  border: 1px solid rgba(0,229,255,0.15);
+  border-radius: 12px;
+  padding: 12px 8px;
+  text-align: center;
+}
+.profil-stat-val {
+  font-family: 'Orbitron', monospace;
+  font-size: 22px;
+  font-weight: 900;
+  color: #00e5ff;
+  text-shadow: 0 0 14px rgba(0,229,255,0.4);
+}
+.profil-stat-lbl {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #5a8aaa;
+  margin-top: 4px;
+}
+
+.profil-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  font-size: 22px;
+  min-height: 30px;
+}
+.profil-badges .no-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: #4a6a88;
+}
 </style>
 </head>
 <body>
@@ -9197,6 +9300,36 @@ body {
     </div>
 
   </div>
+
+  <!-- Vignette !profil : carte dédiée, distincte de la fiche CM ci-dessus -->
+  <div id="profilCard" class="profil-card">
+    <div class="profil-avatar-wrap">
+      <img id="profilAvatar" src="" alt="">
+    </div>
+    <div class="profil-name" id="profilName">@viewer</div>
+    <div class="profil-tag">// PROFIL JOUEUR</div>
+
+    <div class="profil-stats">
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilCreatures">0</div>
+        <div class="profil-stat-lbl">CRÉATURES</div>
+      </div>
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilSpecies">0</div>
+        <div class="profil-stat-lbl">ESPÈCES</div>
+      </div>
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilXp">0</div>
+        <div class="profil-stat-lbl">XP TOTAL</div>
+      </div>
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilBadgesCount">0</div>
+        <div class="profil-stat-lbl">BADGES</div>
+      </div>
+    </div>
+
+    <div class="profil-badges" id="profilBadges"></div>
+  </div>
 </div>
 
 <audio id="sfx" preload="auto" src="/static/show.mp3"></audio>
@@ -9214,12 +9347,19 @@ const hpFill    = document.getElementById('hp-fill');
 const hpVal     = document.getElementById('hp-val');
 const lineageBadge = document.getElementById('lineage-badge');
 const stageBadge   = document.getElementById('stage-badge');
-const xpLabel   = document.getElementById('xp-label');
-const hpLabel   = document.getElementById('hp-label');
-const viewerSub = document.getElementById('viewer-sub');
 const sfx       = document.getElementById('sfx');
 const pcanvas   = document.getElementById('pcanvas');
 const pctx      = pcanvas.getContext('2d');
+
+// Vignette !profil
+const profilCard        = document.getElementById('profilCard');
+const profilAvatar      = document.getElementById('profilAvatar');
+const profilName        = document.getElementById('profilName');
+const profilCreatures   = document.getElementById('profilCreatures');
+const profilSpecies     = document.getElementById('profilSpecies');
+const profilXp          = document.getElementById('profilXp');
+const profilBadgesCount = document.getElementById('profilBadgesCount');
+const profilBadges      = document.getElementById('profilBadges');
 
 let showing = false;
 let hideTimer = null;
@@ -9293,28 +9433,49 @@ function playSfx() {
   try { sfx.currentTime = 0; const p = sfx.play(); if (p?.catch) p.catch(()=>{}); } catch(e){}
 }
 
-// ── Carte ─────────────────────────────────────────────
-function showCard() {
+// ── Carte / vignette ───────────────────────────────────
+// Deux panneaux distincts (fiche CM et vignette !profil) partagent la même
+// scène/son/particules mais ne sont jamais affichés en même temps.
+let currentPanel = null; // 'show' | 'profil'
+
+function panelEl(kind) { return kind === 'profil' ? profilCard : card; }
+
+function showPanel(kind) {
+  const target = panelEl(kind);
+  const other  = panelEl(kind === 'profil' ? 'show' : 'profil');
+
+  if (currentPanel !== kind) {
+    // Changement de type de vignette : on masque l'autre sans transition
+    // pour ne jamais avoir les deux affichées en même temps.
+    other.classList.remove('showing');
+    other.style.display = 'none';
+    showing = false;
+    currentPanel = kind;
+  }
+
   if (!showing) {
-    card.style.display = 'flex';
-    void card.offsetWidth;
-    card.classList.add('glitch-enter');
-    setTimeout(() => card.classList.remove('glitch-enter'), 400);
-    card.classList.add('showing');
+    target.style.display = 'flex';
+    void target.offsetWidth;
+    if (kind === 'show') {
+      target.classList.add('glitch-enter');
+      setTimeout(() => target.classList.remove('glitch-enter'), 400);
+    }
+    target.classList.add('showing');
     showing = true;
 
     // Burst centré
-    const rect = card.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
     spawnBurst(rect.left + rect.width/2, rect.top + rect.height/2);
   }
   if (hideTimer) clearTimeout(hideTimer);
-  hideTimer = setTimeout(hideCard, DISPLAY_MS);
+  hideTimer = setTimeout(hidePanel, DISPLAY_MS);
 }
 
-function hideCard() {
+function hidePanel() {
   if (!showing) return;
-  card.classList.remove('showing');
-  setTimeout(() => { card.style.display = 'none'; }, 400);
+  const target = panelEl(currentPanel);
+  target.classList.remove('showing');
+  setTimeout(() => { target.style.display = 'none'; }, 400);
   showing = false;
   hideTimer = null;
 }
@@ -9340,41 +9501,37 @@ async function tick() {
       playSfx();
     }
 
-    // Viewer
-    viewerName.textContent = '@' + (j.viewer?.name || '?');
-    avatar.src = j.viewer?.avatar || '';
-
-    // CM (habillage visuel : réutilisé tel quel même en mode !profil)
-    cmImg.src  = j.cm?.media || '';
-    cmName.textContent = (j.cm?.name || 'CAPSMÖNS').toUpperCase();
-
-    const stage = j.cm?.stage ?? 0;
-    const lineage = j.cm?.lineage_key || '—';
-
     if (kind === 'profil' && j.profil) {
-      // ── Contenu !profil : réutilise la même carte/le même son que !show,
-      // mais remplace les stats par le résumé de profil.
+      // ── Vignette !profil : dédiée, distincte de la fiche CM (nom + avatar
+      // en grand, puis les stats du profil).
       const p = j.profil;
-      viewerSub.textContent = '// !profil';
-      cmType.textContent    = 'PROFIL JOUEUR';
+      profilAvatar.src = j.viewer?.avatar || '';
+      profilName.textContent = '@' + (j.viewer?.name || '?');
+      profilCreatures.textContent = p.creatures_count;
+      profilSpecies.textContent   = p.species_count;
+      profilXp.textContent        = p.xp_total;
+      profilBadgesCount.textContent = p.badges_count;
 
-      xpLabel.textContent = 'CRÉATURES';
-      xpFill.style.width  = '100%';
-      xpVal.textContent   = `${p.creatures_count} (${p.species_count} esp.)`;
+      const badgeList = p.badges || [];
+      profilBadges.innerHTML = badgeList.length
+        ? badgeList.map(b => `<span title="${b.name}">${b.icon}</span>`).join('')
+        : '<span class="no-badge">Aucun badge pour l\'instant</span>';
 
-      hpLabel.textContent = 'BADGES';
-      hpFill.style.width  = Math.min(100, p.badges_count * 20) + '%';
-      hpVal.textContent   = `${p.badges_count}`;
-
-      lineageBadge.textContent = `⭐ ${p.xp_total} XP`;
-      stageBadge.textContent   = (p.badges || []).map(b => b.icon).join(' ') || '—';
+      showPanel('profil');
     } else {
-      viewerSub.textContent = '// !show';
+      // ── Fiche CM classique (!show)
+      viewerName.textContent = '@' + (j.viewer?.name || '?');
+      avatar.src = j.viewer?.avatar || '';
+
+      cmImg.src  = j.cm?.media || '';
+      cmName.textContent = (j.cm?.name || 'CAPSMÖNS').toUpperCase();
+
+      const stage = j.cm?.stage ?? 0;
+      const lineage = j.cm?.lineage_key || '—';
       lineageBadge.textContent = lineage.toUpperCase();
       stageBadge.textContent   = stageLabel(stage);
       cmType.textContent       = `${lineage.toUpperCase()} · ${stageLabel(stage)}`;
 
-      xpLabel.textContent = 'XP';
       const xpPct = j.xp?.pct ?? 100;
       const xpTotal = j.xp?.total ?? 0;
       const toNext  = j.xp?.to_next;
@@ -9383,14 +9540,13 @@ async function tick() {
         ? `${xpTotal} / ${xpTotal + toNext}`
         : `${xpTotal} MAX`;
 
-      hpLabel.textContent = 'BONHEUR';
       const hpPct = j.happiness?.pct ?? 0;
       hpFill.style.width = hpPct + '%';
       hpVal.textContent  = hpPct + '%';
-    }
 
-    applyTheme(j.card_frame || null);
-    showCard();
+      applyTheme(j.card_frame || null);
+      showPanel('show');
+    }
   } catch(e) {}
 }
 
