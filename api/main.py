@@ -9326,6 +9326,14 @@ body {
         <div class="profil-stat-val" id="profilBadgesCount">0</div>
         <div class="profil-stat-lbl">BADGES</div>
       </div>
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilRankWeekly">—</div>
+        <div class="profil-stat-lbl">RANG HEBDO</div>
+      </div>
+      <div class="profil-stat">
+        <div class="profil-stat-val" id="profilRankGlobal">—</div>
+        <div class="profil-stat-lbl">RANG GLOBAL</div>
+      </div>
     </div>
 
     <div class="profil-badges" id="profilBadges"></div>
@@ -9360,6 +9368,8 @@ const profilSpecies     = document.getElementById('profilSpecies');
 const profilXp          = document.getElementById('profilXp');
 const profilBadgesCount = document.getElementById('profilBadgesCount');
 const profilBadges      = document.getElementById('profilBadges');
+const profilRankWeekly  = document.getElementById('profilRankWeekly');
+const profilRankGlobal  = document.getElementById('profilRankGlobal');
 
 let showing = false;
 let hideTimer = null;
@@ -9511,6 +9521,8 @@ async function tick() {
       profilSpecies.textContent   = p.species_count;
       profilXp.textContent        = p.xp_total;
       profilBadgesCount.textContent = p.badges_count;
+      profilRankWeekly.textContent  = p.xp_rank_weekly ? ('#' + p.xp_rank_weekly) : '—';
+      profilRankGlobal.textContent  = p.xp_rank ? ('#' + p.xp_rank) : '—';
 
       const badgeList = p.badges || [];
       profilBadges.innerHTML = badgeList.length
@@ -12695,6 +12707,8 @@ def _compute_profile_summary(cur, login: str) -> dict | None:
         "badges_count": len(badges),
         "badges": badges,
         "xp_total": xp_total,
+        "xp_rank": get_xp_rank(cur, login),
+        "xp_rank_weekly": get_xp_rank_weekly(cur, login),
     }
 
 

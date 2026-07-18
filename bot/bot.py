@@ -252,13 +252,18 @@ class Bot(commands.Bot):
             await ctx.send(f"@{ctx.author.name} ⚠️ Profil indisponible.")
             return
 
-        badges = d.get("badges", []) or []
-        badges_txt = " ".join(b["icon"] for b in badges) if badges else "aucun"
+        rank_weekly = d.get("xp_rank_weekly")
+        rank_global = d.get("xp_rank")
+        rank_weekly_txt = f"#{rank_weekly}" if rank_weekly else "—"
+        rank_global_txt = f"#{rank_global}" if rank_global else "—"
 
+        # Pas d'icônes de badge dans le message de chat (juste le compte) —
+        # elles restent visibles sur la vignette overlay via _compute_profile_summary.
         await ctx.send(
             f"@{ctx.author.name} 📋 Profil : 🐾 {d['creatures_count']} créatures · "
             f"🧬 {d['species_count']} espèces · ⭐ {d['xp_total']} XP · "
-            f"🏅 {d['badges_count']} badges : {badges_txt}"
+            f"🏅 {d['badges_count']} badges · 📅 Rang hebdo {rank_weekly_txt} · "
+            f"🌍 Rang global {rank_global_txt}"
         )
 
         # Même overlay que !show (kind='profil'), pour éviter d'ajouter une
