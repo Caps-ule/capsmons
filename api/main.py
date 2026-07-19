@@ -862,9 +862,11 @@ async def admin_login_twitch_callback(
     error: str | None = None,
 ):
     if error or not code or not state:
+        print(f"[ADMIN-AUTH] callback missing params: error={error!r} code={bool(code)} state={bool(state)}", flush=True)
         return RedirectResponse("/admin/login?error=oauth_fail")
 
     if state not in _admin_oauth_states:
+        print(f"[ADMIN-AUTH] bad_state: state={state!r} known_states={list(_admin_oauth_states.keys())}", flush=True)
         return RedirectResponse("/admin/login?error=bad_state")
     del _admin_oauth_states[state]
 
@@ -878,10 +880,12 @@ async def admin_login_twitch_callback(
         })
 
     if tr.status_code != 200:
+        print(f"[ADMIN-AUTH] token exchange failed: status={tr.status_code} body={tr.text[:300]!r} redirect_uri={ADMIN_REDIRECT_URI!r}", flush=True)
         return RedirectResponse("/admin/login?error=oauth_fail")
 
     access_token = tr.json().get("access_token", "")
     if not access_token:
+        print(f"[ADMIN-AUTH] no access_token in token response: {tr.text[:300]!r}", flush=True)
         return RedirectResponse("/admin/login?error=oauth_fail")
 
     async with httpx.AsyncClient(timeout=10) as client:
@@ -891,6 +895,7 @@ async def admin_login_twitch_callback(
         )
 
     if vr.status_code != 200:
+        print(f"[ADMIN-AUTH] token validate failed: status={vr.status_code} body={vr.text[:300]!r}", flush=True)
         return RedirectResponse("/admin/login?error=oauth_fail")
 
     vj = vr.json()
@@ -901,10 +906,12 @@ async def admin_login_twitch_callback(
         return RedirectResponse("/admin/login?error=oauth_fail")
 
     if login != ADMIN_LOGIN:
+        print(f"[ADMIN-AUTH] login mismatch: got '{login}', expected '{ADMIN_LOGIN}'", flush=True)
         return RedirectResponse("/admin/login?error=not_admin")
 
     resp = RedirectResponse("/admin", status_code=302)
     _admin_session_cookie(resp, login, user_id)
+    print(f"[ADMIN-AUTH] callback OK, cookie set for login='{login}' user_id='{user_id}', redirecting to /admin", flush=True)
     return resp
 
 
@@ -1535,8 +1542,10 @@ def require_internal_key(x_api_key: str | None):
 def require_admin(request: Request):
     """Autorise uniquement le compte Twitch CapsLoque, connecté via OAuth
     (cookie admin_session). Remplace l'ancienne Basic Auth partagée."""
+    raw_cookie = request.cookies.get("admin_session")
     session = _verify_admin_cookie(request)
     if not session or session["login"] != ADMIN_LOGIN:
+        print(f"[ADMIN-AUTH] require_admin denied: raw_cookie_present={bool(raw_cookie)} session={session!r}", flush=True)
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
 
 
