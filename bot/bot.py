@@ -1652,7 +1652,7 @@ class Bot(commands.Bot):
                 import requests as _req
                 rc = _req.get(
                     "http://api:8000/admin/events/json",
-                    auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                    headers={"X-API-Key": API_KEY},
                     timeout=2,
                 )
                 if rc.ok:
@@ -1746,7 +1746,7 @@ class Bot(commands.Bot):
                 try:
                     rc = requests.get(
                         "http://api:8000/admin/settings/json",
-                        auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                        headers={"X-API-Key": API_KEY},
                         timeout=2,
                     )
                     if rc.ok:
@@ -1802,7 +1802,7 @@ class Bot(commands.Bot):
             try:
                 rc = requests.get(
                     "http://api:8000/admin/settings/json",
-                    auth=(os.environ.get("ADMIN_USER","admin"), os.environ.get("ADMIN_PASS","")),
+                    headers={"X-API-Key": API_KEY},
                     timeout=2,
                 )
                 if rc.ok:

@@ -44,7 +44,6 @@ import jwt as pyjwt
 import base64
 from fastapi import FastAPI, Header, HTTPException, Request, Form, Body, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
@@ -80,7 +79,6 @@ _ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _ALLOWED_AUDIO_EXT = {".mp3", ".ogg", ".wav"}
 _ALLOWED_EXT = _ALLOWED_IMAGE_EXT | _ALLOWED_AUDIO_EXT
 
-security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
 
 _twitch_token_cache = {"token": None, "exp": 0.0}
@@ -464,6 +462,11 @@ input.focus();
 
 MOD_REDIRECT_URI = os.environ.get("MOD_REDIRECT_URI", f"{PUBLIC_BASE_URL}/mod/twitch/callback")
 _mod_oauth_states: dict = {}   # state → timestamp (nettoyé après usage)
+
+# Connexion admin via Twitch OAuth, restreinte à un seul compte (CapsLoque).
+ADMIN_LOGIN = "capsloque"
+ADMIN_REDIRECT_URI = os.environ.get("ADMIN_REDIRECT_URI", f"{PUBLIC_BASE_URL}/admin/login/twitch/callback")
+_admin_oauth_states: dict = {}   # state → timestamp (nettoyé après usage)
 USER_REDIRECT_URI  = os.environ.get("USER_REDIRECT_URI", f"{PUBLIC_BASE_URL}/auth/twitch/callback")
 _user_oauth_states: dict = {}   # state → timestamp
 
@@ -548,6 +551,35 @@ def _verify_mod_cookie(request: Request) -> dict | None:
     """Vérifie le cookie mod_session. Retourne {login, user_id} ou None."""
     import hashlib, hmac as _hmac
     val = request.cookies.get("mod_session", "")
+    if not val:
+        return None
+    parts = val.rsplit(":", 1)
+    if len(parts) != 2:
+        return None
+    payload, sig = parts
+    secret = os.environ.get("INTERNAL_API_KEY", "secret")
+    expected = _hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+    if not secrets.compare_digest(sig, expected):
+        return None
+    lparts = payload.split(":", 1)
+    if len(lparts) != 2:
+        return None
+    return {"login": lparts[0], "user_id": lparts[1]}
+
+def _admin_session_cookie(response, login: str, user_id: str):
+    """Pose un cookie de session admin signé."""
+    import hashlib, hmac as _hmac
+    secret = os.environ.get("INTERNAL_API_KEY", "secret")
+    payload = f"{login}:{user_id}"
+    sig = _hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
+    value = f"{payload}:{sig}"
+    response.set_cookie("admin_session", value, httponly=True, samesite="lax", max_age=86400 * 7)
+
+
+def _verify_admin_cookie(request: Request) -> dict | None:
+    """Vérifie le cookie admin_session. Retourne {login, user_id} ou None."""
+    import hashlib, hmac as _hmac
+    val = request.cookies.get("admin_session", "")
     if not val:
         return None
     parts = val.rsplit(":", 1)
@@ -751,6 +783,135 @@ async def mod_callback(
 def mod_logout():
     resp = RedirectResponse("/mod/login", status_code=302)
     resp.delete_cookie("mod_session")
+    return resp
+
+# ==============================================================================
+# AUTH ADMIN — connexion Twitch réservée au compte CapsLoque
+# ==============================================================================
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login(error: str | None = None):
+    """Page de connexion admin (remplace l'ancienne Basic Auth)."""
+    error_msg = {
+        "not_admin": "⚠ Seul le compte CapsLoque peut se connecter à l'admin.",
+        "oauth_fail": "✕ Erreur lors de la connexion Twitch. Réessaie.",
+        "bad_state": "✕ Erreur de sécurité OAuth. Réessaie.",
+    }.get(error or "", "")
+
+    return HTMLResponse(f"""<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CapsMöns — Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#060810;color:#c8d4f0;font-family:'Rajdhani',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+body::before{{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 20% 30%,rgba(0,229,255,.05) 0%,transparent 60%);pointer-events:none}}
+.card{{background:#0a0d18;border:1px solid #1a2540;border-radius:16px;padding:36px 32px;width:100%;max-width:420px;text-align:center;position:relative;z-index:1}}
+.logo{{font-family:'Orbitron',monospace;font-size:28px;font-weight:900;color:#00e5ff;text-shadow:0 0 30px rgba(0,229,255,.4);margin-bottom:4px}}
+.sub{{font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a6a90;letter-spacing:.18em;margin-bottom:32px}}
+.title{{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.14em;color:#c8d4f0;margin-bottom:24px}}
+.error{{background:rgba(255,45,120,.1);border:1px solid rgba(255,45,120,.3);border-radius:8px;padding:10px 14px;font-family:'Share Tech Mono',monospace;font-size:12px;color:#ff2d78;margin-bottom:20px}}
+.btn-twitch{{display:inline-flex;align-items:center;gap:10px;background:#9146ff;color:#fff;border:none;border-radius:10px;padding:14px 28px;font-family:'Orbitron',monospace;font-size:12px;font-weight:700;letter-spacing:.1em;cursor:pointer;text-decoration:none;transition:background .15s,box-shadow .15s,transform .1s}}
+.btn-twitch:hover{{background:#a970ff;box-shadow:0 0 24px rgba(145,70,255,.4);transform:translateY(-1px)}}
+.hint{{margin-top:16px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#5a6a90}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">CAPSMÖNS</div>
+  <div class="sub">// Admin</div>
+  <div class="title">◈ CONNEXION REQUISE</div>
+  {"<div class='error'>" + error_msg + "</div>" if error_msg else ""}
+  <a href="/admin/login/twitch" class="btn-twitch">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>
+    Se connecter avec Twitch
+  </a>
+  <div class="hint">Réservé au compte CapsLoque</div>
+</div>
+</body>
+</html>""")
+
+
+@app.get("/admin/login/twitch")
+def admin_login_twitch():
+    """Redirige vers Twitch OAuth pour la connexion admin."""
+    state = secrets.token_urlsafe(16)
+    _admin_oauth_states[state] = time.time()
+    old = [k for k, v in _admin_oauth_states.items() if time.time() - v > 600]
+    for k in old:
+        del _admin_oauth_states[k]
+
+    params = {
+        "client_id": TWITCH_CLIENT_ID,
+        "redirect_uri": ADMIN_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "user:read:email",
+        "state": state,
+        "force_verify": "true",
+    }
+    return RedirectResponse("https://id.twitch.tv/oauth2/authorize?" + urllib.parse.urlencode(params))
+
+
+@app.get("/admin/login/twitch/callback")
+async def admin_login_twitch_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    if error or not code or not state:
+        return RedirectResponse("/admin/login?error=oauth_fail")
+
+    if state not in _admin_oauth_states:
+        return RedirectResponse("/admin/login?error=bad_state")
+    del _admin_oauth_states[state]
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        tr = await client.post("https://id.twitch.tv/oauth2/token", data={
+            "client_id": TWITCH_CLIENT_ID,
+            "client_secret": TWITCH_CLIENT_SECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": ADMIN_REDIRECT_URI,
+        })
+
+    if tr.status_code != 200:
+        return RedirectResponse("/admin/login?error=oauth_fail")
+
+    access_token = tr.json().get("access_token", "")
+    if not access_token:
+        return RedirectResponse("/admin/login?error=oauth_fail")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        vr = await client.get(
+            "https://id.twitch.tv/oauth2/validate",
+            headers={"Authorization": f"OAuth {access_token}"},
+        )
+
+    if vr.status_code != 200:
+        return RedirectResponse("/admin/login?error=oauth_fail")
+
+    vj = vr.json()
+    user_id = vj.get("user_id", "")
+    login   = vj.get("login", "").lower()
+
+    if not user_id or not login:
+        return RedirectResponse("/admin/login?error=oauth_fail")
+
+    if login != ADMIN_LOGIN:
+        return RedirectResponse("/admin/login?error=not_admin")
+
+    resp = RedirectResponse("/admin", status_code=302)
+    _admin_session_cookie(resp, login, user_id)
+    return resp
+
+
+@app.get("/admin/logout")
+def admin_logout():
+    resp = RedirectResponse("/admin/login", status_code=302)
+    resp.delete_cookie("admin_session")
     return resp
 
 # ==============================================================================
@@ -1371,13 +1532,22 @@ def require_internal_key(x_api_key: str | None):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def require_admin(creds: HTTPBasicCredentials):
-    admin_user = os.environ.get("ADMIN_USER", "")
-    admin_pass = os.environ.get("ADMIN_PASSWORD", "")
-    ok_user = secrets.compare_digest(creds.username, admin_user)
-    ok_pass = secrets.compare_digest(creds.password, admin_pass)
-    if not (ok_user and ok_pass):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+def require_admin(request: Request):
+    """Autorise uniquement le compte Twitch CapsLoque, connecté via OAuth
+    (cookie admin_session). Remplace l'ancienne Basic Auth partagée."""
+    session = _verify_admin_cookie(request)
+    if not session or session["login"] != ADMIN_LOGIN:
+        raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+
+
+def require_admin_or_internal(request: Request, x_api_key: str | None = Header(default=None)):
+    """Comme require_admin, mais accepte aussi la clé interne (X-API-Key).
+    Utilisé sur les quelques endpoints /admin/*/json lus en lecture seule par
+    le bot lui-même (config events/autodrop) — le bot ne peut pas passer par
+    une session OAuth navigateur."""
+    if x_api_key and x_api_key == os.environ.get("INTERNAL_API_KEY"):
+        return
+    require_admin(request)
 
 # =============================================================================
 # XP / stages
@@ -1890,8 +2060,8 @@ def get_egg_image_url(cur, lineage_key: str) -> str:
     return row[0] if row else ""
 
 
-def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_twitch_connect(request: Request):
+    require_admin(request)
     state = secrets.token_urlsafe(16)
     kv_set("twitch_oauth_state", state)
 
@@ -1908,12 +2078,12 @@ def admin_twitch_connect(credentials: HTTPBasicCredentials = Depends(security)):
 
 @app.get("/admin/twitch/callback")
 async def admin_twitch_callback(
-    credentials: HTTPBasicCredentials = Depends(security),
+    request: Request,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     if error:
         return HTMLResponse(f"OAuth error: {error}", status_code=400)
@@ -2018,14 +2188,13 @@ def admin_set_live(
     request: Request,
     value: str | None = Form(default=None),
     payload: dict | None = Body(default=None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
     """
     Supporte:
     - Form: value=true/false (HTML form)
     - JSON: {"value": true/false} (fetch)
     """
-    require_admin(credentials)
+    require_admin(request)
 
     v = value
     if v is None and isinstance(payload, dict):
@@ -2780,8 +2949,8 @@ def start_event(event_key: str, triggered_by: str = "auto") -> dict:
 
 # ── Endpoints events ─────────────────────────────────────────────────────────
 @app.get("/admin/settings/json")
-def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_settings_json(request: Request, x_api_key: str | None = Header(default=None)):
+    require_admin_or_internal(request, x_api_key)
     keys = [
         "auto_drop_enabled", "auto_drop_min_seconds", "auto_drop_max_seconds",
         "auto_drop_duration_min_seconds", "auto_drop_duration_max_seconds",
@@ -2796,8 +2965,8 @@ def admin_settings_json(credentials: HTTPBasicCredentials = Depends(security)):
     return result
 
 @app.post("/admin/settings/save")
-def admin_settings_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_settings_save(payload: dict, request: Request):
+    require_admin(request)
     allowed = {
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
@@ -2852,8 +3021,8 @@ def _boss_damage_for_stage(stage: int) -> int:
 # =============================================================================
 
 @app.get("/admin/eggs/json")
-def admin_eggs_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_eggs_json(request: Request):
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -2867,8 +3036,8 @@ def admin_eggs_json(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/eggs/save")
-def admin_eggs_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_eggs_save(payload: dict, request: Request):
+    require_admin(request)
     key      = str(payload.get("key", "")).strip().lower()
     icon_url = str(payload.get("icon_url", "")).strip()
     if not key.startswith("egg_"):
@@ -2888,15 +3057,15 @@ def admin_eggs_save(payload: dict, credentials: HTTPBasicCredentials = Depends(s
 # =============================================================================
 
 @app.get("/admin/xp_thresholds/json")
-def admin_xp_thresholds_get(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_xp_thresholds_get(request: Request):
+    require_admin(request)
     hatch, evo1, evo2 = thresholds()
     return {"xp_hatch": hatch, "xp_evolve_1": evo1, "xp_evolve_2": evo2}
 
 
 @app.post("/admin/xp_thresholds/save")
-def admin_xp_thresholds_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_xp_thresholds_save(payload: dict, request: Request):
+    require_admin(request)
     try:
         hatch = int(payload["xp_hatch"])
         evo1  = int(payload["xp_evolve_1"])
@@ -2918,9 +3087,9 @@ def admin_xp_thresholds_save(payload: dict, credentials: HTTPBasicCredentials = 
 
 
 @app.get("/admin/boss/cms_list")
-def admin_boss_cms_list(credentials: HTTPBasicCredentials = Depends(security)):
+def admin_boss_cms_list(request: Request):
     """Liste tous les CMs activés avec image stage 1 pour le sélecteur boss."""
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -2939,9 +3108,9 @@ def admin_boss_cms_list(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/boss/start")
-def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_boss_start(payload: dict, request: Request):
     """Lance un boss raid depuis l'admin."""
-    require_admin(credentials)
+    require_admin(request)
 
     cm_key       = str(payload.get("cm_key", "")).strip().lower()
     hp_max       = int(payload.get("hp_max", 100))
@@ -2993,8 +3162,8 @@ def admin_boss_start(payload: dict, credentials: HTTPBasicCredentials = Depends(
 
 
 @app.get("/admin/boss/config")
-def admin_boss_config_get(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_boss_config_get(request: Request):
+    require_admin(request)
     keys = [
         "boss_hp_min", "boss_hp_max", "boss_duration_minutes",
         "boss_reward_type", "boss_reward_value", "boss_reward_item_key",
@@ -3007,8 +3176,8 @@ def admin_boss_config_get(credentials: HTTPBasicCredentials = Depends(security))
 
 
 @app.post("/admin/boss/config")
-def admin_boss_config_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_boss_config_save(payload: dict, request: Request):
+    require_admin(request)
     allowed = {
         "boss_hp_min":            lambda v: str(max(1,   min(9999, int(v)))),
         "boss_hp_max":            lambda v: str(max(1,   min(9999, int(v)))),
@@ -3056,9 +3225,9 @@ def _boss_active_data():
 
 
 @app.get("/admin/boss/active")
-def admin_boss_active(credentials: HTTPBasicCredentials = Depends(security)):
+def admin_boss_active(request: Request):
     """État du boss actif — appelé par le SPA admin."""
-    require_admin(credentials)
+    require_admin(request)
     return _boss_active_data()
 
 
@@ -3250,8 +3419,8 @@ def internal_event_active_and_drop_needed(x_api_key: str | None = Header(default
 
 
 @app.get("/admin/events/json")
-def admin_events_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_events_json(request: Request, x_api_key: str | None = Header(default=None)):
+    require_admin_or_internal(request, x_api_key)
     ev = get_active_event()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -3270,15 +3439,15 @@ def admin_events_json(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/events/start")
-def admin_events_start(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_events_start(payload: dict, request: Request):
+    require_admin(request)
     event_key = str(payload.get("event_key", "")).strip()
     return start_event(event_key, triggered_by="admin")
 
 
 @app.post("/admin/events/stop")
-def admin_events_stop(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_events_stop(request: Request):
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE active_event SET ends_at=now() WHERE ends_at > now();")
@@ -3287,8 +3456,8 @@ def admin_events_stop(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/events/config")
-def admin_events_config(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_events_config(payload: dict, request: Request):
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             if "event_auto_enabled" in payload:
@@ -3581,8 +3750,8 @@ def internal_get_autodrop(x_api_key: str | None = Header(default=None)):
 
 
 @app.post("/admin/autodrop/save")
-def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_autodrop_save(payload: dict, request: Request):
+    require_admin(request)
     allowed = {
         "auto_drop_enabled":              lambda v: "true" if str(v).lower() in ("1","true","yes","on") else "false",
         "auto_drop_min_seconds":          lambda v: str(max(60,   min(7200, int(v)))),
@@ -3622,8 +3791,8 @@ def admin_autodrop_save(payload: dict, credentials: HTTPBasicCredentials = Depen
 
 
 @app.post("/admin/autodrop/test")
-def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_autodrop_test(request: Request):
+    require_admin(request)
 
     keys = [
         "auto_drop_pick_kind",
@@ -3710,11 +3879,11 @@ def admin_autodrop_test(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/bot/restart")
-def admin_bot_restart(credentials: HTTPBasicCredentials = Depends(security)):
+def admin_bot_restart(request: Request):
     """Demande un redémarrage du bot Twitch (crash/blocage). Pas d'accès au
     socket Docker depuis ce conteneur : pose un flag que le bot poll et sur
     lequel il s'auto-termine, docker-compose (restart: unless-stopped) le relance."""
-    require_admin(credentials)
+    require_admin(request)
     _request_bot_restart()
     return {"ok": True, "msg": "Redémarrage du bot demandé"}
 
@@ -4363,11 +4532,11 @@ def drop_spawn(payload: dict, x_api_key: str | None = Header(default=None)):
 
 @app.post("/admin/rp/save")
 def admin_rp_save(
+    request: Request,
     key: str = Form(...),
     lines: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     key = key.strip()
 
@@ -4697,12 +4866,12 @@ def choose_lineage(payload: dict, x_api_key: str | None = Header(default=None)):
 
 @app.post("/admin/action")
 def admin_action(
+    request: Request,
     login: str = Form(...),
     action: str = Form(...),
     amount: int | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     login = login.strip().lower()
     action = action.strip().lower()
@@ -4869,9 +5038,8 @@ def admin_user_collection_page(
     login: str,
     flash: str | None = None,
     flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     login = (login or "").strip().lower()
     if not login:
         return HTMLResponse("<h1>Missing login</h1>", status_code=400)
@@ -5073,9 +5241,9 @@ def admin_user_collection_page(
 @app.get("/admin/user/{login}/collection.json")
 def admin_user_collection_json(
     login: str,
-    credentials: HTTPBasicCredentials = Depends(security),
+    request: Request,
 ):
-    require_admin(credentials)
+    require_admin(request)
     login = (login or "").strip().lower()
     if not login:
         raise HTTPException(status_code=400, detail="Missing login")
@@ -5112,6 +5280,7 @@ def admin_user_collection_json(
 
 @app.post("/admin/user_action")
 def admin_user_action(
+    request: Request,
     login: str = Form(...),
     action: str = Form(...),
     creature_id: int | None = Form(None),
@@ -5122,9 +5291,8 @@ def admin_user_action(
     qty: int | None = Form(None),
     to_login: str | None = Form(None),
     next: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     login = (login or "").strip().lower()
     action = (action or "").strip().lower()
@@ -5340,9 +5508,8 @@ def admin_user(
     login: str,
     flash: str | None = None,
     flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     login = (login or "").strip().lower()
     if not login:
@@ -5577,14 +5744,14 @@ def admin_user(
 
 @app.post("/admin/forms/save")
 def admin_forms_save(
+    request: Request,
     cm_key: str = Form(...),
     stage: int = Form(...),
     name: str = Form(...),
     image_url: str = Form(...),
     sound_url: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     cm_key = cm_key.strip().lower()
     stage = int(stage)
@@ -5938,6 +6105,7 @@ def overlay_announcements_all():
 
 @app.post("/admin/announcement/save")
 def announcement_save(
+    request: Request,
     ann_id:          str | None = Form(None),
     title:           str        = Form(...),
     body:            str        = Form(""),
@@ -5946,9 +6114,8 @@ def announcement_save(
     pause_seconds:   int        = Form(5),
     sort_order:      int        = Form(0),
     active:          str        = Form("off"),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     # Convertir ann_id : string vide → None, sinon int
     ann_id_int: int | None = None
     if ann_id and ann_id.strip():
@@ -5985,10 +6152,10 @@ def announcement_save(
 
 @app.post("/admin/announcement/delete")
 def announcement_delete(
+    request: Request,
     ann_id: int = Form(...),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM overlay_announcements WHERE id=%s;", (ann_id,))
@@ -5998,10 +6165,10 @@ def announcement_delete(
 
 @app.post("/admin/announcement/toggle")
 def announcement_toggle(
+    request: Request,
     ann_id: int = Form(...),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE overlay_announcements SET active = NOT active WHERE id=%s;", (ann_id,))
@@ -6265,9 +6432,9 @@ fetchList().then(loop);
 # =============================================================================
 
 @app.get("/preview/data")
-def preview_data(credentials: HTTPBasicCredentials = Depends(security)):
+def preview_data(request: Request):
     """Retourne la liste de tous les CMs avec leurs formes pour le simulateur."""
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -6293,10 +6460,10 @@ def preview_data(credentials: HTTPBasicCredentials = Depends(security)):
 @app.post("/preview/push_show")
 def preview_push_show(
     payload: dict,
-    credentials: HTTPBasicCredentials = Depends(security),
+    request: Request,
 ):
     """Injecte un show fictif dans overlay_events (dure 30s)."""
-    require_admin(credentials)
+    require_admin(request)
 
     viewer   = str(payload.get("viewer", "preview")).strip().lower() or "preview"
     avatar   = str(payload.get("avatar", "")).strip()
@@ -6333,10 +6500,10 @@ def preview_push_show(
 @app.post("/preview/push_evolution")
 def preview_push_evolution(
     payload: dict,
-    credentials: HTTPBasicCredentials = Depends(security),
+    request: Request,
 ):
     """Injecte une évolution fictive dans overlay_evolutions (dure 30s)."""
-    require_admin(credentials)
+    require_admin(request)
 
     viewer    = str(payload.get("viewer", "preview")).strip() or "preview"
     cm_key    = str(payload.get("cm_key", "")).strip()
@@ -6363,9 +6530,9 @@ def preview_push_evolution(
 
 
 @app.get("/preview", response_class=HTMLResponse)
-def preview_page(credentials: HTTPBasicCredentials = Depends(security)):
+def preview_page(request: Request):
     """Redirige vers le SPA admin — le Preview Studio est désormais intégré."""
-    require_admin(credentials)
+    require_admin(request)
     return RedirectResponse(url="/admin#preview", status_code=302)
 
 
@@ -7060,8 +7227,8 @@ def _get_or_create_week(cur, year: int, week: int) -> int:
 # ── API Jeux ─────────────────────────────────────────────────────────────────
 
 @app.get("/admin/schedule/games")
-def schedule_games_list(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_games_list(request: Request):
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id,name,image_url,logo_url,color,sort_order FROM schedule_games ORDER BY sort_order,name;")
@@ -7070,8 +7237,8 @@ def schedule_games_list(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/schedule/games/save")
-def schedule_game_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_game_save(payload: dict, request: Request):
+    require_admin(request)
     gid       = payload.get("id")
     name      = str(payload.get("name","")).strip()
     image_url = str(payload.get("image_url","")).strip()
@@ -7097,8 +7264,8 @@ def schedule_game_save(payload: dict, credentials: HTTPBasicCredentials = Depend
 
 
 @app.post("/admin/schedule/games/delete")
-def schedule_game_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_game_delete(payload: dict, request: Request):
+    require_admin(request)
     gid = int(payload.get("id", 0))
     if not gid:
         raise HTTPException(400, "id requis")
@@ -7113,11 +7280,11 @@ def schedule_game_delete(payload: dict, credentials: HTTPBasicCredentials = Depe
 
 @app.get("/admin/schedule/week")
 def schedule_week_get(
+    request: Request,
     year: int | None = None,
     week: int | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     if year is None or week is None:
         year, week = _current_iso_week()
     with get_db() as conn:
@@ -7156,8 +7323,8 @@ def schedule_week_get(
 
 
 @app.post("/admin/schedule/week/save")
-def schedule_week_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_week_save(payload: dict, request: Request):
+    require_admin(request)
     year  = int(payload.get("year", _current_iso_week()[0]))
     week  = int(payload.get("week", _current_iso_week()[1]))
     title = str(payload.get("title","")).strip()
@@ -7177,8 +7344,8 @@ def schedule_week_save(payload: dict, credentials: HTTPBasicCredentials = Depend
 
 
 @app.post("/admin/schedule/slot/save")
-def schedule_slot_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_slot_save(payload: dict, request: Request):
+    require_admin(request)
     year       = int(payload.get("year", _current_iso_week()[0]))
     week       = int(payload.get("week", _current_iso_week()[1]))
     slot_id    = payload.get("id")
@@ -7218,8 +7385,8 @@ def schedule_slot_save(payload: dict, credentials: HTTPBasicCredentials = Depend
 
 
 @app.post("/admin/schedule/slot/delete")
-def schedule_slot_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def schedule_slot_delete(payload: dict, request: Request):
+    require_admin(request)
     sid = int(payload.get("id", 0))
     if not sid:
         raise HTTPException(400, "id requis")
@@ -10123,10 +10290,10 @@ tick();
 
 @app.post("/admin/upload")
 async def admin_upload(
+    request: Request,
     file: UploadFile = File(...),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     import pathlib, uuid as _uuid
 
@@ -10151,8 +10318,8 @@ async def admin_upload(
 
 
 @app.get("/admin/uploads/list")
-def admin_uploads_list(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_uploads_list(request: Request):
+    require_admin(request)
 
     import pathlib
     files = []
@@ -10174,9 +10341,9 @@ def admin_uploads_list(credentials: HTTPBasicCredentials = Depends(security)):
 @app.delete("/admin/uploads/{filename}")
 def admin_upload_delete(
     filename: str,
-    credentials: HTTPBasicCredentials = Depends(security),
+    request: Request,
 ):
-    require_admin(credentials)
+    require_admin(request)
     import pathlib, re
     # Sécurité : no path traversal
     if not re.match(r'^[\w\-\.]+$', filename) or ".." in filename:
@@ -10190,15 +10357,15 @@ def admin_upload_delete(
 
 @app.post("/admin/cms/action")
 def admin_cms_action(
+    request: Request,
     action: str = Form(...),
     key: str | None = Form(None),
     cm_key: str | None = Form(None),
     cm_name: str | None = Form(None),
     lineage_key: str | None = Form(None),
     media_url: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     action = action.strip().lower()
 
     def go(msg: str, kind: str = "ok"):
@@ -10292,6 +10459,7 @@ def admin_cms_action(
 
 @app.post("/admin/cms/create_full")
 def admin_cms_create_full(
+    request: Request,
     cm_key: str = Form(...),
     cm_name: str = Form(...),
     lineage_key: str = Form(...),
@@ -10305,11 +10473,10 @@ def admin_cms_create_full(
     stage3_name: str | None = Form(None),
     stage3_image_url: str | None = Form(None),
     stage3_sound_url: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
     """Crée un CM et ses formes de stage en une seule soumission (au lieu de
     créer le CM puis devoir revenir sur /admin/forms pour chaque stage)."""
-    require_admin(credentials)
+    require_admin(request)
 
     def go(msg: str, kind: str = "ok"):
         safe = msg.replace(" ", "%20")
@@ -12979,8 +13146,8 @@ def internal_trade_execute(payload: dict, x_api_key: str | None = Header(default
 # =============================================================================
     
 @app.post("/admin/drop/spawn")
-def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_drop_spawn(payload: dict, request: Request):
+    require_admin(request)
 
     mode = str(payload.get("mode", "")).strip().lower()
     title = str(payload.get("title", "")).strip()
@@ -13027,9 +13194,9 @@ def admin_drop_spawn(payload: dict, credentials: HTTPBasicCredentials = Depends(
 
 
 @app.get("/admin/points/json")
-def admin_points_json(credentials: HTTPBasicCredentials = Depends(security)):
+def admin_points_json(request: Request):
     """Endpoint JSON pour la page Channel Points du SPA."""
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             keys = [
@@ -13046,6 +13213,7 @@ def admin_points_json(credentials: HTTPBasicCredentials = Depends(security)):
 
 @app.post("/admin/points/save")
 def admin_points_save(
+    request: Request,
     cp_enabled: str | None = Form(None),
     cp_reward_drop_coop_id: str | None = Form(None),
     cp_reward_capsule_id: str | None = Form(None),
@@ -13060,9 +13228,8 @@ def admin_points_save(
     cp_drop_ticket_qty: str | None = Form(None),
     cp_drop_fallback_icon_url: str | None = Form(None),
     event_cp_reward_id: str | None = Form(None),
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
 
     enabled = "true" if (cp_enabled == "true") else "false"
 
@@ -13088,8 +13255,8 @@ def admin_points_save(
 
 
 @app.post("/admin/eventsub/subscribe_channel_points")
-def admin_eventsub_subscribe_channel_points(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_eventsub_subscribe_channel_points(request: Request):
+    require_admin(request)
 
     cid = os.environ.get("TWITCH_CLIENT_ID", "")
     if not cid:
@@ -13453,9 +13620,9 @@ def _build_admin_context(request: Request, flash: str | None = None, flash_kind:
 # -----------------------------------------------------------------------------
 
 @app.get("/admin/items/json")
-def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
+def admin_items_json(request: Request):
     """Retourne la liste complète des items avec toutes leurs colonnes."""
-    require_admin(credentials)
+    require_admin(request)
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -13482,11 +13649,11 @@ def admin_items_json(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 @app.post("/admin/items/save")
-def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_items_save(payload: dict, request: Request):
     """Crée ou met à jour un item (upsert sur la clé).
     Champs attendus : key, name, icon_url?, drop_weight?, xp_gain?, happiness_gain?
     """
-    require_admin(credentials)
+    require_admin(request)
 
     key           = str(payload.get("key", "")).strip().lower()
     name          = str(payload.get("name", "")).strip()
@@ -13556,11 +13723,11 @@ def admin_items_save(payload: dict, credentials: HTTPBasicCredentials = Depends(
 
 
 @app.post("/admin/items/delete")
-def admin_items_delete(payload: dict, credentials: HTTPBasicCredentials = Depends(security)):
+def admin_items_delete(payload: dict, request: Request):
     """Supprime un item par sa clé.
     ⚠️  Ne supprime pas les entrées inventory existantes (orphelins tolérés).
     """
-    require_admin(credentials)
+    require_admin(request)
 
     key = str(payload.get("key", "")).strip().lower()
     if not key:
@@ -13598,9 +13765,8 @@ def admin_spa(
     per: int = 50,
     flash: str | None = None,
     flash_kind: str | None = None,
-    credentials: HTTPBasicCredentials = Depends(security),
 ):
-    require_admin(credentials)
+    require_admin(request)
     ctx = _build_admin_context(request, flash=flash, flash_kind=flash_kind, q=q, page=page, per=per)
     return templates.TemplateResponse("admin_spa.html", ctx)
 
@@ -13610,8 +13776,8 @@ def admin_spa(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/admin/points", response_class=HTMLResponse)
-def admin_points(request: Request, credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_points(request: Request):
+    require_admin(request)
     ctx = _build_admin_context(request)
     return templates.TemplateResponse("admin_spa.html", ctx)
 
@@ -13621,8 +13787,8 @@ def admin_points(request: Request, credentials: HTTPBasicCredentials = Depends(s
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/admin/stats/json")
-def admin_stats_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_stats_json(request: Request):
+    require_admin(request)
 
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -13670,8 +13836,8 @@ def admin_stats_json(credentials: HTTPBasicCredentials = Depends(security)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/admin/streams/json")
-def admin_streams_json(credentials: HTTPBasicCredentials = Depends(security)):
-    require_admin(credentials)
+def admin_streams_json(request: Request):
+    require_admin(request)
 
     with get_db() as conn:
         with conn.cursor() as cur:
