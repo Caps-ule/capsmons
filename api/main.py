@@ -9916,7 +9916,11 @@ body {
   animation: glitch-hue .18s linear infinite;
 }
 .glitch-layer {
-  position: absolute; inset: 6%; pointer-events: none;
+  /* width/height explicites : ne pas compter uniquement sur "inset" pour
+     dimensionner une <img> absolument positionnée — sans ça l'image pouvait
+     s'afficher à sa taille naturelle (souvent bien plus grande que la
+     chambre) pendant le glitch, débordant du cadre avant d'être recadrée. */
+  position: absolute; inset: 6%; width: 88%; height: 88%; pointer-events: none;
   object-fit: contain; image-rendering: pixelated;
   opacity: .7;
 }
